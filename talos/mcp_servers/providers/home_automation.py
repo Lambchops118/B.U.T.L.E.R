@@ -15,7 +15,12 @@ def register(server: FastMCP) -> None:
 
     @server.tool()
     def get_current_weather(location: str = "") -> str:
-        """Get the current weather, temperature, humidity, UV index, and related details."""
+        """Get the current weather, temperature, humidity, UV index, and related details.
+
+        Leave location blank to use the configured home location. Only pass a
+        location when the user explicitly names a different city, zip code, or
+        place.
+        """
         return actions.get_current_weather(location)
 
     @server.tool()
