@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -21,6 +22,17 @@ WEATHER_LOCATION = os.getenv("TALOS_WEATHER_LOCATION", "").strip()
 WEATHER_UNITS = os.getenv("TALOS_WEATHER_UNITS", "imperial").strip().lower()
 OPENWEATHER_CURRENT_URL = "https://api.openweathermap.org/data/2.5/weather"
 OPENWEATHER_ONECALL_URL = "https://api.openweathermap.org/data/3.0/onecall"
+OPENWEATHER_GEOCODING_DIRECT_URL = "https://api.openweathermap.org/geo/1.0/direct"
+OPENWEATHER_GEOCODING_ZIP_URL = "https://api.openweathermap.org/geo/1.0/zip"
+US_STATE_CODES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC",
+}
+ZIP_CODE_RE = re.compile(r"^(?P<zip>\d{5}(?:-\d{4})?)(?:\s*,\s*(?P<country>[A-Za-z]{2}))?$")
 
 
 def _publish(topic: str, message: str | int) -> None:
@@ -81,7 +93,11 @@ def get_current_weather(location: str = "") -> str:
         raise ValueError("OPEN_WEATHER_API_KEY is not configured.")
 
     try:
-        current_data = _fetch_current_weather(requested_location)
+        resolved_location = _resolve_location(requested_location)
+        current_data = _fetch_current_weather(
+            resolved_location["lat"],
+            resolved_location["lon"],
+        )
         onecall_data = _fetch_onecall(current_data)
     except requests.HTTPError as exc:
         response = exc.response
@@ -101,10 +117,10 @@ def get_current_weather(location: str = "") -> str:
     today = (onecall_data.get("daily") or [{}])[0]
     timezone_name = onecall_data.get("timezone", _format_timezone_name(current.get("timezone")))
     units_label = _units_label()
-    resolved_location = _format_current_location(current)
+    resolved_location_name = _format_resolved_location(current, resolved_location)
 
     lines = [
-        f"Location: {resolved_location}",
+        f"Location: {resolved_location_name}",
         f"Observation time: {_format_unix_time(current.get('dt'), current.get('timezone'))}",
         f"Timezone: {timezone_name}",
         f"Weather: {_weather_summary(current)}",
@@ -174,11 +190,12 @@ def _get_timezone_name(now: datetime) -> str:
     return str(name) if name else "local"
 
 
-def _fetch_current_weather(location: str) -> dict:
+def _fetch_current_weather(latitude: float, longitude: float) -> dict:
     response = requests.get(
         OPENWEATHER_CURRENT_URL,
         params={
-            "q": location,
+            "lat": latitude,
+            "lon": longitude,
             "appid": OPEN_WEATHER_API_KEY,
             "units": _weather_units(),
         },
@@ -219,6 +236,93 @@ def _normalize_location_query(location: str) -> str:
     return normalized.strip(" ,")
 
 
+def _resolve_location(location: str) -> dict:
+    normalized = _normalize_location_query(location)
+    zip_query = _extract_zip_query(normalized)
+    if zip_query is not None:
+        return _fetch_zip_geocode(zip_query["zip"], zip_query["country"])
+
+    canonical_query = _canonicalize_location_name_query(normalized)
+    return _fetch_direct_geocode(canonical_query)
+
+
+def _extract_zip_query(location: str) -> dict[str, str] | None:
+    match = ZIP_CODE_RE.match(location)
+    if match is None:
+        return None
+    country = str(match.group("country") or "US").upper()
+    return {
+        "zip": str(match.group("zip")),
+        "country": country,
+    }
+
+
+def _canonicalize_location_name_query(location: str) -> str:
+    if not location:
+        return location
+
+    comma_parts = [part.strip() for part in location.split(",") if part.strip()]
+    if len(comma_parts) == 2 and _is_us_state_code(comma_parts[1]):
+        return f"{comma_parts[0]},{comma_parts[1].upper()},US"
+    if len(comma_parts) >= 3:
+        return ",".join(
+            [
+                comma_parts[0],
+                comma_parts[1].upper() if _is_us_state_code(comma_parts[1]) else comma_parts[1],
+                comma_parts[2].upper(),
+            ]
+            + comma_parts[3:]
+        )
+
+    space_parts = location.split()
+    if len(space_parts) >= 2 and _is_us_state_code(space_parts[-1]):
+        city_name = " ".join(space_parts[:-1]).strip()
+        if city_name:
+            return f"{city_name},{space_parts[-1].upper()},US"
+
+    return location
+
+
+def _fetch_direct_geocode(query: str) -> dict:
+    response = requests.get(
+        OPENWEATHER_GEOCODING_DIRECT_URL,
+        params={
+            "q": query,
+            "limit": 1,
+            "appid": OPEN_WEATHER_API_KEY,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list) or not payload:
+        raise RuntimeError(f"Could not find weather location: {query}")
+    first = payload[0]
+    if not isinstance(first, dict):
+        raise RuntimeError(f"Could not find weather location: {query}")
+    return first
+
+
+def _fetch_zip_geocode(zip_code: str, country_code: str) -> dict:
+    response = requests.get(
+        OPENWEATHER_GEOCODING_ZIP_URL,
+        params={
+            "zip": f"{zip_code},{country_code}",
+            "appid": OPEN_WEATHER_API_KEY,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("lat") is None or payload.get("lon") is None:
+        raise RuntimeError(f"Could not find weather location: {zip_code},{country_code}")
+    return payload
+
+
+def _is_us_state_code(value: str) -> bool:
+    return str(value or "").strip().upper() in US_STATE_CODES
+
+
 def _format_current_location(current: dict) -> str:
     parts = [str(current.get("name", "")).strip()]
     sys = current.get("sys", {})
@@ -229,6 +333,18 @@ def _format_current_location(current: dict) -> str:
     if country:
         parts.append(country)
     return ", ".join(part for part in parts if part)
+
+
+def _format_resolved_location(current: dict, resolved_location: dict) -> str:
+    parts = [str(resolved_location.get("name") or current.get("name") or "").strip()]
+    state = str(resolved_location.get("state") or current.get("state") or "").strip()
+    country = str(resolved_location.get("country") or current.get("sys", {}).get("country") or "").strip()
+    if state:
+        parts.append(state)
+    if country:
+        parts.append(country)
+    formatted = ", ".join(part for part in parts if part)
+    return formatted or _format_current_location(current)
 
 
 def _format_unix_time(

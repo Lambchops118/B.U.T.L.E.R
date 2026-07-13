@@ -3,6 +3,7 @@
 #   python3.12 -m talos.voice.worker
 
 boto3==1.40.65
+faster-whisper
 numpy==2.3.4
 openai==2.7.0
 openai-whisper

@@ -138,6 +138,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/chat":
             self._handle_chat()
             return
+        if self.path == "/chat/stream":
+            self._handle_chat_stream()
+            return
         if self.path == "/sessions/reset":
             self._handle_reset_session()
             return
@@ -243,6 +246,63 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         status = HTTPStatus.OK if result.get("ok") else HTTPStatus.INTERNAL_SERVER_ERROR
         self._write_json(status, result)
+
+    def _handle_chat_stream(self) -> None:
+        """Foreground streaming turn as Server-Sent Events.
+
+        Emits ``{"type": "delta", "text": ...}`` events as the model generates,
+        then a terminal ``{"type": "done", "text": <full>}`` (or ``"error"``).
+        Runs the agent directly in the foreground lane (bypassing the background
+        job machinery) so the latency-sensitive voice path streams end to end.
+        """
+        try:
+            body = self._read_json_body()
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        command = str(body.get("message") or body.get("command") or "").strip()
+        if not command:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'message'."})
+            return
+
+        session_id = str(body.get("session_id") or "voice").strip() or "voice"
+        source = str(body.get("source") or "voice").strip()
+        snapshot = str(body.get("state_snapshot") or "no recent status")
+
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+        full_parts: list[str] = []
+        try:
+            for delta in agent_runtime.run_command_stream(
+                command,
+                snapshot,
+                session_id=session_id,
+                interaction_mode="voice",
+                runtime_lane="foreground",
+            ):
+                if not delta:
+                    continue
+                full_parts.append(delta)
+                self._send_sse({"type": "delta", "text": delta})
+            self._send_sse({"type": "done", "text": "".join(full_parts).strip()})
+        except (BrokenPipeError, ConnectionResetError):
+            print("[text-agent] stream client disconnected")
+        except Exception as exc:  # noqa: BLE001 - report to client then end stream
+            print(f"[text-agent] stream error: {exc}")
+            self._send_sse({"type": "error", "error": str(exc)})
+
+    def _send_sse(self, payload: dict[str, Any]) -> None:
+        data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+        self.wfile.write(data)
+        self.wfile.flush()
 
     def _handle_get_job(self, job_id: str) -> None:
         if not job_id:

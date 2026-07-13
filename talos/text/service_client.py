@@ -140,6 +140,67 @@ def send_message(
     return str(body.get("response", "")).strip()
 
 
+def stream_message(
+    message: str,
+    *,
+    session_id: str,
+    source: str = "voice",
+    base_url: str = DEFAULT_URL,
+    token: str = DEFAULT_TOKEN,
+    state_snapshot: str | None = None,
+    timeout: float | None = None,
+):
+    """Yield assistant text fragments from the ``/chat/stream`` SSE endpoint.
+
+    ``timeout`` defaults to ``None`` because a streamed turn can outlast the
+    normal request timeout. Raises ``RuntimeError`` if the server emits an error
+    event.
+    """
+    payload = {"message": message, "session_id": session_id, "source": source}
+    if state_snapshot is not None:
+        payload["state_snapshot"] = state_snapshot
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        build_url(base_url, "/chat/stream"),
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        method="POST",
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+
+    resolved_timeout = _normalize_timeout(timeout)
+    try:
+        if resolved_timeout is None:
+            response = urllib.request.urlopen(request)
+        else:
+            response = urllib.request.urlopen(request, timeout=resolved_timeout)
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {body_text or str(exc)}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Connection error: {exc.reason}") from exc
+
+    with response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                event = json.loads(line[len("data:") :].strip())
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type == "delta":
+                text = event.get("text") or ""
+                if text:
+                    yield text
+            elif event_type == "done":
+                return
+            elif event_type == "error":
+                raise RuntimeError(str(event.get("error") or "stream error"))
+
+
 def get_job(
     job_id: str,
     *,

@@ -17,9 +17,10 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import speech_recognition as sr
 
-from talos.config import load_environment, require_env
-from talos.text.service_client import send_message
+from talos.config import env_bool, load_environment, require_env
+from talos.text.service_client import send_message, stream_message
 from talos.voice.benchmarking import VoiceBenchmarkSession
+from talos.voice.streaming.speaker import StreamingSpeaker
 
 
 load_environment()
@@ -32,6 +33,11 @@ VOICE_SESSION_ID = os.getenv("TALOS_VOICE_SESSION", "voice-worker")
 VOICE_AGENT_URL = os.getenv("TALOS_TEXT_AGENT_URL", "http://127.0.0.1:8420")
 VOICE_AGENT_TOKEN = os.getenv("TALOS_TEXT_AGENT_TOKEN", os.getenv("TEXT_AGENT_API_TOKEN", ""))
 VOICE_AGENT_TIMEOUT = float(os.getenv("TALOS_TEXT_AGENT_CLIENT_TIMEOUT", "30"))
+VOICE_STREAMING = env_bool("TALOS_VOICE_STREAMING", True)
+# Use one local STT pass to serve both wake-word and command (removes the remote
+# whisper-1 round-trip and the separate local wake transcription). Falls back to
+# the remote path automatically if the local backend is unavailable.
+LOCAL_STT_ENABLED = env_bool("TALOS_LOCAL_STT", True)
 
 audio_interface = pyaudio.PyAudio()
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
@@ -182,6 +188,89 @@ def play_audio(filename, benchmark=None):
         print(f"Error in play_audio: {exc}")
 
 
+_stt_backend = None
+_stt_backend_lock = threading.Lock()
+_stt_unavailable = False
+
+
+def _get_stt_backend():
+    global _stt_backend
+    if _stt_backend is None:
+        with _stt_backend_lock:
+            if _stt_backend is None:
+                from talos.voice.backends.factory import get_stt_backend
+                _stt_backend = get_stt_backend()
+    return _stt_backend
+
+
+def _transcribe_local(audio_data, benchmark):
+    """Single local STT pass; the transcript serves both wake and command."""
+    from talos.voice.backends.base import AudioChunk
+
+    raw = audio_data.get_raw_data(convert_rate=16000, convert_width=2)
+    benchmark.mark_stage("stt_send")
+    result = _get_stt_backend().transcribe(AudioChunk(pcm=raw, sample_rate=16000))
+    benchmark.mark_stage("stt_done")
+    return result.text
+
+
+def _transcribe_remote_with_wake_gate(audio_data, benchmark):
+    """Legacy path: cheap local wake gate, then remote whisper-1 transcription.
+
+    Returns the transcript text, or ``None`` if the wake gate rejected the clip
+    (already logged/emitted).
+    """
+    if WAKE_WORD_MODE == "local":
+        benchmark.mark_stage("local_wake_send")
+        wake_detected = _local_wake_word_detect(audio_data)
+        benchmark.mark_stage("local_wake_done")
+    else:
+        wake_detected = True
+
+    if not wake_detected:
+        print("Wake word not detected locally; skipping Whisper API call.")
+        benchmark.add_note("Local wake-word check rejected the clip before remote STT.")
+        benchmark.emit_summary_once("wake_word_rejected")
+        return None
+
+    wav_bytes = audio_data.get_wav_data()
+    audio_file = io.BytesIO(wav_bytes)
+    audio_file.name = "speech.wav"
+
+    benchmark.mark_stage("stt_send")
+    whisper_result = client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_file,
+        response_format="verbose_json",
+        language="en",
+        temperature=0,
+        timestamp_granularities=["word"],
+    )
+    benchmark.mark_stage("stt_done")
+
+    text = _extract_transcription_text(whisper_result).strip().lower()
+    if text:
+        benchmark.note_wake_word_offsets(_extract_transcription_words(whisper_result))
+    return text
+
+
+def _acquire_transcript(audio_data, benchmark):
+    """Return the transcript text (or ``None`` if the clip was already handled).
+
+    Prefers the single local STT pass; on any local failure it disables the local
+    path and falls back to the remote wake-gate + whisper-1 flow.
+    """
+    global _stt_unavailable
+    if LOCAL_STT_ENABLED and not _stt_unavailable:
+        try:
+            return _transcribe_local(audio_data, benchmark)
+        except Exception as exc:
+            print(f"Local STT failed ({exc}); falling back to remote STT.")
+            benchmark.add_error(f"Local STT error: {exc}")
+            _stt_unavailable = True
+    return _transcribe_remote_with_wake_gate(audio_data, benchmark)
+
+
 def recognition_callback(recognizer, audio_data):
     print("Recognition callback triggered.")
     benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
@@ -201,47 +290,22 @@ def recognition_callback(recognizer, audio_data):
             benchmark.emit_summary_once("discarded_audio")
             return
 
-        if WAKE_WORD_MODE == "local":
-            benchmark.mark_stage("local_wake_send")
-            wake_detected = _local_wake_word_detect(audio_data)
-            benchmark.mark_stage("local_wake_done")
-        else:
-            wake_detected = True
-
-        if not wake_detected:
-            print("Wake word not detected locally; skipping Whisper API call.")
-            benchmark.add_note("Local wake-word check rejected the clip before remote STT.")
-            benchmark.emit_summary_once("wake_word_rejected")
+        transcript = _acquire_transcript(audio_data, benchmark)
+        if transcript is None:
             return
 
-        wav_bytes = audio_data.get_wav_data()
-        audio_file = io.BytesIO(wav_bytes)
-        audio_file.name = "speech.wav"
-
-        benchmark.mark_stage("stt_send")
-        whisper_result = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            response_format="verbose_json",
-            language="en",
-            temperature=0,
-            timestamp_granularities=["word"],
-        )
-        benchmark.mark_stage("stt_done")
-
-        text_spoken = _extract_transcription_text(whisper_result).strip().lower()
+        text_spoken = transcript.strip().lower()
         if not text_spoken:
             print("No transcription returned.")
-            benchmark.add_note("Remote STT returned an empty transcript.")
+            benchmark.add_note("STT returned an empty transcript.")
             benchmark.emit_summary_once("empty_transcript")
             return
 
         benchmark.set_transcript(text_spoken)
-        benchmark.note_wake_word_offsets(_extract_transcription_words(whisper_result))
         print(f"User said: {text_spoken}")
 
         if text_spoken.startswith(WAKE_WORD):
-            command = text_spoken[len(WAKE_WORD):].strip()
+            command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
             print(f"Command received: {command}")
             if command:
                 benchmark.set_command(command)
@@ -282,6 +346,97 @@ def run_voice_recognition():
 
 def handle_command(command, benchmark=None):
     print(f"Handling voice command: {command}")
+    if VOICE_STREAMING:
+        progress = {"spoke": False}
+        try:
+            _handle_command_streaming(command, benchmark, progress)
+            return
+        except Exception as exc:
+            print(f"Streaming voice path error: {exc}")
+            if benchmark:
+                benchmark.add_error(f"Streaming path error: {exc}")
+            if progress["spoke"]:
+                # Audio already started; do not replay via the fallback path.
+                if benchmark:
+                    benchmark.emit_summary_once("voice_worker_error")
+                return
+            print("Falling back to non-streaming voice path.")
+    _handle_command_legacy(command, benchmark)
+
+
+def _handle_command_streaming(command, benchmark, progress):
+    """Stream the agent response and speak it sentence-by-sentence as it arrives."""
+    output_device_index = _resolve_output_device_index()
+    print(f"Opening streaming playback on output device: {_describe_output_device(output_device_index)}")
+    stream = audio_interface.open(
+        format=audio_interface.get_format_from_width(2),
+        channels=1,
+        rate=16000,
+        output=True,
+        output_device_index=output_device_index,
+    )
+    marks = {"polly": False}
+
+    def synth(text):
+        if benchmark and not marks["polly"]:
+            marks["polly"] = True
+            benchmark.mark_stage("polly_send")
+        with contextlib.closing(
+            polly_client.synthesize_speech(
+                VoiceId="Brian",
+                OutputFormat="pcm",
+                SampleRate="16000",
+                Text=text,
+                Engine="neural",
+            ).get("AudioStream")
+        ) as audio_stream:
+            return [audio_stream.read()]
+
+    def sink(pcm):
+        stream.write(pcm)
+
+    def on_first_audio():
+        progress["spoke"] = True
+        if benchmark:
+            benchmark.mark_stage("first_audio")
+            benchmark.emit_summary_once("first_audio")
+
+    def tracked_deltas():
+        if benchmark:
+            benchmark.mark_stage("llm_send")
+        seen_first = False
+        for delta in stream_message(
+            command,
+            session_id=VOICE_SESSION_ID,
+            source="voice",
+            base_url=VOICE_AGENT_URL,
+            token=VOICE_AGENT_TOKEN,
+            timeout=None,
+        ):
+            if not seen_first:
+                seen_first = True
+                if benchmark:
+                    benchmark.mark_stage("llm_first_done")
+            yield delta
+
+    speaker = StreamingSpeaker(synth, sink, on_first_audio=on_first_audio)
+    try:
+        response_text = speaker.speak_stream(tracked_deltas())
+    finally:
+        try:
+            stream.stop_stream()
+            stream.close()
+        except Exception:
+            pass
+
+    if benchmark:
+        benchmark.mark_stage("llm_done")
+        benchmark.set_response_text(response_text)
+    print(f"Bot response: {response_text}")
+
+
+def _handle_command_legacy(command, benchmark=None):
+    print(f"Handling voice command (legacy path): {command}")
     try:
         if benchmark:
             benchmark.mark_stage("llm_send")

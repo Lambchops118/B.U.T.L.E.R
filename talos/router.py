@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import queue
+import re
 from typing import Optional
 
 from talos.agent import runtime as agent_runtime
+from talos.config import env_bool
 from talos.jobs import TERMINAL_STATUSES, JobManager, JobRecord, get_default_job_store
 from talos.messages import Message, StatusPayload, TextPayload, VoicePayload
 from talos.request_classifier import RequestClassification, classify_request
@@ -11,6 +13,36 @@ from talos.state_store import StateStore
 
 
 BACKGROUND_ACK = "I can do that. I'm working on it now."
+# The voice lane is latency-sensitive: skip the extra model-based route call and
+# rely on the local heuristic classifier. Set TALOS_VOICE_MODEL_ROUTING=1 to
+# restore the LLM route decision for voice commands.
+VOICE_MODEL_ROUTING_ENABLED = env_bool("TALOS_VOICE_MODEL_ROUTING", False)
+PHONE_FOREGROUND_PATTERNS = (
+    re.compile(r"\bplace_phone_call\b"),
+    re.compile(r"\bcall now\b"),
+    re.compile(r"\bplace (?:the )?call\b"),
+    re.compile(r"\bmake (?:the |a )?call\b"),
+    re.compile(r"\btry (?:the )?call\b"),
+    re.compile(r"\bdial\b"),
+    re.compile(r"^phone\b"),
+    re.compile(r"\bring\b"),
+    re.compile(r"^call\b"),
+    re.compile(r"\bgive\b.{0,40}\ba call\b"),
+)
+CODE_CALL_EXCLUSIONS = {
+    "function",
+    "functions",
+    "method",
+    "methods",
+    "api",
+    "tool",
+    "tools",
+    "script",
+    "class",
+    "endpoint",
+    "number",
+    "numbers",
+}
 
 
 def _run_agent_command(
@@ -102,10 +134,16 @@ def _classify_with_context(
     session_id: str,
     runtime_context: str,
     requested_mode: str = "auto",
+    allow_model_route: bool = True,
 ) -> RequestClassification:
-    explicit_decision = classify_request(command, source=source, requested_mode=requested_mode)
-    if explicit_decision.reason.startswith("explicit "):
-        return explicit_decision
+    heuristic_decision = classify_request(command, source=source, requested_mode=requested_mode)
+    if heuristic_decision.reason.startswith("explicit "):
+        return heuristic_decision
+
+    # Voice (and any lane opting out of model routing) uses the local heuristic
+    # directly to avoid an extra LLM round-trip in the hot path.
+    if not allow_model_route:
+        return heuristic_decision
 
     try:
         payload = agent_runtime.classify_request_route(
@@ -122,6 +160,36 @@ def _classify_with_context(
     except Exception as exc:
         print(f"TALOS route decision failed; falling back to heuristic classifier: {exc}")
         return classify_request(command, source=source, requested_mode=requested_mode)
+
+
+def _must_run_in_foreground(command: str) -> bool:
+    normalized = " ".join(str(command or "").lower().split())
+    if not normalized:
+        return False
+    if normalized.startswith("call "):
+        tokens = set(normalized.split())
+        if tokens & CODE_CALL_EXCLUSIONS:
+            return False
+    if normalized.startswith("phone "):
+        tokens = set(normalized.split())
+        if tokens & CODE_CALL_EXCLUSIONS:
+            return False
+    return any(pattern.search(normalized) for pattern in PHONE_FOREGROUND_PATTERNS)
+
+
+def _enforce_foreground_for_sensitive_actions(
+    command: str,
+    decision: RequestClassification,
+) -> RequestClassification:
+    if decision.mode != "background":
+        return decision
+    if _must_run_in_foreground(command):
+        return RequestClassification(
+            mode="foreground",
+            reason="phone call actions must stay in the active foreground session",
+            response="",
+        )
+    return decision
 
 
 def _compact_text(value: str, limit: int) -> str:
@@ -168,7 +236,9 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     source="voice",
                     session_id="voice",
                     runtime_context=runtime_context,
+                    allow_model_route=VOICE_MODEL_ROUTING_ENABLED,
                 )
+                decision = _enforce_foreground_for_sensitive_actions(vp.command, decision)
                 if decision.mode == "status":
                     _run_agent_command(
                         vp.command,
@@ -209,7 +279,9 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     session_id=tp.session_id,
                     runtime_context=runtime_context,
                     requested_mode=tp.requested_mode,
+                    allow_model_route=VOICE_MODEL_ROUTING_ENABLED or interaction_mode != "voice",
                 )
+                decision = _enforce_foreground_for_sensitive_actions(tp.command, decision)
                 try:
                     if decision.mode == "status":
                         response_text = _run_agent_command(

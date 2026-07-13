@@ -74,6 +74,19 @@ Optional voice settings:
 - `TALOS_WEATHER_UNITS`
 - `TALOS_MCP_SERVERS`
 
+Optional phone settings:
+
+- `TALOS_PHONE_ENABLED`
+- `TALOS_PHONE_PROVIDER`
+- `ELEVENLABS_API_KEY`
+- `TALOS_PHONE_AGENT_ID`
+- `TALOS_PHONE_NUMBER_ID`
+- `TALOS_PHONE_ALLOWED_OUTBOUND`
+- `TALOS_PHONE_BRIDGE_URL`
+- `TALOS_PHONE_BRIDGE_TOKEN`
+- `TALOS_PHONE_CONTACTS`
+- `TALOS_PHONE_ALLOWLIST`
+
 Optional text-agent settings:
 
 - `TEXT_AGENT_ENABLED`
@@ -102,6 +115,8 @@ The current flow is:
 3. The returned tools are merged into one tool surface for `talos/agent/runtime.py`.
 4. The runtime also exposes host-level helper tools for MCP resources: `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`.
 5. If the model chooses a tool, TALOS routes that call back to the MCP server that owns it.
+
+The runtime also exposes phone orchestration host tools directly from `talos/agent/runtime.py`: `place_phone_call`, `phone_call_status`, `recent_phone_calls`, and `summarize_phone_call`. These are session-aware host tools rather than MCP tools so TALOS can enforce the v1 outbound-call safety policy.
 
 Supported transports in the current client:
 
@@ -321,6 +336,62 @@ Start the voice worker separately:
 ```
 
 The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `TALOS_TEXT_AGENT_URL` and `TALOS_TEXT_AGENT_TOKEN`.
+
+### Phone Calling
+
+TALOS phone calling is intentionally separate from the room microphone voice worker.
+
+- The current `talos/voice/agent.py` path remains the local microphone pipeline.
+- Phone calls use ElevenLabs for the real-time conversational voice agent and Twilio for the phone number / PSTN transport.
+- TALOS handles safe outbound call initiation, local call history, transcript summaries, and bridge-based sync.
+
+The current phone implementation lives under:
+
+- `talos/phone/` for provider logic, policy, persistence, and user-facing phone commands
+- `talos/phone_bridge/` for the small public webhook/API service that should run outside the private TALOS host
+
+Recommended `.env` settings for TALOS itself:
+
+```env
+TALOS_PHONE_ENABLED=1
+TALOS_PHONE_PROVIDER=elevenlabs_twilio
+ELEVENLABS_API_KEY=...
+TALOS_PHONE_AGENT_ID=...
+TALOS_PHONE_NUMBER_ID=...
+TALOS_PHONE_ALLOWED_OUTBOUND=1
+TALOS_PHONE_BRIDGE_URL=https://your-public-phone-bridge.example.com
+TALOS_PHONE_BRIDGE_TOKEN=shared-bridge-token
+TALOS_PHONE_CONTACTS={"mom":"+15555550123"}
+TALOS_PHONE_ALLOWLIST=["+15555550123"]
+```
+
+Recommended bridge settings in the separate public deployment:
+
+```env
+PHONE_BRIDGE_API_TOKEN=shared-bridge-token
+PHONE_BRIDGE_WEBHOOK_TOKEN=separate-webhook-token
+TALOS_PHONE_DB_PATH=/absolute/path/to/bridge_phone.sqlite3
+```
+
+Run the public bridge with:
+
+```bash
+.venv-main/bin/python -m uvicorn talos.phone_bridge.app:app --host 0.0.0.0 --port 8787
+```
+
+Then configure the ElevenLabs post-call webhook URL to target:
+
+```text
+https://your-public-phone-bridge.example.com/webhooks/elevenlabs?token=separate-webhook-token
+```
+
+Notes:
+
+- v1 outbound calls are allowed only from the active foreground user session.
+- Raw E.164 numbers must be present in `TALOS_PHONE_ALLOWLIST`.
+- Named contacts must resolve through `TALOS_PHONE_CONTACTS`.
+- In the ElevenLabs agent security settings, enable `First message` and `System prompt` overrides. TALOS uses those per-call overrides, plus dynamic variables, so the phone agent knows who it called, why it called, and what message to deliver.
+- The bridge is the only component that should be internet-facing; keep the main TALOS runtime private.
 
 ### Text Chat Over Tailscale
 

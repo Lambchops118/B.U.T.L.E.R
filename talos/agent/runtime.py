@@ -14,6 +14,13 @@ from talos.config import env_bool, env_float, env_int, load_environment, require
 from talos.memory import MemoryStore, get_default_memory_store
 from talos.mcp_client import get_local_mcp_client, shutdown_local_mcp_client
 from talos.tool_arguments import parse_tool_arguments
+from talos.voice.backends.base import (
+    LLMCompletion,
+    LLMTextDelta,
+    LLMToolCall,
+    chat_messages_to_tool_result,
+    tool_calls_to_assistant_message,
+)
 
 
 load_environment()
@@ -68,6 +75,10 @@ HOST_TOOL_NAMES = {
     "start_mcp_server",
     "remember_memory_fact",
     "list_memory_facts",
+    "place_phone_call",
+    "phone_call_status",
+    "recent_phone_calls",
+    "summarize_phone_call",
 }
 
 KICAD_PREFERRED_TOOL_SUFFIXES = {
@@ -158,6 +169,13 @@ MINECRAFT_RELEVANT_TERMS = {
     "crash",
     "mixin",
     "modloadingexception",
+}
+PHONE_RELEVANT_TERMS = {
+    "call",
+    "phone",
+    "dial",
+    "ring",
+    "voice",
 }
 MINECRAFT_PATH_HINTS = (
     "world/serverconfig/",
@@ -344,6 +362,99 @@ def _resource_tool_definitions() -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
+        {
+            "type": "function",
+            "name": "place_phone_call",
+            "description": (
+                "Place an outbound phone call through the configured ElevenLabs/Twilio phone agent. "
+                "Use this only when the user directly asks you to make the call now. "
+                "The target must be either a configured contact name or an allowlisted E.164 number. "
+                "If the user wants you to report weather, KiCad status, or any other result, gather that information first, "
+                "then pass the exact spoken report in message_to_deliver."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_or_number": {
+                        "type": "string",
+                        "description": "Configured contact name or allowlisted E.164 number to call.",
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Short reason for the call.",
+                    },
+                    "brief_context": {
+                        "type": "string",
+                        "description": "Optional concise context the phone agent should know before the call starts.",
+                    },
+                    "message_to_deliver": {
+                        "type": "string",
+                        "description": "The exact report or message the phone agent should deliver on the call after introducing itself as TALOS.",
+                    },
+                },
+                "required": ["contact_or_number"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "phone_call_status",
+            "description": "Read the current status, transcript, and metadata for one phone call by call id.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "call_id": {
+                        "type": "string",
+                        "description": "The TALOS phone call id, usually the ElevenLabs conversation id.",
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "Refresh from the configured phone bridge before reading the status. Defaults to true.",
+                    },
+                },
+                "required": ["call_id"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "recent_phone_calls",
+            "description": "List recent phone calls known to TALOS, including inbound and outbound calls.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum calls to return. Defaults to 10.",
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "Refresh from the configured phone bridge before listing calls. Defaults to true.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "summarize_phone_call",
+            "description": "Return a compact TALOS summary of a phone call by call id.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "call_id": {
+                        "type": "string",
+                        "description": "The TALOS phone call id, usually the ElevenLabs conversation id.",
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "Refresh from the configured phone bridge before summarizing the call. Defaults to true.",
+                    },
+                },
+                "required": ["call_id"],
+                "additionalProperties": False,
+            },
+        },
     ]
 
 
@@ -492,6 +603,8 @@ def _domain_overlays_for_command(command: str, tool_defs: list[dict[str, Any]]) 
         overlays.append("kicad")
     if _is_minecraft_request(command, tool_defs):
         overlays.append("minecraft")
+    if _is_phone_request(command, tool_defs):
+        overlays.append("phone")
     return tuple(overlays)
 
 
@@ -667,6 +780,15 @@ def _is_minecraft_request(command: str, tool_defs: list[dict[str, Any]]) -> bool
     if bool(_tokenize_lowered(command) & MINECRAFT_RELEVANT_TERMS):
         return True
     return any(hint in lowered for hint in MINECRAFT_PATH_HINTS)
+
+
+def _is_phone_request(command: str, tool_defs: list[dict[str, Any]]) -> bool:
+    lowered = command.lower()
+    if "place_phone_call" in lowered:
+        return True
+    if not any(str(tool.get("name") or "") == "place_phone_call" for tool in tool_defs):
+        return False
+    return bool(_tokenize_lowered(command) & PHONE_RELEVANT_TERMS)
 
 
 def _format_kicad_backend_context(raw_output: str, command: str) -> str | None:
@@ -1116,6 +1238,7 @@ def _invoke_host_tool(
     arguments: Any,
     *,
     session_id: str = "default",
+    runtime_lane: str = "foreground",
 ) -> str:
     parsed_arguments = _parse_function_arguments(arguments)
     if name == "list_mcp_resources":
@@ -1204,6 +1327,46 @@ def _invoke_host_tool(
                 ],
             }
         )
+    if name == "place_phone_call":
+        from talos.phone import place_phone_call
+
+        return json.dumps(
+            place_phone_call(
+                str(parsed_arguments.get("contact_or_number") or ""),
+                purpose=str(parsed_arguments.get("purpose") or ""),
+                brief_context=str(parsed_arguments.get("brief_context") or ""),
+                message_to_deliver=str(parsed_arguments.get("message_to_deliver") or ""),
+                session_id=session_id,
+                runtime_lane=runtime_lane,
+            )
+        )
+    if name == "phone_call_status":
+        from talos.phone import phone_call_status
+
+        return json.dumps(
+            phone_call_status(
+                str(parsed_arguments.get("call_id") or ""),
+                refresh=bool(parsed_arguments.get("refresh", True)),
+            )
+        )
+    if name == "recent_phone_calls":
+        from talos.phone import recent_phone_calls
+
+        return json.dumps(
+            recent_phone_calls(
+                limit=int(parsed_arguments.get("limit") or 10),
+                refresh=bool(parsed_arguments.get("refresh", True)),
+            )
+        )
+    if name == "summarize_phone_call":
+        from talos.phone import summarize_phone_call
+
+        return json.dumps(
+            summarize_phone_call(
+                str(parsed_arguments.get("call_id") or ""),
+                refresh=bool(parsed_arguments.get("refresh", True)),
+            )
+        )
     raise KeyError(name)
 
 
@@ -1212,6 +1375,7 @@ def _collect_tool_outputs(
     mcp_client: Any,
     *,
     session_id: str = "default",
+    runtime_lane: str = "foreground",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     tool_outputs = []
     tool_events: list[dict[str, Any]] = []
@@ -1227,6 +1391,7 @@ def _collect_tool_outputs(
                     item.name,
                     item.arguments,
                     session_id=session_id,
+                    runtime_lane=runtime_lane,
                 )
             else:
                 result = mcp_client.call_tool(item.name, item.arguments)
@@ -1327,6 +1492,7 @@ def run_command(
                     response,
                     mcp_client,
                     session_id=session_id,
+                    runtime_lane=runtime_lane,
                 )
                 if recent_events:
                     tool_events.extend(recent_events)
@@ -1404,6 +1570,184 @@ def run_command(
     if benchmark:
         benchmark.set_response_text(response_text)
     return response_text
+
+
+def _get_stream_backend():
+    """Build the streaming Chat Completions backend for :func:`run_command_stream`.
+
+    Defaults to the same OpenAI model the Responses path uses, so streaming works
+    out of the box with the existing key. Point ``TALOS_LLM_BASE_URL`` /
+    ``TALOS_LLM_MODEL`` at a local server (Ollama on macOS, vLLM on CUDA) to go
+    fully local with no code change.
+    """
+    from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
+
+    model = os.getenv("TALOS_LLM_MODEL", "").strip() or ai_model
+    base_url = os.getenv("TALOS_LLM_BASE_URL", "").strip() or None
+    api_key = (
+        os.getenv("TALOS_LLM_API_KEY", "").strip()
+        or os.getenv("OPENAI_API_KEY", "").strip()
+        or None
+    )
+    # OpenAI's newer models want max_completion_tokens; Ollama/vLLM want max_tokens.
+    max_tokens_param = os.getenv("TALOS_LLM_MAX_TOKENS_PARAM", "").strip()
+    if not max_tokens_param:
+        is_openai = base_url is None or "openai.com" in base_url
+        max_tokens_param = "max_completion_tokens" if is_openai else "max_tokens"
+    return OpenAICompatibleChatBackend(
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        temperature=0.5,
+        max_tokens=AGENT_MAX_OUTPUT_TOKENS,
+        max_tokens_param=max_tokens_param,
+    )
+
+
+def _execute_chat_tool_calls(
+    tool_calls: tuple[LLMToolCall, ...],
+    mcp_client: Any,
+    *,
+    session_id: str,
+    runtime_lane: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Execute streamed tool calls and return (tool result messages, events).
+
+    Reuses the exact host/MCP dispatch as the non-streaming path so tools behave
+    identically regardless of which LLM API produced the call.
+    """
+    messages: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    for call in tool_calls:
+        print(f"FUNCTION CALL DETECTED (stream): {call.name} with args {call.arguments}")
+        try:
+            if call.name in HOST_TOOL_NAMES:
+                result = _invoke_host_tool(
+                    mcp_client,
+                    call.name,
+                    call.arguments,
+                    session_id=session_id,
+                    runtime_lane=runtime_lane,
+                )
+            else:
+                result = mcp_client.call_tool(call.name, call.arguments)
+        except KeyError:
+            result = f"Unknown function: {call.name}"
+        except Exception as exc:  # noqa: BLE001 - surfaced back to the model
+            result = f"Error calling {call.name}: {exc}"
+
+        shaped_output = _shape_tool_output(call.name, result)
+        messages.append(chat_messages_to_tool_result(call, shaped_output))
+        events.append(
+            {
+                "name": call.name,
+                "raw_result": str(result),
+                "output": shaped_output,
+                "failed": _tool_result_indicates_failure(str(result)),
+            }
+        )
+    return messages, events
+
+
+def run_command_stream(
+    command: str,
+    state_snapshot: str = "no recent status",
+    *,
+    session_id: str = "default",
+    interaction_mode: str | None = None,
+    runtime_lane: str = "foreground",
+    extra_context: str | None = None,
+):
+    """Streaming variant of :func:`run_command`.
+
+    Yields assistant text fragments as they are generated so the caller can begin
+    speaking on the first sentence. Tool-call rounds are executed transparently;
+    only the final assistant turn produces spoken text (tool-calling turns emit no
+    content). Reuses the same prompt, tool, and memory machinery as
+    :func:`run_command`.
+
+    Note: cross-turn threading (the Responses ``previous_response_id``) is not
+    replicated here yet; per-session continuity comes from the memory block
+    injected into the prompt. Within a single request the tool loop keeps full
+    message history.
+    """
+    mcp_client = get_local_mcp_client()
+    tool_defs = _build_tool_definitions(mcp_client)
+    mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
+    memory_store = _get_memory_store()
+    if memory_store is not None:
+        try:
+            memory_store.record_session(session_id, metadata={"interaction_mode": mode})
+        except Exception as exc:
+            print(f"TALOS memory session write failed: {_truncate_text(str(exc), 300)}")
+            memory_store = None
+    memory_block = _get_prompt_memory(memory_store, session_id, command)
+    instructions = _build_prompt_instructions(
+        command,
+        session_id,
+        tool_defs,
+        memory_block=memory_block,
+        interaction_mode=mode,
+        extra_context=extra_context,
+    )
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": instructions}]
+    context_message = _format_context(state_snapshot)
+    if context_message:
+        messages.append({"role": "system", "content": context_message})
+    _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
+    _maybe_add_minecraft_context(messages, tool_defs, command)
+    messages.append({"role": "user", "content": command})
+
+    backend = _get_stream_backend()
+    thread_key = _response_thread_key(session_id, runtime_lane)
+    full_text_parts: list[str] = []
+
+    with _get_conversation_lock(thread_key):
+        rounds = 0
+        while True:
+            turn_text_parts: list[str] = []
+            completion: LLMCompletion | None = None
+            for event in backend.stream(messages, tools=tool_defs):
+                if isinstance(event, LLMTextDelta):
+                    if event.text:
+                        turn_text_parts.append(event.text)
+                        full_text_parts.append(event.text)
+                        yield event.text
+                elif isinstance(event, LLMCompletion):
+                    completion = event
+            if completion is None:
+                break
+
+            if not completion.wants_tools:
+                break
+
+            if rounds >= MAX_TOOL_CALL_ROUNDS:
+                limit_note = " I reached the tool-call limit before finishing that request."
+                full_text_parts.append(limit_note)
+                yield limit_note
+                break
+
+            messages.append(
+                tool_calls_to_assistant_message("".join(turn_text_parts), completion.tool_calls)
+            )
+            tool_messages, _events = _execute_chat_tool_calls(
+                completion.tool_calls,
+                mcp_client,
+                session_id=session_id,
+                runtime_lane=runtime_lane,
+            )
+            messages.extend(tool_messages)
+            rounds += 1
+
+    response_text = "".join(full_text_parts).replace("Monkey Butler:", "").strip()
+    _record_memory_turn(
+        memory_store,
+        session_id,
+        command,
+        response_text,
+        interaction_mode=mode,
+    )
 
 
 def reset_session(session_id: str) -> None:
