@@ -65,7 +65,12 @@ class AwarenessSettings(BaseSettings):
     # --- LLM host (same machine as this backend per owner decision) --------
     ollama_host: str = "http://127.0.0.1:11434"
     chat_model: str = ""
-    embedding_model: str = ""
+    # Local Ollama embedding model (Phase 6). Embedding work queues in the
+    # outbox and retries while Ollama/the model is unavailable.
+    embedding_model: str = "nomic-embed-text"
+    # Must match the pgvector column dimension (db/models.EMBEDDING_DIMENSION);
+    # changing model families requires a migration and re-embedding.
+    embedding_dimension: int = Field(default=768, ge=1)
 
     # --- MQTT (consumed from Phase 2 onward) --------------------------------
     mqtt_enabled: bool = True
@@ -116,6 +121,10 @@ class AwarenessSettings(BaseSettings):
     situation_budget_tokens: int = Field(default=600, ge=50)
     situation_max_items_per_section: int = Field(default=20, ge=1)
     situation_transition_window_minutes: int = Field(default=60, ge=1)
+
+    # --- long-term memory (Phase 6) --------------------------------------------
+    memory_statement_max_chars: int = Field(default=2000, ge=10)
+    memory_search_max_limit: int = Field(default=50, ge=1)
 
     @field_validator("db_port", "api_port", "mqtt_port")
     @classmethod

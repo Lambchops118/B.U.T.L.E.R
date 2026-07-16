@@ -111,7 +111,7 @@ async def get_capabilities(request: Request) -> dict:
             "get_active_alerts": reads,
             "get_event_provenance": reads,
             "get_system_health": "available",
-            "search_memory": "not_yet_implemented (Phase 6)",
+            "search_memory": reads + "; semantic (vector) component degrades to full-text while Ollama is unavailable" if db_ok else reads,
             "actions": "not_yet_implemented (Phase 7)",
         }
     }

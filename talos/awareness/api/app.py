@@ -13,12 +13,15 @@ from talos.awareness.alerts.service import AlertService
 from talos.awareness.api.routes import alerts as alert_routes
 from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
+from talos.awareness.api.routes import memory as memory_routes
 from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.config import AwarenessSettings, load_settings
 from talos.awareness.db.session import build_engine
 from talos.awareness.health.service import HealthService
 from talos.awareness.logging_utils import configure_logging, get_logger
 from talos.awareness.notifications.adapters import build_adapters
+from talos.awareness.memory.embeddings import EmbeddingHandler
+from talos.awareness.memory.service import MemoryService
 from talos.awareness.notifications.handler import NotificationHandler
 from talos.awareness.outbox.worker import OutboxWorker
 from talos.awareness.rules.engine import RuleEngine
@@ -77,10 +80,21 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         app.state.freshness = freshness
 
         adapters = build_adapters(settings)
+        memory_service = MemoryService(engine, settings)
+
+        async def episode_handler(payload: dict) -> None:
+            from uuid import UUID as _UUID
+
+            await memory_service.create_episode_from_alert(_UUID(payload["alert_id"]))
+
         outbox = OutboxWorker(
             engine,
             settings,
-            {"notification": NotificationHandler(engine, adapters)},
+            {
+                "notification": NotificationHandler(engine, adapters),
+                "embedding": EmbeddingHandler(engine, settings),
+                "memory_episode": episode_handler,
+            },
         )
         outbox_stop = asyncio.Event()
         outbox_task = asyncio.create_task(outbox.run(outbox_stop), name="awareness-outbox")
@@ -111,6 +125,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
     app.include_router(read_routes.router)
     app.include_router(alert_routes.router)
     app.include_router(context_routes.router)
+    app.include_router(memory_routes.router)
     return app
 
 

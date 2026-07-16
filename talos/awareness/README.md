@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 5 (Situation, Context, and Read Tools) complete.**
+**Status: Phase 6 (Long-Term Memory) complete.**
 
 ## Setup
 
@@ -311,6 +311,51 @@ aggregates, trust/why → provenance/health — exact questions never route to
 vector search. `search_memory` is reported `not_yet_implemented` by
 `GET /capabilities` until Phase 6.
 
+## Long-term memory (Phase 6)
+
+### Types, write paths, and evidence
+
+`memories` holds **semantic** (facts/preferences with validity) and
+**episodic** (meaningful incidents) records; working state stays in
+`current_state`/sessions, telemetry stays structured, and conversations/
+messages remain in the main agent's SQLite store — they are evidence
+references (`memory_provenance`), never memory rows. Two write paths:
+
+1. **Deterministic** (`POST /memory/deterministic`) for unambiguous,
+   policy-permitted facts — the main agent's `remember_memory_fact` tool now
+   mirrors explicit user facts here (SQLite stays authoritative for prompt
+   assembly; the response reports `awareness_memory_synced` truthfully).
+2. **Candidates** (`POST /memory/candidates`): a model may only propose a
+   strict typed candidate (statement, scope, structured content, evidence,
+   model/prompt version). The manager validates every evidence reference
+   (dangling event/alert ids are rejected), records accept/reject decisions
+   on the row itself, dedupes idempotently by content hash, and assigns
+   confidence (explicit user confirmation ≫ weak inference).
+
+Changed facts are never overwritten: the old row closes validity, becomes
+`superseded`, and the replacement links it (`supersedes`). Inconclusive
+conflict keeps both rows active with a `conflicts_with` relation. A resolved
+alert automatically queues an episodic memory linking the alert and its
+evidence events. Explicit deletion is soft and audited (reason + timestamp in
+metadata). Access counters never touch validity.
+
+### Embeddings and hybrid search
+
+Embedding is asynchronous outbox work (`work_type=embedding`) against local
+Ollama (`TALOS_AWARENESS_EMBEDDING_MODEL`, default `nomic-embed-text`,
+768-dim — the pgvector column dimension is fixed; changing model families
+requires a migration and re-embedding). Ollama outage queues bounded retries
+and **never blocks acceptance or full-text search**. Only memory statements
+are embedded — raw telemetry, heartbeats, transcripts, and binaries never
+enter the corpus because they never become memories. `GET /memory/search`
+combines full-text (`tsvector`), vector cosine (when embeddings and a query
+embedding exist; `vector_used` reports which), recency, importance, and
+confidence with **component scores exposed**; results exclude rejected/
+superseded/expired/deleted/out-of-sensitivity rows (`max_sensitivity`,
+default `personal`). Exact current/numeric/temporal questions still route to
+the structured tools, not memory search. The `search_memory` MCP tool exposes
+this to both LLM lanes.
+
 ## Tests
 
 ```bash
@@ -327,7 +372,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
   tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
-  tests.test_awareness_context_integration
+  tests.test_awareness_context_integration tests.test_awareness_memory_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
 .venv-main/bin/python -m unittest tests.test_text_server_notify \
@@ -352,13 +397,13 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
 | R10 | Avoid unnecessary LLM context use | C12 | ✅ hard token budget, priority truncation, audit (Phase 5) |
 | R11 | Selectively push only relevant data to the LLM | C7, C12 | ✅ relevance-selected situation; critical alerts always survive (Phase 5) |
-| R12 | Allow the LLM to retrieve additional information | C13 | 🔶 seven bounded read tools via MCP (Phase 5); search_memory in Phase 6 |
-| R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | ✅ alerts + fallback notifications are Ollama-free by construction (Phase 4) |
+| R12 | Allow the LLM to retrieve additional information | C13 | ✅ read tools + search_memory (Phases 5-6) |
+| R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | ✅ deterministic paths Ollama-free; embedding outage queues + full-text continues (Phases 4+6) |
 | R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | ✅ pipeline dedup/sequence/gap/reorder/boot-reset classification (Phase 2); state-facing effects in Phase 3 |
 | R15 | Persist critical downstream work reliably | C10 | ✅ transactional outbox + claiming worker with backoff/dead-letter/manual retry (Phase 4) |
 | R16 | Support stale, conflicting, unknown, offline state | C5 | ✅ stale/unknown/conflicting/offline statuses with deterministic transitions (Phase 3) |
-| R17 | Support validated semantic and episodic memory | C11 | ⬜ Phase 6 |
-| R18 | Preserve provenance and temporal validity of memory | C11 | ⬜ Phase 6 |
+| R17 | Support validated semantic and episodic memory | C11 | ✅ validated semantic/episodic memory with candidate path (Phase 6) |
+| R18 | Preserve provenance and temporal validity of memory | C11 | ✅ provenance links, validity, supersession chains (Phase 6) |
 | R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 configurable endpoints + resilient broker client with truthful connection health (Phase 2) |
 | R20 | Integrate with current code without unnecessary rewrites | Phase 0, C18 | ✅ additive package + separate process/venv |
 | R21 | Validate physical actions and record acknowledgements | C14 | ⬜ Phase 7 |

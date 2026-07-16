@@ -188,7 +188,25 @@ class AlertService:
                 )
                 .on_conflict_do_nothing(index_elements=["alert_id", "event_id"])
             )
+        for row in resolved:
+            await self._queue_episode(connection, row.alert_id, now)
         return len(resolved)
+
+    async def _queue_episode(self, connection, alert_id, now: datetime) -> None:
+        """A completed incident is a meaningful episode trigger (Phase 6);
+        the outbox handler builds the episodic memory asynchronously."""
+        await connection.execute(
+            pg_insert(OutboxItem)
+            .values(
+                work_type="memory_episode",
+                aggregate_type="alert",
+                aggregate_id=str(alert_id),
+                payload={"alert_id": str(alert_id)},
+                idempotency_key=f"episode:{alert_id}",
+                available_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=["idempotency_key"])
+        )
 
     async def set_status(
         self,
@@ -209,6 +227,8 @@ class AlertService:
             result = await connection.execute(
                 sa.update(Alert).where(Alert.alert_id == alert_id).values(**values)
             )
+            if result.rowcount and status == "resolved":
+                await self._queue_episode(connection, alert_id, now)
         return bool(result.rowcount)
 
     # --- attention and notification intent -----------------------------------

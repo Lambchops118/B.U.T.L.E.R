@@ -118,6 +118,30 @@ def register(server: FastMCP) -> None:
         return _call(f"/provenance/{event_id}")
 
     @server.tool()
+    def search_memory(
+        query: str,
+        limit: int = 10,
+        memory_type: str = "",
+        scope: str = "",
+    ) -> str:
+        """Search validated long-term memory (facts, preferences, past
+        incidents) by meaning and keywords. Use for "what do you remember
+        about X", past episodes, and user preferences — NOT for current
+        device state or numeric history (use the state/history tools for
+        exact questions). Results carry component scores, validity, and
+        provenance-backed statements; superseded and deleted memories are
+        excluded."""
+        return _call(
+            "/memory/search",
+            {
+                "query": query,
+                "limit": max(1, min(limit, 25)),
+                "memory_type": memory_type or None,
+                "scope": scope or None,
+            },
+        )
+
+    @server.tool()
     def get_awareness_capabilities() -> str:
         """What the awareness subsystem can and cannot do right now
         (available / degraded / not_yet_implemented)."""

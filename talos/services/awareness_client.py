@@ -67,6 +67,30 @@ def get_json(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         raise RuntimeError(f"awareness backend unreachable ({path}): {exc}") from exc
 
 
+def post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Bounded POST; raises RuntimeError with a clear, short message."""
+    url = _base_url() + path
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_timeout()) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
+        except Exception:
+            detail = ""
+        raise RuntimeError(
+            f"awareness API {exc.code} for {path}: {detail or exc.reason}"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"awareness backend unreachable ({path}): {exc}") from exc
+
+
 def fetch_situation_text(budget_tokens: int | None = None) -> str | None:
     """Rendered situation snapshot, or None when unavailable/disabled."""
     if not situation_enabled():

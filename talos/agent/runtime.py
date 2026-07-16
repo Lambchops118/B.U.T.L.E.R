@@ -1296,11 +1296,39 @@ def _invoke_host_tool(
             salience=salience,
             source_session_id=session_id,
         )
+        # Phase 6: mirror the explicit user fact into the awareness
+        # subsystem's validated long-term memory (supersession-aware,
+        # provenance-backed). The SQLite store above stays authoritative for
+        # prompt assembly; failures here are reported, not hidden.
+        awareness_synced = False
+        try:
+            from talos.services import awareness_client
+
+            awareness_client.post_json(
+                "/memory/deterministic",
+                {
+                    "statement": f"{key}: {value}",
+                    "scope": scope,
+                    "structured_content": {"key": key, "value": value},
+                    "evidence": [
+                        {
+                            "kind": "user_confirmation",
+                            "reference": f"session:{session_id}",
+                            "metadata": {"tool": "remember_memory_fact"},
+                        }
+                    ],
+                    "importance": min(1.0, max(0.0, salience / 10.0)),
+                },
+            )
+            awareness_synced = True
+        except Exception:
+            awareness_synced = False
         return json.dumps(
             {
                 "success": True,
                 "scope": scope,
                 "key": key,
+                "awareness_memory_synced": awareness_synced,
                 "message": "Memory fact stored.",
             }
         )

@@ -21,8 +21,13 @@ from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Embedding dimension is fixed per column in pgvector; changing it (or the
+# model family) requires a migration and re-embedding — see the README.
+EMBEDDING_DIMENSION = 768
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -40,6 +45,20 @@ ATTENTION_DELIVERY_STATUSES = ("pending", "delivering", "delivered", "failed", "
 SOURCE_HEALTH_STATUSES = ("healthy", "degraded", "stale", "offline", "misconfigured", "unauthorized", "unknown")
 CLOCK_QUALITIES = ("unknown", "unsynchronized", "device_local", "device_synced", "gateway_stamped", "server_received")
 OUTBOX_STATUSES = ("pending", "completed", "failed", "dead_letter")
+MEMORY_TYPES = ("semantic", "episodic")
+MEMORY_STATUSES = ("candidate", "accepted", "rejected", "active", "superseded", "expired", "deleted")
+MEMORY_SENSITIVITIES = ("normal", "personal", "sensitive", "restricted")
+MEMORY_PROVENANCE_KINDS = (
+    "event",
+    "alert",
+    "message",
+    "conversation",
+    "source",
+    "user_confirmation",
+    "extraction_job",
+    "model",
+)
+MEMORY_RELATIONS = ("supersedes", "conflicts_with", "duplicates", "derived_from")
 ENTITY_TYPES = (
     "person",
     "plant",
@@ -486,6 +505,138 @@ class StateTransition(Base):
     reason: Mapped[str] = mapped_column(sa.String(50))
     source_event_id: Mapped[UUID | None] = mapped_column()
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class Memory(Base):
+    """Long-term semantic/episodic memory (C11, Phase 6). Changed facts are
+    never overwritten: validity closes, the row is marked superseded, and the
+    replacement links back via ``supersedes_memory_id``. The rendered
+    ``statement`` is separate from raw evidence (``memory_provenance``) so
+    re-extraction stays auditable."""
+
+    __tablename__ = "memories"
+    __table_args__ = (
+        _in_check("memory_type", MEMORY_TYPES, "memory_type_valid"),
+        _in_check("status", MEMORY_STATUSES, "status_valid"),
+        _in_check("sensitivity", MEMORY_SENSITIVITIES, "sensitivity_valid"),
+        sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        sa.CheckConstraint("importance >= 0 AND importance <= 1", name="importance_range"),
+        sa.Index("ix_memories_status_type", "status", "memory_type"),
+        sa.Index("ix_memories_scope", "scope"),
+        sa.Index("ix_memories_learned_at", "learned_at"),
+        # Repeated extraction of identical content is idempotent while the
+        # earlier row is still live.
+        sa.Index(
+            "uq_memories_live_content_hash",
+            "content_hash",
+            unique=True,
+            postgresql_where=sa.text(
+                "status IN ('candidate', 'accepted', 'active')"
+            ),
+        ),
+        sa.Index(
+            "ix_memories_statement_fts",
+            sa.text("to_tsvector('english', statement)"),
+            postgresql_using="gin",
+        ),
+    )
+
+    memory_id: Mapped[UUID] = mapped_column(primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    memory_type: Mapped[str] = mapped_column(sa.String(20))
+    statement: Mapped[str] = mapped_column(sa.Text)
+    structured_content: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    importance: Mapped[float] = mapped_column(server_default=sa.text("0.5"))
+    confidence: Mapped[float] = mapped_column(server_default=sa.text("0.5"))
+    scope: Mapped[str] = mapped_column(sa.String(200), server_default="general")
+    sensitivity: Mapped[str] = mapped_column(sa.String(20), server_default="normal")
+    valid_from: Mapped[datetime | None] = mapped_column()
+    valid_to: Mapped[datetime | None] = mapped_column()
+    learned_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+    expires_at: Mapped[datetime | None] = mapped_column()
+    superseded_at: Mapped[datetime | None] = mapped_column()
+    supersedes_memory_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("memories.memory_id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(sa.String(20), server_default="candidate")
+    embedding_model: Mapped[str | None] = mapped_column(sa.String(200))
+    embedding_dimension: Mapped[int | None] = mapped_column()
+    embedding_version: Mapped[str | None] = mapped_column(sa.String(50))
+    embedded_at: Mapped[datetime | None] = mapped_column()
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"), onupdate=sa.func.now())
+    last_accessed_at: Mapped[datetime | None] = mapped_column()
+    access_count: Mapped[int] = mapped_column(server_default=sa.text("0"))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+
+
+class MemoryEmbedding(Base):
+    """Vector for one memory; separate from the row so model/dimension
+    changes re-embed without touching memory content."""
+
+    __tablename__ = "memory_embeddings"
+    __table_args__ = (
+        sa.Index(
+            "ix_memory_embeddings_vector",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    memory_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("memories.memory_id", ondelete="CASCADE"), primary_key=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSION))
+    model: Mapped[str] = mapped_column(sa.String(200))
+    dimension: Mapped[int] = mapped_column()
+    version: Mapped[str | None] = mapped_column(sa.String(50))
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    embedded_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class MemoryProvenance(Base):
+    """Evidence links: which events/messages/confirmations back a memory."""
+
+    __tablename__ = "memory_provenance"
+    __table_args__ = (
+        _in_check("kind", MEMORY_PROVENANCE_KINDS, "kind_valid"),
+        sa.Index("ix_memory_provenance_memory_id", "memory_id"),
+        sa.Index("ix_memory_provenance_kind_ref", "kind", "reference"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    memory_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("memories.memory_id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(sa.String(30))
+    reference: Mapped[str] = mapped_column(sa.String(300))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class MemoryRelationship(Base):
+    """Typed links between memories (supersession, conflict, duplication)."""
+
+    __tablename__ = "memory_relationships"
+    __table_args__ = (
+        _in_check("relation", MEMORY_RELATIONS, "relation_valid"),
+        sa.UniqueConstraint(
+            "from_memory_id", "to_memory_id", "relation",
+            name="uq_memory_relationships_edge",
+        ),
+        sa.Index("ix_memory_relationships_to", "to_memory_id"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    from_memory_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("memories.memory_id", ondelete="CASCADE")
+    )
+    to_memory_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("memories.memory_id", ondelete="CASCADE")
+    )
+    relation: Mapped[str] = mapped_column(sa.String(30))
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
 
 

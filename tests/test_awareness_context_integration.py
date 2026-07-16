@@ -210,7 +210,8 @@ class ContextIntegrationTest(unittest.TestCase):
             # --- capabilities are truthful ------------------------------------
             capabilities = client.get("/capabilities").json()["capabilities"]
             self.assertEqual(capabilities["get_current_state"], "available")
-            self.assertIn("not_yet_implemented", capabilities["search_memory"])
+            self.assertIn("available", capabilities["search_memory"])
+            self.assertIn("not_yet_implemented", capabilities["actions"])
 
 
 if __name__ == "__main__":
