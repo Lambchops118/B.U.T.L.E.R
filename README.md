@@ -10,6 +10,7 @@ Monkey Butler is an artificial butler built around a locally hosted agent struct
 ## Project Layout
 
 - `talos/`: main locally-run agent, voice/text workers, scheduler, services, and MCP runtime
+- `talos/awareness/`: deterministic presence/state/history/alerts/memory backend (separate process, PostgreSQL-backed) — see [talos/awareness/README.md](talos/awareness/README.md)
 - `InfoPanel/`: pygame display modules and visual assets used by the GUI
 - `Peripherals/fan/`: Raspberry Pi Pico W script for MQTT-controlled fan switching
 - `Peripherals/quad_pump/`: Raspberry Pi Pico W script for MQTT-controlled plant watering
@@ -333,6 +334,15 @@ Start the voice worker separately:
 
 ```bash
 .venv-voice/bin/python -m talos.voice.worker
+```
+
+Start the awareness backend separately (requires its database; see
+[talos/awareness/README.md](talos/awareness/README.md) for setup):
+
+```bash
+docker compose -f docker-compose.awareness.yml up -d --wait
+.venv-awareness/bin/python -m talos.awareness migrate
+.venv-awareness/bin/python -m talos.awareness serve
 ```
 
 The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `TALOS_TEXT_AGENT_URL` and `TALOS_TEXT_AGENT_TOKEN`.

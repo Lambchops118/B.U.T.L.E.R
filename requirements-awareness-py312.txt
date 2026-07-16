@@ -1,0 +1,13 @@
+# TALOS awareness/memory backend process.
+# Intended for the Python 3.12 environment used to run:
+#   python3.12 -m talos.awareness
+
+alembic>=1.13,<2
+asyncpg>=0.29
+fastapi>=0.115,<1
+greenlet>=3
+httpx>=0.27
+pydantic>=2.7,<3
+pydantic-settings>=2.2,<3
+SQLAlchemy[asyncio]>=2.0.30,<3
+uvicorn>=0.30
