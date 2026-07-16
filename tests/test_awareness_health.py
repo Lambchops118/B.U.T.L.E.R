@@ -66,11 +66,14 @@ class _StubHealthService:
     def __init__(self, status: str) -> None:
         self._status = status
 
-    async def report(self) -> dict:
+    async def report(self, extra_components=None) -> dict:
+        components = {"database": {"status": self._status, "detail": "", "data": {}}}
+        for component in extra_components or []:
+            components[component.name] = component.to_dict()
         return {
             "status": self._status,
             "as_of": "2026-07-15T12:00:00+00:00",
-            "components": {"database": {"status": self._status, "detail": "", "data": {}}},
+            "components": components,
         }
 
 
@@ -83,10 +86,17 @@ class HealthEndpointTest(unittest.TestCase):
         from talos.awareness.config import load_settings
 
         with patch.dict(os.environ, {}, clear=True):
-            settings = load_settings(_env_file=None, db_password="test-only")
+            settings = load_settings(_env_file=None, db_password="test-only", mqtt_enabled=False)
         app = create_app(settings)
         app.dependency_overrides[get_health_service] = lambda: _StubHealthService(status)
         return TestClient(app)
+
+    def test_mqtt_component_reports_disabled_without_degrading(self) -> None:
+        with self._client(HEALTHY) as client:
+            response = client.get("/health/components")
+        body = response.json()
+        self.assertEqual(body["components"]["mqtt"]["status"], "disabled")
+        self.assertEqual(body["status"], HEALTHY)
 
     def test_healthy_reports_200(self) -> None:
         with self._client(HEALTHY) as client:

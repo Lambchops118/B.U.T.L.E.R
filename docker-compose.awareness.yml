@@ -30,5 +30,18 @@ services:
       timeout: 3s
       retries: 30
 
+  # TEST-ONLY broker (owner-approved) for integration tests and the simulator
+  # while off-LAN. Not started by default:
+  #   docker compose -f docker-compose.awareness.yml --profile test up -d
+  # Production uses the existing Raspberry Pi Mosquitto exclusively.
+  test-mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: talos-test-mosquitto
+    profiles: ["test"]
+    ports:
+      - "127.0.0.1:1885:1883"
+    volumes:
+      - ./docker/mosquitto-test.conf:/mosquitto/config/mosquitto.conf:ro
+
 volumes:
   awareness-db-data:

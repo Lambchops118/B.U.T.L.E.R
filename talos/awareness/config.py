@@ -67,6 +67,7 @@ class AwarenessSettings(BaseSettings):
     embedding_model: str = ""
 
     # --- MQTT (consumed from Phase 2 onward) --------------------------------
+    mqtt_enabled: bool = True
     mqtt_host: str = Field(
         default="192.168.1.160",
         validation_alias=AliasChoices("TALOS_AWARENESS_MQTT_HOST", "MQTT_BROKER"),
@@ -140,6 +141,7 @@ class AwarenessSettings(BaseSettings):
             "chat_model": self.chat_model or "(unset)",
             "embedding_model": self.embedding_model or "(unset)",
             "mqtt": f"{self.mqtt_host}:{self.mqtt_port}",
+            "mqtt_enabled": self.mqtt_enabled,
             "mqtt_tls": self.mqtt_tls,
             "mqtt_client_id": self.mqtt_client_id,
             "max_event_payload_bytes": self.max_event_payload_bytes,
