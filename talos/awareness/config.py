@@ -90,6 +90,17 @@ class AwarenessSettings(BaseSettings):
     # --- ingestion bounds ---------------------------------------------------
     max_event_payload_bytes: int = Field(default=65536, ge=1024)
 
+    # --- state freshness (Phase 3) -------------------------------------------
+    # Per-source values in the registry override these defaults.
+    default_stale_after_seconds: float = Field(default=300.0, gt=0)
+    default_offline_after_seconds: float = Field(default=900.0, gt=0)
+    freshness_interval_seconds: float = Field(default=30.0, gt=0)
+
+    # --- bounded read queries (Phase 3) --------------------------------------
+    max_query_range_days: int = Field(default=31, ge=1)
+    max_query_points: int = Field(default=10000, ge=1)
+    max_event_page_size: int = Field(default=500, ge=1)
+
     @field_validator("db_port", "api_port", "mqtt_port")
     @classmethod
     def _valid_port(cls, value: int) -> int:

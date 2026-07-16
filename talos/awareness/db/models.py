@@ -384,6 +384,81 @@ class OutboxItem(Base):
     status: Mapped[str] = mapped_column(sa.String(20), server_default="pending")
 
 
+class Measurement(Base):
+    """Numeric telemetry (Phase 3). TimescaleDB hypertable partitioned on
+    ``time`` (created by the migration; the ORM sees a plain table). The
+    composite PK includes the partition column as Timescale requires; the
+    ingestion pipeline writes at most one row per accepted event, so a PK
+    collision can only be a cross-event exact duplicate and is ignored with
+    ON CONFLICT DO NOTHING."""
+
+    __tablename__ = "measurements"
+    __table_args__ = (
+        sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        sa.Index("ix_measurements_entity_name_time", "entity_id", "measurement_name", "time"),
+        sa.Index("ix_measurements_source_time", "source_id", "time"),
+    )
+
+    time: Mapped[datetime] = mapped_column(primary_key=True)
+    entity_id: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
+    measurement_name: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
+    source_id: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column()
+    value_double: Mapped[float] = mapped_column(sa.Double)
+    unit: Mapped[str | None] = mapped_column(sa.String(50))
+    quality: Mapped[str | None] = mapped_column(sa.String(50))
+    confidence: Mapped[float] = mapped_column(server_default=sa.text("1.0"))
+    source_event_id: Mapped[UUID | None] = mapped_column()
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+
+
+class SourceHealthHistory(Base):
+    """Source health transitions (Phase 3): the registry keeps only the
+    current view, this table keeps when and why it changed."""
+
+    __tablename__ = "source_health_history"
+    __table_args__ = (
+        _in_check("health_status", SOURCE_HEALTH_STATUSES, "health_status_valid"),
+        sa.Index("ix_source_health_history_source_changed", "source_id", "changed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        sa.ForeignKey("sources.source_id", ondelete="CASCADE")
+    )
+    health_status: Mapped[str] = mapped_column(sa.String(30))
+    previous_status: Mapped[str | None] = mapped_column(sa.String(30))
+    changed_at: Mapped[datetime] = mapped_column()
+    reason: Mapped[str | None] = mapped_column(sa.String(200))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class StateTransition(Base):
+    """Meaningful current-state transitions (Phase 3): value changes beyond
+    deadband and status changes. Jitter within a deadband updates
+    ``current_state`` but produces no row here."""
+
+    __tablename__ = "state_transitions"
+    __table_args__ = (
+        sa.Index("ix_state_transitions_entity_occurred", "entity_id", "occurred_at"),
+        sa.Index("ix_state_transitions_property_occurred", "property_name", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    entity_id: Mapped[str] = mapped_column(sa.String(200))
+    property_name: Mapped[str] = mapped_column(sa.String(200))
+    occurred_at: Mapped[datetime] = mapped_column()
+    from_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    to_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    from_status: Mapped[str | None] = mapped_column(sa.String(30))
+    to_status: Mapped[str] = mapped_column(sa.String(30))
+    reason: Mapped[str] = mapped_column(sa.String(50))
+    source_event_id: Mapped[UUID | None] = mapped_column()
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
 class SchemaRegistryEntry(Base):
     __tablename__ = "schema_registry"
     __table_args__ = (

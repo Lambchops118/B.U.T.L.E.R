@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 2 (MQTT Ingestion and Event Integrity) complete.**
+**Status: Phase 3 (Current State and Telemetry) complete.**
 
 ## Setup
 
@@ -144,19 +144,82 @@ The test-only Mosquitto (owner-approved) starts with
 - Sequence flags look wrong after a device power-cycle: a changed `boot_id`
   legitimately resets sequence comparison (`boot_reset`, not `out_of_order`).
 
+## Current state, freshness, and telemetry (Phase 3)
+
+### Current state authority
+
+`current_state` holds exactly one durable row per `(entity_id, property_name)`
+(PK-enforced), written inside the ingestion transaction and always separate
+from immutable history. Event kinds map to effects deterministically
+(`state/classification.py`): `*.telemetry.{m}` → measurement + state property;
+`*.state.reported` → one property per payload key; `device.pin_status.reported`
+→ boolean `pin_{n}` (inversion respected); `*.heartbeat` → source liveness
+only. The registry is the identity authority: state attaches to the registered
+entity (topic-claimed, else the source's), or stays history-only.
+
+Update semantics (`state/manager.py`): comparison time is `observed_at` for
+trusted clocks (`device_synced`/`gateway_stamped`), else `received_at`; a
+strictly newer equal-or-higher-authority value replaces; a delayed/out-of-order
+message never moves state backwards (history keeps it); equal-time or
+newer-but-weaker disagreement marks the row `conflicting` with the contender
+preserved in metadata — no invented certainty. Source authority comes from
+registry `metadata.authority_rank` (default 0). Numeric jitter within
+`metadata.deadbands.{property}` updates the value without recording a
+transition; movement beyond the deadband from the last anchor records one
+(hysteresis). Meaningful changes land in `state_transitions`
+(`initial|update|recovered|conflict|stale|offline`).
+
+### Freshness and source health
+
+A deterministic worker (`state/freshness.py`, every
+`TALOS_AWARENESS_FRESHNESS_INTERVAL_SECONDS`) marks state rows `stale` and
+silent sources `offline` (plus their state rows) using per-source registry
+deadlines (`stale_after_seconds`/`offline_after_seconds`) or the configured
+defaults, anchored on server receipt time — untrusted device clocks never
+extend freshness. Every change is recorded once (`state_transitions`,
+`source_health_history`); re-runs and restarts are idempotent. Sources that
+never reported stay `unknown`. A first accepted message flips the source back
+to `healthy` and the state to `current` (`recovered`), both with history. The
+alert hook is a Phase 4 interface and currently does nothing. Reads qualify
+overdue rows as `stale` even before the worker's next pass, and every read
+carries `as_of`, age, source, and confidence.
+
+### Telemetry and bounded queries
+
+Numeric telemetry lands in the `measurements` hypertable (7-day chunks) in
+the same transaction as its event; minute/hour/day continuous aggregates
+(`measurements_1m/_1h/_1d`: min/max/avg/count/stddev per
+entity/measurement/unit) refresh on background policies. Raw telemetry is
+never embedded. Read endpoints (loopback API):
+
+```text
+GET /state/{entity_id}
+GET /events?start=&end=[&entity_id=&source_id=&event_type=&severity=&limit=]
+GET /telemetry/{entity_id}/{measurement}?start=&end=[&aggregation=1m|1h|1d&max_points=]
+```
+
+Every history query requires a timezone-aware range and respects
+`TALOS_AWARENESS_MAX_QUERY_RANGE_DAYS` / `_MAX_QUERY_POINTS` /
+`_MAX_EVENT_PAGE_SIZE`; unbounded requests get 422, never a raw dump. Results
+report `truncated` when the limit cut them off. Volumes are trivial today
+(see DISCOVERY.md §9); telemetry writes one row per event with no separate
+batching stage — revisit against measured lag if the fleet grows.
+
 ## Tests
 
 ```bash
 # Unit tests (no infrastructure needed):
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_config tests.test_awareness_event_schema \
-  tests.test_awareness_health tests.test_awareness_ingestion_unit
+  tests.test_awareness_health tests.test_awareness_ingestion_unit \
+  tests.test_awareness_state_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
 docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 .venv-awareness/bin/python -m unittest \
-  tests.test_awareness_migrations tests.test_awareness_ingestion_integration
+  tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
+  tests.test_awareness_state_integration
 ```
 
 ## Requirements traceability
@@ -167,11 +230,11 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | ID | Requirement | Primary components | Status |
 |---|---|---|---|
 | R1 | Ingest streams from sensors, microcontrollers, services, conversations, internal components | C2, C3 | 🔶 MQTT device/simulator ingestion (Phase 2); service/conversation adapters in Phases 5/6 |
-| R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | ⬜ Phases 3/8 |
-| R3 | Distinguish current state from historical events | C5, C6 | 🔶 schemas exist (Phase 1); managers in Phase 3 |
-| R4 | Maintain strong environmental awareness | C5, C12 | ⬜ Phases 3/5 |
+| R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | 🔶 store + minute/hour/day aggregates (Phase 3); summarize/discard in Phases 6/8 |
+| R3 | Distinguish current state from historical events | C5, C6 | ✅ durable current_state separate from immutable events/measurements (Phase 3) |
+| R4 | Maintain strong environmental awareness | C5, C12 | 🔶 qualified current state + freshness (Phase 3); situation broker in Phase 5 |
 | R5 | Track when, where, how, and from what source information entered | C1, C4 | ✅ envelope + provenance persisted per event (Phase 2) |
-| R6 | Track health and state of connected systems | C4, C5, C16 | 🔶 self-health + source liveness/last-seen (Phase 2); stale/offline workers in Phase 3 |
+| R6 | Track health and state of connected systems | C4, C5, C16 | ✅ source health lifecycle + history + stale/offline workers (Phase 3) |
 | R7 | Detect important events independently of the LLM | C7 | ⬜ Phase 4 |
 | R8 | Proactively alert the user | C8, C9 | ⬜ Phase 4 |
 | R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
@@ -181,7 +244,7 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | 🔶 nothing depends on Ollama yet by design |
 | R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | ✅ pipeline dedup/sequence/gap/reorder/boot-reset classification (Phase 2); state-facing effects in Phase 3 |
 | R15 | Persist critical downstream work reliably | C10 | 🔶 outbox table + constraints (Phase 1); workers in Phase 4 |
-| R16 | Support stale, conflicting, unknown, offline state | C5 | 🔶 status vocabulary + CHECKs (Phase 1); manager in Phase 3 |
+| R16 | Support stale, conflicting, unknown, offline state | C5 | ✅ stale/unknown/conflicting/offline statuses with deterministic transitions (Phase 3) |
 | R17 | Support validated semantic and episodic memory | C11 | ⬜ Phase 6 |
 | R18 | Preserve provenance and temporal validity of memory | C11 | ⬜ Phase 6 |
 | R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 configurable endpoints + resilient broker client with truthful connection health (Phase 2) |

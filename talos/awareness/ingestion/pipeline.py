@@ -25,14 +25,20 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import dataclasses
+
 from talos.awareness.config import AwarenessSettings
-from talos.awareness.db.models import Event, Source
+from talos.awareness.db.models import Entity, Event, Source
+from talos.awareness.history.telemetry import insert_measurements
 from talos.awareness.ingestion.dead_letter import DeadLetterRecorder
 from talos.awareness.ingestion.normalization import NormalizationError, normalize
 from talos.awareness.ingestion.sequence import assess_sequence
 from talos.awareness.logging_utils import get_logger
-from talos.awareness.registry.sources import SourceRepository
+from talos.awareness.registry.sources import SourceRecord, SourceRepository
 from talos.awareness.schemas.events import EventEnvelope, PayloadTooLargeError
+from talos.awareness.state.classification import classify
+from talos.awareness.state.freshness import record_source_health_change
+from talos.awareness.state.manager import StateManager
 
 logger = get_logger("talos.awareness.ingestion.pipeline")
 
@@ -86,6 +92,7 @@ class IngestionPipeline:
         self._sources = sources
         self._settings = settings
         self._dead_letters = DeadLetterRecorder(engine)
+        self._state_manager = StateManager()
         self.metrics = metrics or IngestionMetrics()
 
     async def handle(self, message: InboundMessage) -> str:
@@ -179,7 +186,9 @@ class IngestionPipeline:
             self.metrics.duplicates += 1
             return "duplicate"
 
-        disposition = await self._persist(envelope, received_at, advance=assessment.advance)
+        disposition = await self._persist(
+            envelope, received_at, source=source, advance=assessment.advance
+        )
         if disposition == "duplicate":
             self.metrics.duplicates += 1
             await self._touch_source(source.source_id, received_at)
@@ -213,7 +222,12 @@ class IngestionPipeline:
         return "accepted"
 
     async def _persist(
-        self, envelope: EventEnvelope, received_at: datetime, *, advance: bool
+        self,
+        envelope: EventEnvelope,
+        received_at: datetime,
+        *,
+        source: SourceRecord,
+        advance: bool,
     ) -> str:
         insert_stmt = (
             pg_insert(Event)
@@ -252,22 +266,90 @@ class IngestionPipeline:
             source_update["last_sequence"] = envelope.sequence
             source_update["last_boot_id"] = envelope.source_boot_id
 
+        effects = classify(envelope)
+
         try:
             async with self._engine.begin() as connection:
                 result = await connection.execute(insert_stmt)
                 inserted = bool(result.rowcount)
                 if inserted:
+                    previous_health = (
+                        await connection.execute(
+                            sa.select(Source.health_status)
+                            .where(Source.source_id == envelope.source_id)
+                            .with_for_update()
+                        )
+                    ).scalar_one_or_none()
                     await connection.execute(
                         sa.update(Source)
                         .where(Source.source_id == envelope.source_id)
                         .values(**source_update)
                     )
+                    if previous_health is not None and previous_health != "healthy":
+                        await record_source_health_change(
+                            connection,
+                            source_id=envelope.source_id,
+                            new_status="healthy",
+                            previous_status=previous_health,
+                            changed_at=received_at,
+                            reason="message_received",
+                        )
+                    # Phase 3 effects share the event transaction (INGEST-005);
+                    # everything here is local database work, never network/LLM.
+                    if effects.telemetry or effects.state_updates:
+                        entity_id = await self._resolve_entity(
+                            connection, envelope.entity_id, source
+                        )
+                        if entity_id is None:
+                            logger.warning(
+                                "no registered entity for event %s (claimed %r); "
+                                "stored in history only",
+                                envelope.event_type,
+                                envelope.entity_id,
+                                extra={
+                                    "component": "ingestion",
+                                    "source_id": envelope.source_id,
+                                },
+                            )
+                        else:
+                            telemetry = tuple(
+                                dataclasses.replace(point, entity_id=entity_id)
+                                for point in effects.telemetry
+                            )
+                            updates = tuple(
+                                dataclasses.replace(update, entity_id=entity_id)
+                                for update in effects.state_updates
+                            )
+                            if telemetry:
+                                await insert_measurements(connection, envelope, telemetry)
+                            if updates:
+                                await self._state_manager.apply(
+                                    connection, envelope, updates, source
+                                )
         except IntegrityError:
             # Partial unique (source_id, source_boot_id, sequence): redelivery
             # of the same device message under a different event_id.
             return "duplicate"
 
         return "accepted" if inserted else "duplicate"
+
+    async def _resolve_entity(
+        self, connection, claimed: str | None, source: SourceRecord
+    ) -> str | None:
+        """Registry is the identity authority (C4): state/telemetry attach to
+        a registered entity — the topic-claimed one when known, else the
+        source's registered entity — or not at all."""
+        for candidate in (claimed, source.entity_id):
+            if not candidate:
+                continue
+            exists = (
+                await connection.execute(
+                    sa.select(Entity.entity_id).where(Entity.entity_id == candidate)
+                )
+            ).scalar_one_or_none()
+            if exists is not None:
+                return candidate
+        return None
 
     async def _touch_source(self, source_id: str, received_at: datetime) -> None:
         """A duplicate still proves the source is alive."""

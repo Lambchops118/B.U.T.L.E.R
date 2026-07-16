@@ -6,12 +6,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import asyncio
+
 from talos.awareness import __version__
 from talos.awareness.api.routes import health as health_routes
+from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.config import AwarenessSettings, load_settings
 from talos.awareness.db.session import build_engine
 from talos.awareness.health.service import HealthService
 from talos.awareness.logging_utils import configure_logging, get_logger
+from talos.awareness.state.freshness import FreshnessWorker
 
 
 def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
@@ -40,12 +44,24 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                     "ingestion failed to start; API continues without it",
                     extra={"component": "ingestion"},
                 )
+        freshness = FreshnessWorker(engine, settings)
+        freshness_stop = asyncio.Event()
+        freshness_task = asyncio.create_task(
+            freshness.run(freshness_stop), name="awareness-freshness"
+        )
+        app.state.freshness = freshness
         logger.info(
             "awareness API started; config: %s", settings.summary(), extra={"component": "api"}
         )
         try:
             yield
         finally:
+            freshness_stop.set()
+            freshness_task.cancel()
+            try:
+                await freshness_task
+            except (asyncio.CancelledError, Exception):
+                pass
             if app.state.ingestion is not None:
                 await app.state.ingestion.stop()
             await engine.dispose()
@@ -53,4 +69,5 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="TALOS Awareness", version=__version__, lifespan=lifespan)
     app.include_router(health_routes.router)
+    app.include_router(read_routes.router)
     return app

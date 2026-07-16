@@ -51,13 +51,30 @@ def _mqtt_component(request: Request) -> list[ComponentStatus]:
     return [ComponentStatus(name="mqtt", status=status, detail=detail, data=health)]
 
 
+def _freshness_component(request: Request) -> list[ComponentStatus]:
+    worker = getattr(request.app.state, "freshness", None)
+    if worker is None:
+        return []
+    data = worker.status()
+    if data["state"] == "running" and data["last_error"] is None:
+        status, detail = HEALTHY, ""
+    else:
+        status = DEGRADED
+        detail = f"freshness worker {data['state']}: {data['last_error'] or ''}".strip()
+    return [ComponentStatus(name="freshness_worker", status=status, detail=detail, data=data)]
+
+
+def _extra_components(request: Request) -> list[ComponentStatus]:
+    return _mqtt_component(request) + _freshness_component(request)
+
+
 @router.get("/health")
 async def health(
     request: Request,
     response: Response,
     service: HealthService = Depends(get_health_service),
 ) -> dict:
-    report = await service.report(extra_components=_mqtt_component(request))
+    report = await service.report(extra_components=_extra_components(request))
     if report["status"] == UNAVAILABLE:
         response.status_code = 503
     return {"status": report["status"], "as_of": report["as_of"]}
@@ -69,7 +86,7 @@ async def health_components(
     response: Response,
     service: HealthService = Depends(get_health_service),
 ) -> dict:
-    report = await service.report(extra_components=_mqtt_component(request))
+    report = await service.report(extra_components=_extra_components(request))
     if report["status"] == UNAVAILABLE:
         response.status_code = 503
     return report
