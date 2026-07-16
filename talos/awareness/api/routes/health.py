@@ -64,8 +64,33 @@ def _freshness_component(request: Request) -> list[ComponentStatus]:
     return [ComponentStatus(name="freshness_worker", status=status, detail=detail, data=data)]
 
 
-def _extra_components(request: Request) -> list[ComponentStatus]:
-    return _mqtt_component(request) + _freshness_component(request)
+async def _outbox_component(request: Request) -> list[ComponentStatus]:
+    worker = getattr(request.app.state, "outbox", None)
+    if worker is None:
+        return []
+    data = await worker.status()
+    if data["state"] == "running" and data["last_error"] is None:
+        status, detail = HEALTHY, ""
+    else:
+        status = DEGRADED
+        detail = f"outbox worker {data['state']}: {data['last_error'] or ''}".strip()
+    return [ComponentStatus(name="outbox_worker", status=status, detail=detail, data=data)]
+
+
+def _rules_component(request: Request) -> list[ComponentStatus]:
+    engine = getattr(request.app.state, "rule_engine", None)
+    if engine is None:
+        return []
+    return [ComponentStatus(name="rules", status=HEALTHY, detail="", data=engine.status())]
+
+
+async def _extra_components(request: Request) -> list[ComponentStatus]:
+    return (
+        _mqtt_component(request)
+        + _freshness_component(request)
+        + await _outbox_component(request)
+        + _rules_component(request)
+    )
 
 
 @router.get("/health")
@@ -74,7 +99,7 @@ async def health(
     response: Response,
     service: HealthService = Depends(get_health_service),
 ) -> dict:
-    report = await service.report(extra_components=_extra_components(request))
+    report = await service.report(extra_components=await _extra_components(request))
     if report["status"] == UNAVAILABLE:
         response.status_code = 503
     return {"status": report["status"], "as_of": report["as_of"]}
@@ -86,7 +111,7 @@ async def health_components(
     response: Response,
     service: HealthService = Depends(get_health_service),
 ) -> dict:
-    report = await service.report(extra_components=_extra_components(request))
+    report = await service.report(extra_components=await _extra_components(request))
     if report["status"] == UNAVAILABLE:
         response.status_code = 503
     return report

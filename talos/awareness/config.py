@@ -101,6 +101,17 @@ class AwarenessSettings(BaseSettings):
     max_query_points: int = Field(default=10000, ge=1)
     max_event_page_size: int = Field(default=500, ge=1)
 
+    # --- rules / alerts / notifications (Phase 4) -----------------------------
+    rules_path: Path | None = None  # default: talos/awareness/rules/rules.toml
+    quiet_hours: str = ""  # "HH:MM-HH:MM" local; noncritical only; empty = off
+    notify_url: str = "http://127.0.0.1:8420"  # existing text server (GUI banner)
+    notify_token: SecretStr | None = None  # text server bearer token
+    notify_timeout_seconds: float = Field(default=5.0, gt=0)
+    outbox_interval_seconds: float = Field(default=2.0, gt=0)
+    outbox_batch_size: int = Field(default=20, ge=1)
+    outbox_max_attempts: int = Field(default=8, ge=1)
+    outbox_stale_lock_seconds: float = Field(default=300.0, gt=0)
+
     @field_validator("db_port", "api_port", "mqtt_port")
     @classmethod
     def _valid_port(cls, value: int) -> int:

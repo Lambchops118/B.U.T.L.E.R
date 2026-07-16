@@ -384,6 +384,36 @@ class OutboxItem(Base):
     status: Mapped[str] = mapped_column(sa.String(20), server_default="pending")
 
 
+class NotificationDelivery(Base):
+    """One row per delivery attempt (Phase 4): confirmed status only after
+    the channel adapter's confirmation; failures keep sanitized errors."""
+
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        _in_check("status", ("delivered", "failed"), "status_valid"),
+        sa.Index("ix_notification_deliveries_alert_id", "alert_id"),
+        sa.Index("ix_notification_deliveries_attempted_at", "attempted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    alert_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("alerts.alert_id", ondelete="SET NULL")
+    )
+    attention_item_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("attention_items.attention_item_id", ondelete="SET NULL")
+    )
+    channel: Mapped[str] = mapped_column(sa.String(100))
+    recipient_or_endpoint: Mapped[str | None] = mapped_column(sa.String(300))
+    attempted_at: Mapped[datetime] = mapped_column()
+    status: Mapped[str] = mapped_column(sa.String(20))
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    retry_count: Mapped[int] = mapped_column(server_default=sa.text("0"))
+    acknowledged_at: Mapped[datetime | None] = mapped_column()
+    provider_message_id: Mapped[str | None] = mapped_column(sa.String(300))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
 class Measurement(Base):
     """Numeric telemetry (Phase 3). TimescaleDB hypertable partitioned on
     ``time`` (created by the migration; the ORM sees a plain table). The

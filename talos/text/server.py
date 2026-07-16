@@ -151,7 +151,37 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/sessions/reset":
             self._handle_reset_session()
             return
+        if self.path == "/notify":
+            self._handle_notify()
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+
+    def _handle_notify(self) -> None:
+        """Deterministic GUI banner for the awareness backend (no LLM).
+
+        The message goes through the router's ``ui`` lane straight to the
+        pygame GUI queue; 200 means enqueued for display, not seen by a human.
+        """
+        try:
+            body = self._read_json_body()
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        title = str(body.get("title", "")).strip()
+        text = str(body.get("body", "")).strip()
+        severity = str(body.get("severity", "notice")).strip() or "notice"
+        if not title:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'title'."})
+            return
+
+        # Callers like the awareness backend already tag the title with its
+        # severity; only add the tag when it is missing.
+        banner_title = title if title.startswith("[") else f"[{severity.upper()}] {title}"
+        self.server.central_queue.put(
+            Message(type="ui", payload=("VOICE_CMD", banner_title, text or title))
+        )
+        self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         path = urlparse(self.path).path

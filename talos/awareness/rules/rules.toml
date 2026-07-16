@@ -1,0 +1,72 @@
+# Deterministic rule policy for the awareness subsystem (C7, Phase 4).
+# Validated against talos/awareness/rules/policy.py; the version is recorded
+# with every derived alert. "hard" rules take precedence over classification.
+
+version = 1
+
+# --- overflow: the canonical critical scenario -------------------------------
+
+[[rules]]
+id = "overflow-critical"
+description = "Water overflow opens one critical incident and interrupts immediately"
+kind = "hard"
+
+[rules.match]
+event_type = "plant.overflow.detected"
+
+[[rules.match.conditions]]
+field = "overflow"
+op = "eq"
+value = true
+
+[rules.actions.alert]
+alert_type = "overflow"
+severity = "critical"
+title = "Overflow detected: {entity_id}"
+description = "Overflow reported by {source_id} (zone {payload.zone})."
+deduplication_key = "overflow:{entity_id}"
+recommended_actions = ["Stop the pump", "Check the affected pot"]
+
+[rules.actions.attention]
+priority = 1
+interruptibility = "immediate"
+reason = "Critical overflow at {entity_id}"
+preferred_channel = "gui"
+cooldown_key = "overflow:{entity_id}"
+cooldown_seconds = 300
+notify = true
+
+# --- overflow cleared: deterministic auto-resolution -------------------------
+
+[[rules]]
+id = "overflow-resolved"
+description = "An explicit all-clear resolves the overflow incident"
+kind = "hard"
+
+[rules.match]
+event_type = "plant.overflow.detected"
+
+[[rules.match.conditions]]
+field = "overflow"
+op = "eq"
+value = false
+
+[rules.actions.resolve]
+deduplication_key = "overflow:{entity_id}"
+
+# --- worker-detected source silence ------------------------------------------
+
+[source_offline]
+enabled = true
+severity = "warning"
+# Sources of these registry types escalate to critical when silent:
+critical_source_types = []
+
+[source_offline.attention]
+priority = 4
+interruptibility = "next_interaction"
+reason = "Source {source_id} is offline"
+preferred_channel = "gui"
+cooldown_key = "source_offline:{source_id}"
+cooldown_seconds = 3600
+notify = true

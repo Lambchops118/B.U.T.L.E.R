@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 3 (Current State and Telemetry) complete.**
+**Status: Phase 4 (Rules, Alerts, Attention, and Notifications) complete.**
 
 ## Setup
 
@@ -205,6 +205,67 @@ report `truncated` when the limit cut them off. Volumes are trivial today
 (see DISCOVERY.md §9); telemetry writes one row per event with no separate
 batching stage — revisit against measured lag if the fleet grows.
 
+## Rules, alerts, and notifications (Phase 4)
+
+### Rule policy
+
+Deterministic rules live in versioned TOML
+([`rules/rules.toml`](rules/rules.toml), overridable via
+`TALOS_AWARENESS_RULES_PATH`) validated by strict typed models
+(`rules/policy.py`); the loaded version is registered in `schema_registry`
+and stamped on every derived alert (`metadata.rule_id`/`policy_version`).
+`hard` rules evaluate before `classification` rules and nothing overrides
+them. Matching supports exact/prefix-glob event types, minimum severity, and
+typed payload conditions (`eq/ne/gt/ge/lt/le/exists`). Templates
+(`{entity_id}`, `{payload.zone}`) are plain token substitution — a missing
+field renders `?` and can never break a critical notification or execute
+anything. Rules run inside the ingestion transaction after state effects; the
+optional async LLM classifier permitted by the spec is deliberately **not
+implemented** (no model call exists anywhere in the alert path).
+
+### Alert and attention lifecycle
+
+One persistent condition = one active incident: the partial-unique
+`deduplication_key` (while `open`/`acknowledged`) makes repeats bump
+`occurrence_count`/`last_seen_at` and append `alert_events` evidence instead
+of opening a duplicate. Acknowledgement (`POST /alerts/{id}/acknowledge`)
+does not erase the condition — repeats keep updating the same incident;
+resolution is either operator (`POST /alerts/{id}/resolve`) or deterministic
+(a resolve rule with evidence, e.g. `overflow=false`). Attention items are
+interruption timing, separate from incident state: priority,
+interruptibility (`immediate` for overflow, `next_interaction` for
+noncritical), `cooldown_key`+`cooldown_seconds` suppress interruption spam
+while the incident still updates, and quiet hours
+(`TALOS_AWARENESS_QUIET_HOURS`) defer only noncritical availability — a
+critical alert is never deferred or silently dropped. Worker-detected source
+silence opens a `source_offline` incident at policy severity (never
+automatically critical) and auto-resolves when the source reports again.
+
+### Notification delivery and the outbox
+
+Within the event transaction the rule engine writes the alert, attention
+item, and one unique notification outbox row (`notification:{attention_id}`)
+— a crash after commit cannot lose the notification, and duplicate event
+delivery cannot queue a second one. The outbox worker claims bounded batches
+with `FOR UPDATE SKIP LOCKED`, renders **deterministic** wording from the
+alert row (severity/title/description/occurrence/first-seen; no Ollama
+anywhere), tries the preferred channel then the others as fallback, persists
+every attempt in `notification_deliveries` (`delivered` only on adapter
+confirmation), retries with bounded exponential backoff, releases stale
+locks, dead-letters after `TALOS_AWARENESS_OUTBOX_MAX_ATTEMPTS`, and supports
+manual retry (`POST /outbox/{id}/retry`). Semantics are at-least-once with
+idempotent handlers — never exactly-once.
+
+Channels (ADR-015, existing only):
+
+| Channel | Transport | "Confirmed" means | Limitation |
+|---|---|---|---|
+| `gui` | authenticated `POST /notify` on the text server (:8420) → router `ui` lane → pygame GUI | text server accepted and enqueued the banner | not proof a human saw the screen |
+| `log` | structured awareness log | log record emitted | passive; always-available fallback |
+
+Delivery evidence per alert: `GET /alerts/{id}/deliveries`. Backlog and
+oldest-pending age appear under `outbox_worker` in `/health/components`.
+
 ## Tests
 
 ```bash
@@ -212,14 +273,17 @@ batching stage — revisit against measured lag if the fleet grows.
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_config tests.test_awareness_event_schema \
   tests.test_awareness_health tests.test_awareness_ingestion_unit \
-  tests.test_awareness_state_unit
+  tests.test_awareness_state_unit tests.test_awareness_rules_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
 docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
-  tests.test_awareness_state_integration
+  tests.test_awareness_state_integration tests.test_awareness_alerts_integration
+
+# Text-server /notify endpoint (GUI banner channel; main venv):
+.venv-main/bin/python -m unittest tests.test_text_server_notify
 ```
 
 ## Requirements traceability
@@ -235,15 +299,15 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R4 | Maintain strong environmental awareness | C5, C12 | 🔶 qualified current state + freshness (Phase 3); situation broker in Phase 5 |
 | R5 | Track when, where, how, and from what source information entered | C1, C4 | ✅ envelope + provenance persisted per event (Phase 2) |
 | R6 | Track health and state of connected systems | C4, C5, C16 | ✅ source health lifecycle + history + stale/offline workers (Phase 3) |
-| R7 | Detect important events independently of the LLM | C7 | ⬜ Phase 4 |
-| R8 | Proactively alert the user | C8, C9 | ⬜ Phase 4 |
+| R7 | Detect important events independently of the LLM | C7 | ✅ deterministic TOML rules inside the ingestion transaction; no LLM in the path (Phase 4) |
+| R8 | Proactively alert the user | C8, C9 | ✅ alert→attention→outbox→adapter delivery with persisted attempts (Phase 4) |
 | R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
 | R10 | Avoid unnecessary LLM context use | C12 | ⬜ Phase 5 |
 | R11 | Selectively push only relevant data to the LLM | C7, C12 | ⬜ Phase 5 |
 | R12 | Allow the LLM to retrieve additional information | C13 | ⬜ Phase 5 |
-| R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | 🔶 nothing depends on Ollama yet by design |
+| R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | ✅ alerts + fallback notifications are Ollama-free by construction (Phase 4) |
 | R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | ✅ pipeline dedup/sequence/gap/reorder/boot-reset classification (Phase 2); state-facing effects in Phase 3 |
-| R15 | Persist critical downstream work reliably | C10 | 🔶 outbox table + constraints (Phase 1); workers in Phase 4 |
+| R15 | Persist critical downstream work reliably | C10 | ✅ transactional outbox + claiming worker with backoff/dead-letter/manual retry (Phase 4) |
 | R16 | Support stale, conflicting, unknown, offline state | C5 | ✅ stale/unknown/conflicting/offline statuses with deterministic transitions (Phase 3) |
 | R17 | Support validated semantic and episodic memory | C11 | ⬜ Phase 6 |
 | R18 | Preserve provenance and temporal validity of memory | C11 | ⬜ Phase 6 |

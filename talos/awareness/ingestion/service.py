@@ -21,12 +21,19 @@ DEFAULT_SUBSCRIPTIONS = ("home/#", "status/#")
 
 
 class IngestionService:
-    def __init__(self, settings: AwarenessSettings, engine: AsyncEngine) -> None:
+    def __init__(
+        self,
+        settings: AwarenessSettings,
+        engine: AsyncEngine,
+        rule_engine=None,
+    ) -> None:
         self._settings = settings
         self._engine = engine
         self.metrics = IngestionMetrics()
         self.sources = SourceRepository(engine)
-        self.pipeline = IngestionPipeline(engine, self.sources, settings, self.metrics)
+        self.pipeline = IngestionPipeline(
+            engine, self.sources, settings, self.metrics, rule_engine=rule_engine
+        )
         prefix = settings.mqtt_topic_prefix.strip("/")
         subscriptions = [
             f"{prefix}/{subscription}" if prefix else subscription

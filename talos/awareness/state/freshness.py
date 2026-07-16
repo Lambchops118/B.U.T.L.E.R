@@ -32,7 +32,9 @@ from talos.awareness.logging_utils import get_logger
 
 logger = get_logger("talos.awareness.state.freshness")
 
-AlertHook = Callable[[dict[str, Any]], Awaitable[None]]
+# Receives the tick's open connection so alert effects commit atomically
+# with the freshness transition that caused them.
+AlertHook = Callable[[AsyncConnection, dict[str, Any]], Awaitable[None]]
 
 
 async def record_source_health_change(
@@ -163,12 +165,13 @@ class FreshnessWorker:
                 )
             )
             await self._notify(
+                connection,
                 {
                     "kind": "state_stale",
                     "entity_id": row.entity_id,
                     "property_name": row.property_name,
                     "age_seconds": age,
-                }
+                },
             )
             count += 1
         return count
@@ -179,6 +182,7 @@ class FreshnessWorker:
             await connection.execute(
                 sa.select(
                     Source.source_id,
+                    Source.source_type,
                     Source.health_status,
                     Source.last_received_at,
                     Source.offline_after_seconds,
@@ -214,11 +218,13 @@ class FreshnessWorker:
             count += 1
             count += await self._mark_source_state_offline(connection, row.source_id, now)
             await self._notify(
+                connection,
                 {
                     "kind": "source_offline",
                     "source_id": row.source_id,
+                    "source_type": row.source_type,
                     "silence_seconds": silence,
-                }
+                },
             )
         return count
 
@@ -264,11 +270,13 @@ class FreshnessWorker:
             )
         return len(rows)
 
-    async def _notify(self, transition: dict[str, Any]) -> None:
+    async def _notify(
+        self, connection: AsyncConnection, transition: dict[str, Any]
+    ) -> None:
         if self._alert_hook is None:
             return
         try:
-            await self._alert_hook(transition)
+            await self._alert_hook(connection, transition)
         except Exception:
             logger.exception(
                 "alert hook failed for %s", transition.get("kind"),

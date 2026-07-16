@@ -87,12 +87,14 @@ class IngestionPipeline:
         sources: SourceRepository,
         settings: AwarenessSettings,
         metrics: IngestionMetrics | None = None,
+        rule_engine: Any | None = None,
     ) -> None:
         self._engine = engine
         self._sources = sources
         self._settings = settings
         self._dead_letters = DeadLetterRecorder(engine)
         self._state_manager = StateManager()
+        self._rule_engine = rule_engine
         self.metrics = metrics or IngestionMetrics()
 
     async def handle(self, message: InboundMessage) -> str:
@@ -294,12 +296,21 @@ class IngestionPipeline:
                             changed_at=received_at,
                             reason="message_received",
                         )
-                    # Phase 3 effects share the event transaction (INGEST-005);
-                    # everything here is local database work, never network/LLM.
-                    if effects.telemetry or effects.state_updates:
-                        entity_id = await self._resolve_entity(
-                            connection, envelope.entity_id, source
+                        if self._rule_engine is not None:
+                            await self._rule_engine.apply_source_recovered(
+                                connection, source_id=envelope.source_id
+                            )
+                    # Phase 3+4 effects share the event transaction
+                    # (INGEST-005); everything here is local database work,
+                    # never network/LLM.
+                    entity_id = await self._resolve_entity(
+                        connection, envelope.entity_id, source
+                    )
+                    if self._rule_engine is not None:
+                        await self._rule_engine.apply_event(
+                            connection, envelope, entity_id
                         )
+                    if effects.telemetry or effects.state_updates:
                         if entity_id is None:
                             logger.warning(
                                 "no registered entity for event %s (claimed %r); "
