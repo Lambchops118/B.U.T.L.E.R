@@ -36,6 +36,40 @@ def backoff_delay(attempt: int, *, base: float = BACKOFF_BASE_SECONDS, cap: floa
     return exponential * random.uniform(0.5, 1.5)
 
 
+def mqtt_tls_context(settings: AwarenessSettings) -> ssl.SSLContext | None:
+    """Build the shared TLS context used by both ingress and action publish."""
+    if not settings.mqtt_tls:
+        return None
+    context = ssl.create_default_context(
+        cafile=str(settings.mqtt_ca_path) if settings.mqtt_ca_path else None
+    )
+    if settings.mqtt_client_cert and settings.mqtt_client_key:
+        context.load_cert_chain(
+            certfile=str(settings.mqtt_client_cert),
+            keyfile=str(settings.mqtt_client_key),
+        )
+    return context
+
+
+def build_mqtt_client(
+    settings: AwarenessSettings, *, identifier: str | None = None
+) -> aiomqtt.Client:
+    """Create a client without logging or exposing configured credentials."""
+    return aiomqtt.Client(
+        hostname=settings.mqtt_host,
+        port=settings.mqtt_port,
+        identifier=identifier or settings.mqtt_client_id,
+        username=settings.mqtt_username,
+        password=(
+            settings.mqtt_password.get_secret_value()
+            if settings.mqtt_password
+            else None
+        ),
+        keepalive=settings.mqtt_keepalive,
+        tls_context=mqtt_tls_context(settings),
+    )
+
+
 class MqttIngress:
     def __init__(
         self,
@@ -64,32 +98,10 @@ class MqttIngress:
         }
 
     def _tls_context(self) -> ssl.SSLContext | None:
-        if not self._settings.mqtt_tls:
-            return None
-        context = ssl.create_default_context(
-            cafile=str(self._settings.mqtt_ca_path) if self._settings.mqtt_ca_path else None
-        )
-        if self._settings.mqtt_client_cert and self._settings.mqtt_client_key:
-            context.load_cert_chain(
-                certfile=str(self._settings.mqtt_client_cert),
-                keyfile=str(self._settings.mqtt_client_key),
-            )
-        return context
+        return mqtt_tls_context(self._settings)
 
     def _client(self) -> aiomqtt.Client:
-        return aiomqtt.Client(
-            hostname=self._settings.mqtt_host,
-            port=self._settings.mqtt_port,
-            identifier=self._settings.mqtt_client_id,
-            username=self._settings.mqtt_username,
-            password=(
-                self._settings.mqtt_password.get_secret_value()
-                if self._settings.mqtt_password
-                else None
-            ),
-            keepalive=self._settings.mqtt_keepalive,
-            tls_context=self._tls_context(),
-        )
+        return build_mqtt_client(self._settings)
 
     async def run(self, stop: asyncio.Event) -> None:
         try:

@@ -3,19 +3,18 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import paho.mqtt.client as mqtt
 import requests
 
 from talos.config import load_environment
+from talos.services import awareness_client
 
 
 load_environment()
 
 
-BROKER = os.getenv("MQTT_BROKER", "192.168.1.160")
-PORT = int(os.getenv("MQTT_PORT", "1883"))
 TIMEZONE_NAME = os.getenv("TALOS_TIMEZONE", "").strip()
 OPEN_WEATHER_API_KEY = os.getenv("OPEN_WEATHER_API_KEY", "").strip()
 WEATHER_LOCATION = os.getenv("TALOS_WEATHER_LOCATION", "").strip()
@@ -35,34 +34,79 @@ US_STATE_CODES = {
 ZIP_CODE_RE = re.compile(r"^(?P<zip>\d{5}(?:-\d{4})?)(?:\s*,\s*(?P<country>[A-Za-z]{2}))?$")
 
 
-def _publish(topic: str, message: str | int) -> None:
-    client = mqtt.Client()
-    client.connect(BROKER, PORT, keepalive=60)
-    client.publish(topic, message)
-    client.disconnect()
-
-
-def water_plants(pot_number: int) -> str:
-    topic_prefix = "quad_pump"
-
+def water_plants(
+    pot_number: int,
+    *,
+    idempotency_key: str | None = None,
+    correlation_id: str | None = None,
+) -> str:
     if pot_number == 1:
-        topic = f"{topic_prefix}/17"
+        pot_pin = 17
     elif pot_number == 2:
-        topic = f"{topic_prefix}/19"
+        pot_pin = 19
     else:
         raise ValueError("pot_number must be 1 or 2")
-
-    _publish(topic, "1")
-    return f"Watering {pot_number}."
+    return _request_device_action(
+        "water_plants",
+        {"pot_pin": pot_pin},
+        idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
+    )
 
 
 def turn_on_lights(room: str) -> str:
     return f"Turning on lights in the {room}."
 
 
-def toggle_fan(status: int) -> str:
-    _publish("fan/16", status)
-    return f"Fan set to {status}."
+def toggle_fan(
+    status: int,
+    *,
+    idempotency_key: str | None = None,
+    correlation_id: str | None = None,
+) -> str:
+    if isinstance(status, bool) or status not in (0, 1):
+        raise ValueError("status must be 0 or 1")
+    return _request_device_action(
+        "toggle_fan",
+        {"state": status},
+        idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
+    )
+
+
+def _request_device_action(
+    action: str,
+    parameters: dict,
+    *,
+    idempotency_key: str | None,
+    correlation_id: str | None,
+) -> str:
+    """Route legacy tool names through the Phase 7 action boundary.
+
+    The response deliberately reports lifecycle state rather than claiming a
+    physical effect before device evidence arrives.
+    """
+    request_key = (idempotency_key or "").strip() or f"tool-{uuid4()}"
+    result = awareness_client.post_json(
+        "/actions/request",
+        {
+            "action": action,
+            "parameters": parameters,
+            "actor": "llm",
+            "correlation_id": correlation_id,
+            "idempotency_key": request_key,
+        },
+    )
+    if not result.get("accepted"):
+        raise RuntimeError(
+            f"Action request rejected: {result.get('reason', 'unknown reason')}"
+        )
+    request_id = result.get("action_request_id", "unknown")
+    status = result.get("status", "unknown")
+    return (
+        f"Action request {request_id} is {status}; physical completion is not "
+        "confirmed yet. Use get_action_status to verify acknowledgement and result."
+    )
 
 
 def get_current_datetime() -> str:

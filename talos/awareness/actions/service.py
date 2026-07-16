@@ -5,16 +5,15 @@ parameter schema → actor permission → allowed prior state → cooldown →
 confirmation when required. Every transition is durable
 (``action_transitions``) and the request row is the current view.
 
-Dispatch is outbox work (durable intent precedes network); the handler
-publishes the registered payload — never model content — with a unique
-``command_id`` and idempotency key, then schedules timeout work. Completion
-is action-specific: state evidence for the legacy Picos, an explicit
-``command_ack`` for the simulator. Silence never means success: the timeout
-handler marks anything unconfirmed ``timed_out`` truthfully, and late or
-duplicate acknowledgements are audited but cannot revive a cancelled or
-timed-out command. Immediate electrical/mechanical interlocks remain in
-firmware (INV-09); the backend never retries a non-idempotent dispatch on
-its own.
+Dispatch is outbox work (durable intent precedes network) and uses a unique
+``command_id`` plus idempotency key. Legacy commands are attempted at most
+once because their firmware cannot dedupe; canonical envelopes may retry the
+same device key. Completion is action-specific: state evidence for the legacy
+Picos, an explicit execution-result ``command_ack`` for the simulator. Silence
+never means success: the timeout handler marks anything unconfirmed
+``timed_out`` truthfully, and late or duplicate acknowledgements cannot revive
+a terminal command. Immediate electrical/mechanical interlocks remain in
+firmware (INV-09).
 """
 
 from __future__ import annotations
@@ -38,11 +37,25 @@ from talos.awareness.logging_utils import get_logger
 logger = get_logger("talos.awareness.actions")
 
 TERMINAL_STATUSES = ("rejected", "completed", "failed", "timed_out", "cancelled")
+MAX_PARAMETERS_BYTES = 4096
+MAX_IDEMPOTENCY_KEY_CHARS = 200
 
 
 def _hash_parameters(action: str, parameters: dict[str, Any]) -> str:
-    canonical = json.dumps({"action": action, "parameters": parameters}, sort_keys=True)
+    canonical = json.dumps(
+        {"action": action, "parameters": parameters},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _hash_confirmation_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _public_idempotency_key(value: str) -> str:
+    return value.removeprefix("caller:")
 
 
 class ActionService:
@@ -69,45 +82,140 @@ class ActionService:
         parameters: dict[str, Any],
         actor: str,
         correlation_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
-        definition = self._registry.get(action_name)
-        if definition is None:
-            return {
-                "accepted": False,
-                "status": "rejected",
-                "reason": f"unsupported action {action_name!r}; "
-                f"supported: {self._registry.names()}",
-            }
+        caller_key = (idempotency_key or "").strip()
+        key_error = None
+        if idempotency_key is not None and not caller_key:
+            key_error = "idempotency_key must not be blank when provided"
+        elif len(caller_key) > MAX_IDEMPOTENCY_KEY_CHARS:
+            key_error = (
+                f"idempotency_key must be at most {MAX_IDEMPOTENCY_KEY_CHARS} characters"
+            )
+        durable_key = f"caller:{caller_key}" if caller_key and not key_error else f"action:{uuid4()}"
+
+        parameter_error = None
         try:
-            validated = definition.validate_parameters(parameters)
-        except ValueError as exc:
-            return await self._reject_unpersisted(str(exc))
-        if actor not in definition.allowed_actors:
-            return await self._reject_unpersisted(
-                f"actor {actor!r} is not permitted for {action_name}"
+            encoded_parameters = json.dumps(
+                parameters, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            encoded_parameters = b""
+            parameter_error = "parameters must be JSON-serializable"
+        if len(encoded_parameters) > MAX_PARAMETERS_BYTES:
+            parameter_error = (
+                f"parameters exceed the {MAX_PARAMETERS_BYTES}-byte action limit"
             )
 
+        if parameter_error:
+            audit_parameters: dict[str, Any] = {
+                "_omitted": parameter_error,
+                "sha256": hashlib.sha256(encoded_parameters).hexdigest(),
+            }
+        else:
+            audit_parameters = parameters
+
+        definition = self._registry.get(action_name)
+        validation_error = parameter_error or key_error
+        validated = audit_parameters
+        if definition is None:
+            validation_error = (
+                f"unsupported action {action_name!r}; supported: {self._registry.names()}"
+            )
+        elif validation_error is None:
+            try:
+                validated = definition.validate_parameters(parameters)
+            except ValueError as exc:
+                validation_error = str(exc)
+
+        parameters_hash = _hash_parameters(action_name, validated)
+
         async with self._engine.begin() as connection:
+            if caller_key and not key_error:
+                existing = await self._find_by_idempotency_key(connection, durable_key)
+                if existing is not None:
+                    return await self._deduplicate_request(
+                        connection,
+                        existing,
+                        action_name=action_name,
+                        parameters_hash=parameters_hash,
+                        actor=actor,
+                        correlation_id=correlation_id,
+                        now=now,
+                    )
+
+            if validation_error is not None:
+                return await self._persist_rejected(
+                    connection,
+                    action_name=action_name,
+                    target_entity_id=(definition.target_entity_id if definition else None),
+                    parameters=validated,
+                    parameters_hash=parameters_hash,
+                    actor=actor,
+                    correlation_id=correlation_id,
+                    idempotency_key=durable_key,
+                    reason=validation_error,
+                    now=now,
+                )
+            assert definition is not None
+            if actor not in definition.allowed_actors:
+                return await self._persist_rejected(
+                    connection,
+                    action_name=definition.name,
+                    target_entity_id=definition.target_entity_id,
+                    parameters=validated,
+                    parameters_hash=parameters_hash,
+                    actor=actor,
+                    correlation_id=correlation_id,
+                    idempotency_key=durable_key,
+                    reason=f"actor {actor!r} is not permitted for {action_name}",
+                    now=now,
+                )
             state_error = await self._check_allowed_state(connection, definition, validated)
             if state_error:
                 return await self._persist_rejected(
-                    connection, definition, validated, actor, correlation_id, state_error, now
+                    connection,
+                    action_name=definition.name,
+                    target_entity_id=definition.target_entity_id,
+                    parameters=validated,
+                    parameters_hash=parameters_hash,
+                    actor=actor,
+                    correlation_id=correlation_id,
+                    idempotency_key=durable_key,
+                    reason=state_error,
+                    now=now,
                 )
             cooldown_error = await self._check_cooldown(connection, definition, now)
             if cooldown_error:
                 return await self._persist_rejected(
-                    connection, definition, validated, actor, correlation_id, cooldown_error, now
+                    connection,
+                    action_name=definition.name,
+                    target_entity_id=definition.target_entity_id,
+                    parameters=validated,
+                    parameters_hash=parameters_hash,
+                    actor=actor,
+                    correlation_id=correlation_id,
+                    idempotency_key=durable_key,
+                    reason=cooldown_error,
+                    now=now,
                 )
 
             request_id, token = await self._persist_request(
-                connection, definition, validated, actor, correlation_id, now
+                connection,
+                definition,
+                validated,
+                actor,
+                correlation_id,
+                durable_key,
+                now,
             )
             if definition.confirmation_required:
                 return {
                     "accepted": True,
                     "action_request_id": str(request_id),
                     "status": "awaiting_confirmation",
+                    "idempotency_key": _public_idempotency_key(durable_key),
                     "confirmation_token": token,
                     "confirmation_expires_in_seconds": definition.confirmation_ttl_seconds,
                     "note": "confirm with the exact token to dispatch",
@@ -117,6 +225,7 @@ class ActionService:
             "accepted": True,
             "action_request_id": str(request_id),
             "status": "approved",
+            "idempotency_key": _public_idempotency_key(durable_key),
         }
 
     async def confirm(
@@ -144,8 +253,26 @@ class ActionService:
                 return {"ok": False, "reason": f"request is {row.status}, not awaiting confirmation"}
             # Confirmation binds to the exact actor and request content.
             if actor != row.actor:
+                await self._audit(
+                    connection,
+                    action_request_id,
+                    row.status,
+                    actor=actor,
+                    detail="confirmation rejected: actor did not match requester",
+                    now=now,
+                )
                 return {"ok": False, "reason": "confirmation must come from the requesting actor"}
-            if not secrets.compare_digest(token, row.confirmation_token or ""):
+            stored_token = row.confirmation_token or ""
+            candidate = _hash_confirmation_token(token) if len(stored_token) == 64 else token
+            if not secrets.compare_digest(candidate, stored_token):
+                await self._audit(
+                    connection,
+                    action_request_id,
+                    row.status,
+                    actor=actor,
+                    detail="confirmation rejected: invalid token",
+                    now=now,
+                )
                 return {"ok": False, "reason": "invalid confirmation token"}
             if row.confirmation_expires_at and row.confirmation_expires_at < now:
                 await self._transition(
@@ -155,7 +282,36 @@ class ActionService:
                 return {"ok": False, "reason": "confirmation expired; request cancelled"}
             definition = self._registry.get(row.action_name)
             if definition is None:
+                await self._transition(
+                    connection,
+                    action_request_id,
+                    row.status,
+                    "failed",
+                    actor=actor,
+                    detail="action no longer registered at confirmation",
+                    now=now,
+                    extra={"error": "action no longer registered"},
+                )
                 return {"ok": False, "reason": "action no longer registered"}
+            state_error = await self._check_allowed_state(
+                connection, definition, dict(row.parameters)
+            )
+            cooldown_error = await self._check_cooldown(
+                connection, definition, now, exclude_request_id=action_request_id
+            )
+            if state_error or cooldown_error:
+                reason = state_error or cooldown_error or "validation failed"
+                await self._transition(
+                    connection,
+                    action_request_id,
+                    row.status,
+                    "rejected",
+                    actor=actor,
+                    detail=f"confirmation-time validation failed: {reason}",
+                    now=now,
+                    extra={"error": reason[:500]},
+                )
+                return {"ok": False, "reason": reason}
             await self._approve_and_queue(
                 connection, action_request_id, definition, dict(row.parameters), actor, now
             )
@@ -166,13 +322,33 @@ class ActionService:
         async with self._engine.begin() as connection:
             row = (
                 await connection.execute(
-                    sa.select(ActionRequest.status)
+                    sa.select(
+                        ActionRequest.status,
+                        ActionRequest.actor,
+                        ActionRequest.action_name,
+                    )
                     .where(ActionRequest.action_request_id == action_request_id)
                     .with_for_update()
                 )
             ).one_or_none()
             if row is None:
                 return {"ok": False, "reason": "unknown action request"}
+            definition = self._registry.get(row.action_name)
+            authorized = actor == row.actor or (
+                actor == "operator"
+                and definition is not None
+                and actor in definition.allowed_actors
+            )
+            if not authorized:
+                await self._audit(
+                    connection,
+                    action_request_id,
+                    row.status,
+                    actor=actor,
+                    detail="cancellation rejected: actor not authorized",
+                    now=now,
+                )
+                return {"ok": False, "reason": "actor is not permitted to cancel this request"}
             if row.status in TERMINAL_STATUSES or row.status == "dispatched":
                 # A dispatched physical command cannot be un-sent; only
                 # pre-dispatch requests are cancellable.
@@ -205,7 +381,11 @@ class ActionService:
             return
         row = (
             await connection.execute(
-                sa.select(ActionRequest.action_request_id, ActionRequest.status)
+                sa.select(
+                    ActionRequest.action_request_id,
+                    ActionRequest.status,
+                    ActionRequest.action_name,
+                )
                 .where(ActionRequest.command_id == parsed)
                 .with_for_update()
             )
@@ -213,7 +393,38 @@ class ActionService:
         if row is None:
             return
         now = datetime.now(timezone.utc)
-        ok = bool(payload.get("ok", True))
+        definition = self._registry.get(row.action_name)
+        if definition is None or definition.ack_mode != "command_ack":
+            await self._audit(
+                connection,
+                row.action_request_id,
+                row.status,
+                detail=f"unexpected command acknowledgement ignored (event {envelope.event_id})",
+                now=now,
+            )
+            return
+        if envelope.source_id != definition.ack_source_id:
+            await self._audit(
+                connection,
+                row.action_request_id,
+                row.status,
+                detail=(
+                    f"acknowledgement from unauthorized source {envelope.source_id!r} "
+                    f"ignored (event {envelope.event_id})"
+                ),
+                now=now,
+            )
+            return
+        if not isinstance(payload.get("ok"), bool):
+            await self._audit(
+                connection,
+                row.action_request_id,
+                row.status,
+                detail=f"malformed acknowledgement ignored (event {envelope.event_id})",
+                now=now,
+            )
+            return
+        ok = payload["ok"]
         if row.status not in ("dispatched", "acknowledged"):
             # Late/duplicate ack: audited, but cannot revive a terminal state.
             await connection.execute(
@@ -228,9 +439,26 @@ class ActionService:
             return
         if not ok:
             await self._transition(
-                connection, row.action_request_id, row.status, "failed",
-                detail=f"negative acknowledgement (event {envelope.event_id})", now=now,
-                extra={"acknowledged_at": now, "error": str(payload.get("error", "device reported failure"))[:300]},
+                connection,
+                row.action_request_id,
+                row.status,
+                "acknowledged",
+                detail=f"negative acknowledgement received (event {envelope.event_id})",
+                now=now,
+                extra={"acknowledged_at": now},
+            )
+            await self._transition(
+                connection,
+                row.action_request_id,
+                "acknowledged",
+                "failed",
+                detail=f"device reported action failure (event {envelope.event_id})",
+                now=now,
+                extra={
+                    "error": str(
+                        payload.get("error", "device reported failure")
+                    )[:300]
+                },
             )
             return
         await self._transition(
@@ -238,13 +466,16 @@ class ActionService:
             detail=f"acknowledged by device (event {envelope.event_id})", now=now,
             extra={"acknowledged_at": now},
         )
-        # command_ack semantics (registry): acknowledgement is execution
-        # receipt for the simulator, so completion follows.
-        await self._transition(
-            connection, row.action_request_id, "acknowledged", "completed",
-            detail="completed on acknowledgement per action definition", now=now,
-            extra={"completed_at": now},
-        )
+        if definition.ack_semantics == "execution_result":
+            await self._transition(
+                connection,
+                row.action_request_id,
+                "acknowledged",
+                "completed",
+                detail="acknowledgement is an execution result per action definition",
+                now=now,
+                extra={"completed_at": now},
+            )
 
     async def _handle_state_evidence(self, connection: AsyncConnection, envelope: Any) -> None:
         payload = envelope.payload or {}
@@ -260,6 +491,7 @@ class ActionService:
                     ActionRequest.status,
                     ActionRequest.action_name,
                     ActionRequest.parameters,
+                    ActionRequest.target_entity_id,
                 )
                 .where(ActionRequest.status == "dispatched")
                 .with_for_update()
@@ -270,6 +502,10 @@ class ActionService:
             definition = self._registry.get(row.action_name)
             if definition is None or definition.ack_mode != "state_confirmation":
                 continue
+            if envelope.source_id != definition.ack_source_id:
+                continue
+            if envelope.entity_id != row.target_entity_id:
+                continue
             expected_property = self._render_value(
                 definition.confirm_property or "", row.parameters
             )
@@ -277,15 +513,56 @@ class ActionService:
                 continue
             expected = self._expected_value(definition, row.parameters)
             if bool(expected) != active:
+                await self._transition(
+                    connection,
+                    row.action_request_id,
+                    row.status,
+                    "acknowledged",
+                    detail=(
+                        f"state evidence received from {envelope.source_id} "
+                        f"(event {envelope.event_id})"
+                    ),
+                    now=now,
+                    extra={"acknowledged_at": now},
+                )
+                await self._transition(
+                    connection,
+                    row.action_request_id,
+                    "acknowledged",
+                    "failed",
+                    detail=(
+                        f"state confirmation mismatch: expected {expected_property}="
+                        f"{bool(expected)}, observed {active}"
+                    ),
+                    now=now,
+                    extra={
+                        "error": (
+                            f"state confirmation mismatch for {expected_property}: "
+                            f"expected {bool(expected)}, observed {active}"
+                        )
+                    },
+                )
                 continue
             await self._transition(
-                connection, row.action_request_id, row.status, "completed",
+                connection,
+                row.action_request_id,
+                row.status,
+                "acknowledged",
                 detail=(
                     f"state confirmation: {expected_property} became {active} "
                     f"(event {envelope.event_id})"
                 ),
                 now=now,
-                extra={"acknowledged_at": now, "completed_at": now},
+                extra={"acknowledged_at": now},
+            )
+            await self._transition(
+                connection,
+                row.action_request_id,
+                "acknowledged",
+                "completed",
+                detail="completed after matching state evidence",
+                now=now,
+                extra={"completed_at": now},
             )
 
     # --- outbox handlers ---------------------------------------------------------
@@ -305,6 +582,9 @@ class ActionService:
                             ActionRequest.parameters,
                             ActionRequest.command_id,
                             ActionRequest.idempotency_key,
+                            ActionRequest.target_entity_id,
+                            ActionRequest.actor,
+                            ActionRequest.correlation_id,
                         )
                         .where(ActionRequest.action_request_id == request_id)
                         .with_for_update()
@@ -326,36 +606,77 @@ class ActionService:
                             "command_id": str(row.command_id),
                             "idempotency_key": row.idempotency_key,
                             "action": row.action_name,
+                            "target_entity_id": row.target_entity_id,
                             "parameters": row.parameters,
+                            "actor": row.actor,
+                            "correlation_id": row.correlation_id,
+                            "timeout_seconds": definition.timeout_seconds,
+                            "ack_mode": definition.ack_mode,
+                            "ack_semantics": definition.ack_semantics,
                             "issued_at": datetime.now(timezone.utc).isoformat(),
                         }
-                    ).encode("utf-8")
+                    , separators=(",", ":")).encode("utf-8")
                 else:
                     body = self._render_value(definition.payload, row.parameters).encode("utf-8")
-                now = datetime.now(timezone.utc)
-                timeout_at = now + timedelta(seconds=definition.timeout_seconds)
-                # Durable intent first; the publish happens after commit via
-                # the captured values (a crash between commit and publish
-                # leaves a dispatched-but-unconfirmed command that the
-                # timeout marks truthfully — never an untracked retry).
-                await self._transition(
-                    connection, request_id, row.status, "dispatched",
-                    detail=f"publishing to {topic}", now=now,
-                    extra={"dispatched_at": now, "timeout_at": timeout_at},
-                )
-                await connection.execute(
-                    pg_insert(OutboxItem)
-                    .values(
-                        work_type="action_timeout",
-                        aggregate_type="action_request",
-                        aggregate_id=str(request_id),
-                        payload={"action_request_id": str(request_id)},
-                        idempotency_key=f"action_timeout:{request_id}",
-                        available_at=timeout_at,
+                if definition.idempotency_behavior == "at_most_once":
+                    # Legacy devices cannot dedupe command IDs. Mark the
+                    # attempt before network I/O so a crash cannot cause an
+                    # automatic repeated physical effect.
+                    await self._mark_dispatched(
+                        connection, request_id, row.status, definition, topic
                     )
-                    .on_conflict_do_nothing(index_elements=["idempotency_key"])
-                )
+
+            if definition.idempotency_behavior == "at_most_once":
+                try:
+                    await publish(topic, body)
+                except Exception as exc:
+                    logger.warning(
+                        "at-most-once action dispatch failed for %s (%s)",
+                        request_id,
+                        type(exc).__name__,
+                        extra={"component": "actions"},
+                    )
+                    async with self._engine.begin() as connection:
+                        status = (
+                            await connection.execute(
+                                sa.select(ActionRequest.status)
+                                .where(ActionRequest.action_request_id == request_id)
+                                .with_for_update()
+                            )
+                        ).scalar_one_or_none()
+                        if status == "dispatched":
+                            await self._transition(
+                                connection,
+                                request_id,
+                                status,
+                                "failed",
+                                detail="MQTT publish failed; delivery is unknown and was not retried",
+                                now=datetime.now(timezone.utc),
+                                extra={
+                                    "error": (
+                                        "MQTT publish failed; delivery unknown; "
+                                        "at-most-once policy prevented retry"
+                                    )
+                                },
+                            )
+                return
+
+            # Device-key actions carry a stable command/idempotency key. A
+            # crash or broker failure may safely retry the same envelope; the
+            # device is responsible for deduplicating it.
             await publish(topic, body)
+            async with self._engine.begin() as connection:
+                status = (
+                    await connection.execute(
+                        sa.select(ActionRequest.status)
+                        .where(ActionRequest.action_request_id == request_id)
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if status == "approved":
+                    await self._mark_dispatched(
+                        connection, request_id, status, definition, topic
+                    )
 
         return _handle
 
@@ -411,8 +732,11 @@ class ActionService:
             "target_entity_id": row.target_entity_id,
             "parameters": row.parameters,
             "actor": row.actor,
+            "correlation_id": row.correlation_id,
             "status": row.status,
             "command_id": str(row.command_id) if row.command_id else None,
+            "idempotency_key": _public_idempotency_key(row.idempotency_key),
+            "timeout_at": row.timeout_at.isoformat() if row.timeout_at else None,
             "dispatched_at": row.dispatched_at.isoformat() if row.dispatched_at else None,
             "acknowledged_at": row.acknowledged_at.isoformat() if row.acknowledged_at else None,
             "completed_at": row.completed_at.isoformat() if row.completed_at else None,
@@ -450,42 +774,52 @@ class ActionService:
     async def _check_allowed_state(
         self, connection: AsyncConnection, definition: ActionDefinition, parameters: dict[str, Any]
     ) -> str | None:
-        if not definition.allowed_prior_values or not definition.confirm_property:
+        if "allowed_state" not in definition.safety_checks:
             return None
         property_name = self._render_value(definition.confirm_property, parameters)
         row = (
             await connection.execute(
-                sa.select(CurrentState.value_json).where(
+                sa.select(CurrentState.value_json, CurrentState.state_status).where(
                     CurrentState.entity_id == definition.target_entity_id,
                     CurrentState.property_name == property_name,
                 )
             )
         ).one_or_none()
         current = (row.value_json or {}).get("value") if row else None
+        if row is None or row.state_status != "current":
+            return (
+                f"safety check failed: target state {property_name} is not current "
+                f"(status={row.state_status if row else 'unknown'})"
+            )
         if current not in definition.allowed_prior_values:
             return (
-                f"target state {property_name}={current!r} is not in the allowed "
+                f"safety check failed: target state {property_name}={current!r} "
+                f"is not in the allowed "
                 f"prior states {definition.allowed_prior_values}"
             )
         return None
 
     async def _check_cooldown(
-        self, connection: AsyncConnection, definition: ActionDefinition, now: datetime
+        self,
+        connection: AsyncConnection,
+        definition: ActionDefinition,
+        now: datetime,
+        *,
+        exclude_request_id: UUID | None = None,
     ) -> str | None:
         if definition.cooldown_seconds <= 0:
             return None
-        recent = (
-            await connection.execute(
-                sa.select(ActionRequest.created_at)
-                .where(
-                    ActionRequest.action_name == definition.name,
-                    ActionRequest.status.notin_(("rejected", "cancelled")),
-                    ActionRequest.created_at
-                    > now - timedelta(seconds=definition.cooldown_seconds),
-                )
-                .limit(1)
+        statement = sa.select(ActionRequest.created_at).where(
+            ActionRequest.action_name == definition.name,
+            ActionRequest.status.notin_(("rejected", "cancelled")),
+            ActionRequest.created_at
+            > now - timedelta(seconds=definition.cooldown_seconds),
+        )
+        if exclude_request_id is not None:
+            statement = statement.where(
+                ActionRequest.action_request_id != exclude_request_id
             )
-        ).first()
+        recent = (await connection.execute(statement.limit(1))).first()
         if recent is not None:
             return (
                 f"cooldown: {definition.name} ran within the last "
@@ -500,10 +834,10 @@ class ActionService:
         parameters: dict[str, Any],
         actor: str,
         correlation_id: str | None,
+        idempotency_key: str,
         now: datetime,
     ) -> tuple[UUID, str | None]:
         token = secrets.token_hex(16) if definition.confirmation_required else None
-        status = "awaiting_confirmation" if definition.confirmation_required else "requested"
         request_id = (
             await connection.execute(
                 sa.insert(ActionRequest)
@@ -514,10 +848,12 @@ class ActionService:
                     parameters_hash=_hash_parameters(definition.name, parameters),
                     actor=actor,
                     correlation_id=correlation_id,
-                    status=status,
+                    status="requested",
                     command_id=uuid4(),
-                    idempotency_key=f"action:{uuid4()}",
-                    confirmation_token=token,
+                    idempotency_key=idempotency_key,
+                    confirmation_token=(
+                        _hash_confirmation_token(token) if token else None
+                    ),
                     confirmation_expires_at=(
                         now + timedelta(seconds=definition.confirmation_ttl_seconds)
                         if token
@@ -531,21 +867,43 @@ class ActionService:
             sa.insert(ActionTransition).values(
                 action_request_id=request_id,
                 from_status=None,
-                to_status=status,
+                to_status="requested",
                 occurred_at=now,
                 actor=actor,
-                detail="validated request",
+                detail="action request received",
             )
         )
+        await self._transition(
+            connection,
+            request_id,
+            "requested",
+            "validated",
+            actor=actor,
+            detail="registry, schema, permission, safety, and cooldown checks passed",
+            now=now,
+        )
+        if definition.confirmation_required:
+            await self._transition(
+                connection,
+                request_id,
+                "validated",
+                "awaiting_confirmation",
+                actor=actor,
+                detail="exact-request confirmation required",
+                now=now,
+            )
         return request_id, token
 
     async def _persist_rejected(
         self,
         connection: AsyncConnection,
-        definition: ActionDefinition,
+        action_name: str,
+        target_entity_id: str | None,
         parameters: dict[str, Any],
+        parameters_hash: str,
         actor: str,
         correlation_id: str | None,
+        idempotency_key: str,
         reason: str,
         now: datetime,
     ) -> dict[str, Any]:
@@ -553,14 +911,14 @@ class ActionService:
             await connection.execute(
                 sa.insert(ActionRequest)
                 .values(
-                    action_name=definition.name,
-                    target_entity_id=definition.target_entity_id,
+                    action_name=action_name[:100],
+                    target_entity_id=target_entity_id,
                     parameters=parameters,
-                    parameters_hash=_hash_parameters(definition.name, parameters),
-                    actor=actor,
+                    parameters_hash=parameters_hash,
+                    actor=actor[:100],
                     correlation_id=correlation_id,
                     status="rejected",
-                    idempotency_key=f"action:{uuid4()}",
+                    idempotency_key=idempotency_key,
                     error=reason[:500],
                 )
                 .returning(ActionRequest.action_request_id)
@@ -580,14 +938,145 @@ class ActionService:
             "accepted": False,
             "action_request_id": str(request_id),
             "status": "rejected",
+            "idempotency_key": _public_idempotency_key(idempotency_key),
             "reason": reason,
         }
 
-    async def _reject_unpersisted(self, reason: str) -> dict[str, Any]:
-        # Schema/permission failures happen before anything durable exists;
-        # they are logged rather than stored (nothing physical was at stake).
-        logger.info("action request rejected: %s", reason, extra={"component": "actions"})
-        return {"accepted": False, "status": "rejected", "reason": reason}
+    async def _find_by_idempotency_key(
+        self, connection: AsyncConnection, idempotency_key: str
+    ) -> Any | None:
+        return (
+            await connection.execute(
+                sa.select(
+                    ActionRequest.action_request_id,
+                    ActionRequest.action_name,
+                    ActionRequest.parameters_hash,
+                    ActionRequest.actor,
+                    ActionRequest.correlation_id,
+                    ActionRequest.status,
+                    ActionRequest.error,
+                    ActionRequest.idempotency_key,
+                )
+                .where(ActionRequest.idempotency_key == idempotency_key)
+                .with_for_update()
+            )
+        ).one_or_none()
+
+    async def _deduplicate_request(
+        self,
+        connection: AsyncConnection,
+        existing: Any,
+        *,
+        action_name: str,
+        parameters_hash: str,
+        actor: str,
+        correlation_id: str | None,
+        now: datetime,
+    ) -> dict[str, Any]:
+        exact_match = (
+            existing.action_name == action_name
+            and existing.parameters_hash == parameters_hash
+            and existing.actor == actor
+            and existing.correlation_id == correlation_id
+        )
+        if not exact_match:
+            await self._audit(
+                connection,
+                existing.action_request_id,
+                existing.status,
+                actor=actor,
+                detail=(
+                    "idempotency key reuse rejected: actor/action/parameters/"
+                    "correlation did not match the original request"
+                ),
+                now=now,
+            )
+            return {
+                "accepted": False,
+                "action_request_id": str(existing.action_request_id),
+                "status": "rejected",
+                "idempotency_key": _public_idempotency_key(
+                    existing.idempotency_key
+                ),
+                "reason": "idempotency key is already bound to a different request",
+            }
+        await self._audit(
+            connection,
+            existing.action_request_id,
+            existing.status,
+            actor=actor,
+            detail="duplicate request returned the existing action lifecycle",
+            now=now,
+        )
+        response = {
+            "accepted": existing.status != "rejected",
+            "action_request_id": str(existing.action_request_id),
+            "status": existing.status,
+            "idempotency_key": _public_idempotency_key(existing.idempotency_key),
+            "deduplicated": True,
+        }
+        if existing.status == "rejected":
+            response["reason"] = existing.error or "request was rejected"
+        if existing.status == "awaiting_confirmation":
+            response["note"] = (
+                "duplicate request; use the confirmation token returned by the "
+                "original response"
+            )
+        return response
+
+    async def _mark_dispatched(
+        self,
+        connection: AsyncConnection,
+        request_id: UUID,
+        from_status: str,
+        definition: ActionDefinition,
+        topic: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        timeout_at = now + timedelta(seconds=definition.timeout_seconds)
+        await self._transition(
+            connection,
+            request_id,
+            from_status,
+            "dispatched",
+            detail=f"command publish attempted on registered topic {topic}",
+            now=now,
+            extra={"dispatched_at": now, "timeout_at": timeout_at},
+        )
+        await connection.execute(
+            pg_insert(OutboxItem)
+            .values(
+                work_type="action_timeout",
+                aggregate_type="action_request",
+                aggregate_id=str(request_id),
+                payload={"action_request_id": str(request_id)},
+                idempotency_key=f"action_timeout:{request_id}",
+                available_at=timeout_at,
+            )
+            .on_conflict_do_nothing(index_elements=["idempotency_key"])
+        )
+
+    async def _audit(
+        self,
+        connection: AsyncConnection,
+        request_id: UUID,
+        status: str,
+        *,
+        now: datetime,
+        actor: str | None = None,
+        detail: str,
+    ) -> None:
+        """Append an audit observation without changing lifecycle state."""
+        await connection.execute(
+            sa.insert(ActionTransition).values(
+                action_request_id=request_id,
+                from_status=status,
+                to_status=status,
+                occurred_at=now,
+                actor=actor,
+                detail=detail[:500],
+            )
+        )
 
     async def _approve_and_queue(
         self,

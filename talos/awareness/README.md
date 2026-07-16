@@ -26,7 +26,9 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 python3.12 -m venv .venv-awareness
 .venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
 
-# 3. Configuration: set TALOS_AWARENESS_DB_PASSWORD in .env (see .env.example).
+# 3. Configuration: set TALOS_AWARENESS_DB_PASSWORD in .env. To enable
+#    physical action mutations, also set a shared TALOS_AWARENESS_API_TOKEN
+#    (minimum 16 characters) for the backend and main-agent client.
 
 # 4. Apply migrations (never applied automatically — see policy below).
 .venv-awareness/bin/python -m talos.awareness migrate
@@ -60,6 +62,7 @@ Secrets never appear in logs or health output.
 | `TALOS_AWARENESS_DB_HOST` / `_DB_PORT` | `127.0.0.1` / `5433` | Postgres address |
 | `TALOS_AWARENESS_DB_NAME` / `_DB_USER` | `talos_awareness` / `talos` | Database / role |
 | `TALOS_AWARENESS_API_HOST` / `_API_PORT` | `127.0.0.1` / `8600` | Internal API bind |
+| `TALOS_AWARENESS_API_TOKEN` | *(unset; action mutations disabled)* | Shared bearer token required by action request/confirm/cancel routes and sent by the main-agent client |
 | `TALOS_AWARENESS_LOG_LEVEL` | `INFO` | Structured JSON log level |
 | `TALOS_AWARENESS_DATA_DIRECTORY` | `db/awareness` | Local artifact store root (used from Phase 8) |
 | `TALOS_AWARENESS_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama (same machine per owner decision, still configurable) |
@@ -362,43 +365,65 @@ this to both LLM lanes.
 
 Every dispatchable action is registered in versioned TOML
 ([`actions/actions.toml`](actions/actions.toml)) with strict typed
-parameters, actor allowlist, cooldown, timeout, command topic, payload
-template, and action-specific completion semantics — **MQTT payloads are
-generated only from these definitions, never from model content**, and the
-model has no raw-MQTT path. Supported: `water_plants` (pot_pin 17/19),
-`toggle_fan` (state 0/1), and the simulator's `sim_command` (which requires
-confirmation and exercises that flow). Validation order before any dispatch:
-registered action → parameter schema → actor permission → allowed prior
-state → cooldown → confirmation. Confirmation binds token, actor, and exact
-request; it expires, and a materially different request needs a new one.
+parameters, permission/actor allowlist, confirmation, safety/allowed-state
+policy, cooldown, timeout, command topic, idempotency behavior, acknowledgement
+source/semantics, and rollback (`none` for all deployed actions). **MQTT
+payloads are generated only from these definitions, never from model
+content**, wildcard command topics are rejected, and the model has no raw-MQTT
+path. Supported: `water_plants` (pot_pin 17/19), `toggle_fan` (state 0/1), and
+the simulator's `sim_command` (which requires confirmation and exercises that
+flow). Validation order before any dispatch: registered action → parameter
+schema/bounds → actor permission → configured safety/allowed prior state →
+cooldown → confirmation. Rejections are durable. Confirmation binds a
+one-time returned token, actor, and exact request; only a SHA-256 digest is
+stored, the token expires, and a materially different request needs a new
+one. Action mutations fail closed unless `TALOS_AWARENESS_API_TOKEN` is
+configured and supplied as a bearer token.
 
 ### Lifecycle, acknowledgement, and truthful failure
 
 Every request and transition is durable (`action_requests` +
-`action_transitions`, migration `4d268f4eae02`):
-requested → approved → dispatched → acknowledged → completed, with
-rejected/failed/timed_out/cancelled as terminal audit states. Approval
-queues durable outbox work (`action_dispatch`) — intent precedes network —
-and dispatch publishes with a unique `command_id`/idempotency key, then
-schedules `action_timeout` work. Completion is action-specific and **silence
-is never success**: the legacy Picos publish `status/{pin}` after acting, so
-completion is state confirmation through the real ingestion path; the
-simulator sends `command_ack` events (negative acks fail the request
-truthfully). Late/duplicate acks are audited but cannot revive a timed-out or
-cancelled command; a crash between commit and publish leaves a dispatched
-command that the timeout marks truthfully rather than retrying a
-non-idempotent physical action. Immediate electrical/mechanical interlocks
-remain in firmware (INV-09); no rollbacks are registered because none of the
-deployed actions has a safe inverse.
+`action_transitions`, migrations `4d268f4eae02` + `e7c11f9a4b2d`): requested
+→ validated → awaiting_confirmation (when required) → approved → dispatched
+→ acknowledged → completed, with rejected/failed/timed_out/cancelled terminal
+states. Unsupported/schema/permission/safety/cooldown rejections, failed
+confirmation/cancel attempts, duplicate requests, late acks, and state
+mismatches remain queryable audit transitions. A caller-supplied idempotency
+key binds actor/action/normalized parameters/correlation; an exact duplicate
+returns the existing lifecycle, while changed content is rejected. Command
+IDs are database-unique.
+
+Approval queues durable `action_dispatch` work before network I/O. Legacy
+Picos cannot dedupe command IDs, so they use an at-most-once policy: the
+attempt is recorded before publish and an uncertain/failed publish is failed
+without an automatic physical retry. Canonical simulator commands carry the
+same command/idempotency key on bounded retry, so broker failure leaves the
+request approved until a publish succeeds. Both paths schedule
+`action_timeout` after a recorded dispatch. Broker credentials/TLS settings
+are shared with ingestion.
+
+Completion is action-specific and **silence is never success**. The pump
+firmware publishes `status/{pin}=0` only after its fixed eight-second cycle;
+that final off evidence completes watering. Fan status is normalized for its
+active-low relay. Mismatching state evidence acknowledges then fails the
+action instead of being called successful. The simulator's source-bound
+`sim.command_ack` explicitly means execution result; negative/malformed/
+wrong-source acknowledgements cannot complete a command. Late/duplicate acks
+are audited and cannot revive a terminal command. Immediate electrical and
+mechanical interlocks remain in firmware (INV-09); no rollbacks are registered
+because the deployed actions have no safe inverse.
 
 API: `POST /actions/request`, `POST /actions/{id}/confirm`,
 `POST /actions/{id}/cancel` (pre-dispatch only), `GET /actions[/{id}]` with
 the full transition audit. MCP tools: `request_device_action`,
-`get_action_status`. The legacy direct tools (`water_plants`, `toggle_fan`
-in `talos/services/home_automation.py`) remain untouched per INV-10 —
-cutting the main agent over to the action service is an owner decision.
-Physical hardware was not exercised (ADR-014): completion semantics are
-proven against the simulator and the legacy pin-status message shape.
+`get_action_status`. The existing MCP names `water_plants` and `toggle_fan`
+are preserved but now call the action API; their result reports the durable
+request status and never claims physical success before evidence. Physical
+hardware was not exercised (ADR-014): completion/failure semantics are proven
+against the simulator and the repository-confirmed legacy firmware/status
+shape. Known physical limitations remain: ambiguous legacy `status/16`, no
+device-side command IDs/acks/reconnect, and no backend-checkable pre-command
+safety sensor for the two deployed Picos.
 
 ## Tests
 
@@ -408,7 +433,7 @@ proven against the simulator and the legacy pin-status message shape.
   tests.test_awareness_config tests.test_awareness_event_schema \
   tests.test_awareness_health tests.test_awareness_ingestion_unit \
   tests.test_awareness_state_unit tests.test_awareness_rules_unit \
-  tests.test_awareness_context_unit
+  tests.test_awareness_context_unit tests.test_awareness_actions_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
@@ -421,7 +446,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
 .venv-main/bin/python -m unittest tests.test_text_server_notify \
-  tests.test_awareness_client_and_provider
+  tests.test_awareness_client_and_provider tests.test_home_automation_actions
 ```
 
 ## Requirements traceability

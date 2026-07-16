@@ -146,6 +146,7 @@ def register(server: FastMCP) -> None:
         action: str,
         parameters: str = "{}",
         correlation_id: str = "",
+        idempotency_key: str = "",
     ) -> str:
         """Request a REGISTERED physical device action through the validated
         action service (never raw MQTT). `parameters` is a JSON object string,
@@ -154,6 +155,7 @@ def register(server: FastMCP) -> None:
         confirmation). The response includes the action_request_id and
         status — 'awaiting_confirmation' means the user must approve before
         anything is dispatched; check progress with get_action_status.
+        Supply and reuse `idempotency_key` when retrying the same user intent.
         Dispatch, acknowledgement, timeout, and completion are tracked
         truthfully: silence is never success."""
         try:
@@ -171,6 +173,7 @@ def register(server: FastMCP) -> None:
                         "parameters": parsed,
                         "actor": "llm",
                         "correlation_id": correlation_id or None,
+                        "idempotency_key": idempotency_key or None,
                     },
                 )
             )

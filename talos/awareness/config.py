@@ -56,7 +56,9 @@ class AwarenessSettings(BaseSettings):
     # --- internal API -----------------------------------------------------
     api_host: str = "127.0.0.1"
     api_port: int = 8600
-    api_token: SecretStr | None = None  # enforced once state-changing routes exist
+    # Required by the physical-action mutation routes; when absent those
+    # routes fail closed while read-only health/state APIs remain available.
+    api_token: SecretStr | None = Field(default=None, min_length=16)
 
     # --- logging / storage ------------------------------------------------
     log_level: str = "INFO"

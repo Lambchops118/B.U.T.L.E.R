@@ -249,12 +249,12 @@ class SimulatedDevice:
             SimMessage(
                 topic=f"{BASE_TOPIC}/event",
                 payload=_body(
-                    event_type="sim.command.acknowledged",
+                    event_type="sim.command_ack",
                     correlation_id=command_id,
-                    payload={"command_id": command_id, "result": "ok"},
+                    payload={"command_id": command_id, "ok": True, "result": "executed"},
                     **self._system_fields(),
                 ),
-                note="command acknowledgement",
+                note="command execution acknowledgement",
             )
         ]
 

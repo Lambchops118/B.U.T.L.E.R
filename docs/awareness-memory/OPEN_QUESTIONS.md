@@ -48,7 +48,7 @@ Remaining open items:
 |---|---|---|
 | OQ-013 | Backup destination, schedule, encryption, restore objective. | Phase 8 (SEC-007) |
 | OQ-B | Broker-side Mosquitto config (anonymous? ACLs?) on the Pi — unverifiable off-LAN; assumed anonymous. | Phase 8 hardening plan |
-| OQ-C | Owner appetite for firmware fixes (unique client IDs, status-topic prefixes, abort-during-run, reconnect, acks) — currently out of scope per ADR-014. | Phase 7 device acceptance |
+| OQ-C | Owner appetite for firmware fixes (unique client IDs, status-topic prefixes, abort-during-run, reconnect, native command IDs/acks) — currently out of scope per ADR-014. Phase 7 completed against simulated devices and repository-confirmed legacy status shapes; this is now optional physical-device remediation, not a Phase 7 completion blocker. | Owner-approved post-Phase-7 firmware work |
 
 ## Potential source tension to confirm
 

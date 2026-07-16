@@ -37,6 +37,10 @@ def _timeout() -> float:
         return 1.5
 
 
+def _api_token() -> str:
+    return os.getenv("TALOS_AWARENESS_API_TOKEN", "").strip()
+
+
 def situation_enabled() -> bool:
     return os.getenv("TALOS_AWARENESS_SITUATION_ENABLED", "1").strip() not in {
         "0",
@@ -70,10 +74,14 @@ def get_json(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
 def post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
     """Bounded POST; raises RuntimeError with a clear, short message."""
     url = _base_url() + path
+    headers = {"Content-Type": "application/json"}
+    token = _api_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:

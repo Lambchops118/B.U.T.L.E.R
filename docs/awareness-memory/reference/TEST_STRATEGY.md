@@ -58,12 +58,12 @@ Status is `not_implemented` until implementation evidence is added.
 | MEM-004 | 6 | Unit/integration | Preference change/conflicting evidence | Old record preserved/superseded or explicit conflict retained | not_implemented |
 | MEM-005 | 6 | Integration | Embedding outage | Text accepted, work queued, exact/full-text works, retry succeeds | not_implemented |
 | MEM-006 | 6 | Audit | Embedding corpus | No raw telemetry, heartbeat, raw audio, binaries, or indiscriminate messages | not_implemented |
-| ACTION-001/002 | 7 | Unit/integration | Unsupported/unauthorized/unconfirmed action | Rejected without dispatch; transition and actor audited | not_implemented |
-| ACTION-003 | 7 | Integration/E2E | Duplicate command request | Physical dispatch occurs once under idempotency policy | not_implemented |
-| ACTION-004 | 7 | E2E | Ack success, silence, failure, timeout | Only acknowledged/result-confirmed command completes; other states truthful | not_implemented |
+| ACTION-001/002 | 7 | Unit/integration | Unsupported/unauthorized/unconfirmed action | Rejected without dispatch; transition and actor audited | verified — `test_awareness_actions_{unit,integration}` cover strict registry, durable rejections, permission, safety, confirmation, bearer fail-closed, and no wildcard/raw topic |
+| ACTION-003 | 7 | Integration/E2E | Duplicate command request | Physical dispatch occurs once under idempotency policy | verified — exact caller-key duplicate returns one lifecycle/dispatch; changed content is audited/rejected; device-key retry reuses the same command ID |
+| ACTION-004 | 7 | E2E | Ack success, silence, failure, timeout | Only acknowledged/result-confirmed command completes; other states truthful | verified — positive/negative/malformed/late ack policy, matching/mismatching legacy state, silence timeout, and MQTT publish failure policies exercised without physical hardware |
 | RET-001/002 | 8 | Integration | Retention dry run and execution | Exact bounded plan; aggregate/evidence/provenance protections enforced | not_implemented |
 | RET-003 | 8 | Unit/security | Artifact path and deletion | Safe rooted path; checksum/metadata; LLM cannot choose arbitrary path | not_implemented |
-| SEC-001/002 | 2/7/8 | Security | MQTT/API/action unauthorized access | Denied, audited, rate/input bounded, no secret leakage | not_implemented |
+| SEC-001/002 | 2/7/8 | Security | MQTT/API/action unauthorized access | Denied, audited, rate/input bounded, no secret leakage | in_progress — Phase 7 action mutations require bearer auth, actor permission, source-bound ack, strict 4 KiB parameters and registry bounds; cross-API rate/security audit remains Phase 8 |
 | SEC-003 | 8 | Security | Log/config scan | Secrets absent; no unapproved public/cloud dependency | not_implemented |
 | FAIL-001 | 1-8 | Failure injection | Component matrix outages | Each component degrades and reports exactly as specified | not_implemented |
 | OPS-007/008 | 1/8 | Integration | Startup/shutdown | Ordered startup, actionable failure, graceful durable shutdown | not_implemented |

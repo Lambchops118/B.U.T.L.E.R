@@ -24,9 +24,13 @@ def register(server: FastMCP) -> None:
         return actions.get_current_weather(location)
 
     @server.tool()
-    def water_plants(pot_number: int) -> str:
-        """Send a signal to the pump circuit to water either pot 1 or pot 2."""
-        return actions.water_plants(pot_number)
+    def water_plants(pot_number: int, idempotency_key: str = "") -> str:
+        """Request the registered pump action for pot 1 or 2. This returns an
+        audited lifecycle status, not an immediate claim of physical success.
+        Reuse idempotency_key when retrying the same user intent."""
+        return actions.water_plants(
+            pot_number, idempotency_key=idempotency_key or None
+        )
 
     @server.tool()
     def turn_on_lights(room: str) -> str:
@@ -34,6 +38,8 @@ def register(server: FastMCP) -> None:
         return actions.turn_on_lights(room)
 
     @server.tool()
-    def toggle_fan(status: int) -> str:
-        """Toggle the fan on (1) or off (0)."""
-        return actions.toggle_fan(status)
+    def toggle_fan(status: int, idempotency_key: str = "") -> str:
+        """Request the registered fan action (1=on, 0=off). This returns an
+        audited lifecycle status; reuse idempotency_key for a retry of the
+        same intent."""
+        return actions.toggle_fan(status, idempotency_key=idempotency_key or None)

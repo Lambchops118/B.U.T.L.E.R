@@ -11,14 +11,22 @@ version = 1
 name = "water_plants"
 description = "Run the pump for one pot (fixed 8s firmware cycle)"
 target_entity_id = "quad_pump"
+permission_level = "standard"
+allowed_actors = ["llm", "operator"]
 confirmation_required = false
+safety_checks = []              # no trustworthy pre-command sensor exists
 cooldown_seconds = 60.0        # firmware blocks ~8s per run; avoid stacking
 timeout_seconds = 20.0
+idempotency_behavior = "at_most_once" # legacy firmware cannot dedupe command IDs
 command_topic = "quad_pump/{pot_pin}"
 payload = "1"
 ack_mode = "state_confirmation"
+ack_semantics = "state_result"
+ack_source_id = "quad_pump_pico"
 confirm_property = "pin_{pot_pin}"
-confirm_value = true
+confirm_value = false           # firmware publishes only after the 8s cycle, when off
+allowed_prior_values = []       # any/unknown prior state; firmware owns fixed-duration safety
+rollback = "none"
 
 [[actions.parameters]]
 name = "pot_pin"
@@ -32,14 +40,22 @@ description = "Pump channel pin: 17 (pot 1) or 19 (pot 2)"
 name = "toggle_fan"
 description = "Turn the fan relay on or off"
 target_entity_id = "fan"
+permission_level = "standard"
+allowed_actors = ["llm", "operator"]
 confirmation_required = false
+safety_checks = []              # no additional backend precondition is available
 cooldown_seconds = 5.0
 timeout_seconds = 20.0
+idempotency_behavior = "at_most_once" # legacy firmware cannot dedupe command IDs
 command_topic = "fan/16"
 payload = "{state}"
 ack_mode = "state_confirmation"
+ack_semantics = "state_result"
+ack_source_id = "fan_pico"
 confirm_property = "pin_16"
 confirm_value = "{state}"      # normalized against the boolean pin state
+allowed_prior_values = []
+rollback = "none"
 
 [[actions.parameters]]
 name = "state"
@@ -53,16 +69,26 @@ description = "1 = on, 0 = off"
 name = "sim_command"
 description = "Send a command envelope to the simulated greenhouse device"
 target_entity_id = "sim_greenhouse"
+permission_level = "elevated"
+allowed_actors = ["llm", "operator"]
 confirmation_required = true   # exercises the confirmation flow end-to-end
 confirmation_ttl_seconds = 120.0
+safety_checks = []
 cooldown_seconds = 0.0
 timeout_seconds = 15.0
+idempotency_behavior = "device_key"
 command_topic = "home/sim/greenhouse/command"
 payload = "envelope"
 ack_mode = "command_ack"
+ack_semantics = "execution_result"
+ack_source_id = "sim_device"
+allowed_prior_values = []
+rollback = "none"
 
 [[actions.parameters]]
 name = "setting"
 type = "integer"
 required = true
-description = "Arbitrary integer setting for the simulated device"
+minimum = -1000
+maximum = 1000
+description = "Bounded integer setting for the simulated device"

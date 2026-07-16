@@ -97,13 +97,10 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
             await memory_service.create_episode_from_alert(_UUID(payload["alert_id"]))
 
         async def publish_command(topic: str, body: bytes) -> None:
-            import aiomqtt
+            from talos.awareness.ingestion.mqtt_client import build_mqtt_client
 
-            async with aiomqtt.Client(
-                hostname=settings.mqtt_host,
-                port=settings.mqtt_port,
-                identifier=f"{settings.mqtt_client_id}-actions",
-                timeout=10,
+            async with build_mqtt_client(
+                settings, identifier=f"{settings.mqtt_client_id}-actions"
             ) as client:
                 await client.publish(topic, body, qos=1)
 

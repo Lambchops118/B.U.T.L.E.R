@@ -18,6 +18,8 @@ from talos.services import awareness_client
 
 
 class _StubAwarenessHandler(BaseHTTPRequestHandler):
+    last_authorization: str | None = None
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
         if self.path.startswith("/situation"):
             body = {
@@ -39,6 +41,17 @@ class _StubAwarenessHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:  # keep test output quiet
         pass
+
+    def do_POST(self) -> None:  # noqa: N802 (stdlib naming)
+        type(self).last_authorization = self.headers.get("Authorization")
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        payload = json.dumps({"ok": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
 
 class _StubServer:
@@ -98,6 +111,24 @@ class AwarenessClientTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as ctx:
                     awareness_client.get_json("/bogus")
                 self.assertIn("404", str(ctx.exception))
+
+    def test_post_sends_configured_action_bearer_token(self) -> None:
+        with _StubServer() as base_url:
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "TALOS_AWARENESS_API_URL": base_url,
+                    "TALOS_AWARENESS_API_TOKEN": "phase-seven-token",
+                },
+            ):
+                self.assertEqual(
+                    awareness_client.post_json("/actions/request", {"action": "x"}),
+                    {"ok": True},
+                )
+        self.assertEqual(
+            _StubAwarenessHandler.last_authorization,
+            "Bearer phase-seven-token",
+        )
 
 
 class AwarenessProviderTest(unittest.TestCase):

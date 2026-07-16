@@ -102,6 +102,15 @@ async def get_capabilities(request: Request) -> dict:
     except Exception:
         db_ok = False
     reads = "available" if db_ok else "degraded: database unreachable"
+    if not db_ok:
+        action_request = reads
+    elif request.app.state.settings.api_token is None:
+        action_request = (
+            "disabled: TALOS_AWARENESS_API_TOKEN is not configured for "
+            "state-changing action routes"
+        )
+    else:
+        action_request = "available"
     return {
         "capabilities": {
             "get_situation": reads,
@@ -112,7 +121,7 @@ async def get_capabilities(request: Request) -> dict:
             "get_event_provenance": reads,
             "get_system_health": "available",
             "search_memory": reads + "; semantic (vector) component degrades to full-text while Ollama is unavailable" if db_ok else reads,
-            "request_device_action": reads,
+            "request_device_action": action_request,
             "get_action_status": reads,
         }
     }

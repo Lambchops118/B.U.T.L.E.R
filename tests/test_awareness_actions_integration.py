@@ -94,7 +94,12 @@ class ActionsIntegrationTest(unittest.TestCase):
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.actions.registry import load_registry
+        from talos.awareness.actions.registry import (
+            ActionDefinition,
+            ActionRegistry,
+            ParameterSpec,
+            load_registry,
+        )
         from talos.awareness.actions.service import ActionService
         from talos.awareness.db.session import build_engine
         from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
@@ -135,33 +140,64 @@ class ActionsIntegrationTest(unittest.TestCase):
             )
             self.assertFalse(result["accepted"])
             self.assertIn("unsupported action", result["reason"])
+            self.assertIn("action_request_id", result)
 
             result = await service.request(
                 action_name="water_plants", parameters={"pot_pin": 16}, actor="llm"
             )
             self.assertFalse(result["accepted"])
             self.assertIn("must be one of", result["reason"])
+            self.assertIn("action_request_id", result)
 
             result = await service.request(
                 action_name="water_plants", parameters={"pot_pin": 17, "extra": 1}, actor="llm"
             )
             self.assertFalse(result["accepted"])
             self.assertIn("unsupported parameters", result["reason"])
+            self.assertIn("action_request_id", result)
 
             result = await service.request(
                 action_name="water_plants", parameters={"pot_pin": 17}, actor="stranger"
             )
             self.assertFalse(result["accepted"])
             self.assertIn("not permitted", result["reason"])
+            self.assertIn("action_request_id", result)
+            rejected = await query(
+                "SELECT count(*) AS n FROM action_requests WHERE status = 'rejected'"
+            )
+            self.assertEqual(rejected[0].n, 4)
 
             # --- legacy action: dispatch + state confirmation -----------------
             result = await service.request(
-                action_name="water_plants", parameters={"pot_pin": 17}, actor="llm"
+                action_name="water_plants",
+                parameters={"pot_pin": 17},
+                actor="llm",
+                correlation_id="turn-water-1",
+                idempotency_key="water-request-0001",
             )
             self.assertTrue(result["accepted"])
             request_id = result["action_request_id"]
             self.assertEqual(result["status"], "approved")
             self.assertEqual(published, [])  # durable intent, nothing sent yet
+
+            duplicate = await service.request(
+                action_name="water_plants",
+                parameters={"pot_pin": 17},
+                actor="llm",
+                correlation_id="turn-water-1",
+                idempotency_key="water-request-0001",
+            )
+            self.assertTrue(duplicate["deduplicated"])
+            self.assertEqual(duplicate["action_request_id"], request_id)
+            conflicting = await service.request(
+                action_name="water_plants",
+                parameters={"pot_pin": 19},
+                actor="llm",
+                correlation_id="turn-water-1",
+                idempotency_key="water-request-0001",
+            )
+            self.assertFalse(conflicting["accepted"])
+            self.assertIn("different request", conflicting["reason"])
 
             self.assertEqual(await worker.run_once(), 1)
             self.assertEqual(published, [("quad_pump/17", b"1")])  # registered payload only
@@ -177,14 +213,24 @@ class ActionsIntegrationTest(unittest.TestCase):
 
             # firmware reports the pin state -> completion via state evidence
             ingest_result = await pipeline.handle(
-                InboundMessage(topic="status/17", payload=b"1")
+                InboundMessage(topic="status/17", payload=b"0")
             )
             self.assertEqual(ingest_result, "accepted")
             detail = await service.get(uuid.UUID(request_id))
             self.assertEqual(detail["status"], "completed")
-            statuses = [t["to"] for t in detail["transitions"]]
+            statuses = [
+                t["to"] for t in detail["transitions"] if t["from"] != t["to"]
+            ]
             self.assertEqual(
-                statuses, ["requested", "approved", "dispatched", "completed"]
+                statuses,
+                [
+                    "requested",
+                    "validated",
+                    "approved",
+                    "dispatched",
+                    "acknowledged",
+                    "completed",
+                ],
             )
 
             # --- confirmation flow (simulator action) -------------------------
@@ -208,10 +254,33 @@ class ActionsIntegrationTest(unittest.TestCase):
             envelope = json.loads(body)
             self.assertEqual(envelope["action"], "sim_command")
             self.assertEqual(envelope["parameters"], {"setting": 42})
+            self.assertEqual(envelope["target_entity_id"], "sim_greenhouse")
+            self.assertEqual(envelope["actor"], "llm")
+            self.assertEqual(envelope["ack_semantics"], "execution_result")
+            self.assertEqual(envelope["timeout_seconds"], 15.0)
             command_id = envelope["command_id"]
 
             # duplicate dispatch attempt is a no-op (idempotent handler)
             self.assertEqual(await worker.run_once(), 0)
+
+            # A command-id-shaped but semantically incomplete ack is audited
+            # and cannot complete the request.
+            malformed_ack = await pipeline.handle(
+                InboundMessage(
+                    topic="home/sim/greenhouse/event",
+                    payload=json.dumps(
+                        {
+                            "event_id": str(uuid.uuid4()),
+                            "event_type": "sim.command_ack",
+                            "payload": {"command_id": command_id},
+                        }
+                    ).encode(),
+                )
+            )
+            self.assertEqual(malformed_ack, "accepted")
+            detail = await service.get(sim_id)
+            self.assertEqual(detail["status"], "dispatched")
+            self.assertIn("malformed acknowledgement", detail["transitions"][-1]["detail"])
 
             # device acknowledges through the real ingestion path
             ack = await pipeline.handle(
@@ -312,11 +381,113 @@ class ActionsIntegrationTest(unittest.TestCase):
             self.assertEqual(detail["status"], "failed")
             self.assertIn("valve stuck", detail["error"])
 
+            # --- state mismatch fails instead of silently waiting/succeeding ---
+            result = await service.request(
+                action_name="toggle_fan", parameters={"state": 1}, actor="llm"
+            )
+            mismatch_id = uuid.UUID(result["action_request_id"])
+            await worker.run_once()
+            # Fan status is active-low: raw 1 means observed off, but on was requested.
+            await pipeline.handle(InboundMessage(topic="status/16", payload=b"1"))
+            detail = await service.get(mismatch_id)
+            self.assertEqual(detail["status"], "failed")
+            self.assertIn("state confirmation mismatch", detail["error"])
+
+            # --- device-key dispatch retries safely with the same command id ---
+            flaky_attempts = 0
+            flaky_published: list[tuple[str, bytes]] = []
+
+            async def flaky_publish(topic: str, body: bytes) -> None:
+                nonlocal flaky_attempts
+                flaky_attempts += 1
+                if flaky_attempts == 1:
+                    raise RuntimeError("broker unavailable")
+                flaky_published.append((topic, body))
+
+            flaky_worker = OutboxWorker(
+                engine,
+                self.settings,
+                {
+                    "action_dispatch": service.dispatch_handler(flaky_publish),
+                    "action_timeout": service.timeout_handler,
+                },
+                worker_id="actions-flaky",
+            )
+            result = await service.request(
+                action_name="sim_command", parameters={"setting": 10}, actor="llm"
+            )
+            retry_id = uuid.UUID(result["action_request_id"])
+            await service.confirm(
+                retry_id, token=result["confirmation_token"], actor="llm"
+            )
+            self.assertEqual(await flaky_worker.run_once(), 1)
+            self.assertEqual((await service.get(retry_id))["status"], "approved")
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "UPDATE outbox SET next_attempt_at = now() - interval '1 second' "
+                        "WHERE work_type = 'action_dispatch' AND status = 'pending'"
+                    )
+                )
+            self.assertEqual(await flaky_worker.run_once(), 1)
+            self.assertEqual((await service.get(retry_id))["status"], "dispatched")
+            self.assertEqual(flaky_attempts, 2)
+            retry_body = json.loads(flaky_published[0][1])
+            await pipeline.handle(
+                InboundMessage(
+                    topic="home/sim/greenhouse/event",
+                    payload=json.dumps(
+                        {
+                            "event_id": str(uuid.uuid4()),
+                            "event_type": "sim.command_ack",
+                            "payload": {
+                                "command_id": retry_body["command_id"],
+                                "ok": True,
+                            },
+                        }
+                    ).encode(),
+                )
+            )
+            self.assertEqual((await service.get(retry_id))["status"], "completed")
+
+            # --- legacy at-most-once publish failure never retries ------------
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "UPDATE action_requests SET created_at = "
+                        "created_at - interval '2 minutes' "
+                        "WHERE action_name = 'water_plants'"
+                    )
+                )
+
+            async def failed_publish(topic: str, body: bytes) -> None:
+                raise RuntimeError("publish failed")
+
+            failed_worker = OutboxWorker(
+                engine,
+                self.settings,
+                {
+                    "action_dispatch": service.dispatch_handler(failed_publish),
+                    "action_timeout": service.timeout_handler,
+                },
+                worker_id="actions-at-most-once",
+            )
+            result = await service.request(
+                action_name="water_plants", parameters={"pot_pin": 19}, actor="llm"
+            )
+            publish_fail_id = uuid.UUID(result["action_request_id"])
+            self.assertEqual(await failed_worker.run_once(), 1)
+            detail = await service.get(publish_fail_id)
+            self.assertEqual(detail["status"], "failed")
+            self.assertIn("at-most-once", detail["error"])
+
             # --- cancel before dispatch -----------------------------------------
             result = await service.request(
                 action_name="sim_command", parameters={"setting": 9}, actor="llm"
             )
             cancel_id = uuid.UUID(result["action_request_id"])
+            denied_cancel = await service.cancel(cancel_id, actor="stranger")
+            self.assertFalse(denied_cancel["ok"])
             cancelled = await service.cancel(cancel_id, actor="operator")
             self.assertTrue(cancelled["ok"])
             expired_confirm = await service.confirm(
@@ -324,11 +495,76 @@ class ActionsIntegrationTest(unittest.TestCase):
             )
             self.assertFalse(expired_confirm["ok"])
 
+            # --- registered allowed-state safety check ------------------------
+            safety_definition = ActionDefinition(
+                name="safe_sim_command",
+                description="integration-only definition for allowed-state check",
+                target_entity_id="sim_greenhouse",
+                parameters=[
+                    ParameterSpec(
+                        name="setting", type="integer", allowed_values=[1]
+                    )
+                ],
+                permission_level="elevated",
+                allowed_actors=["llm", "operator"],
+                confirmation_required=False,
+                safety_checks=["allowed_state"],
+                cooldown_seconds=0,
+                timeout_seconds=10,
+                idempotency_behavior="device_key",
+                command_topic="home/sim/greenhouse/command",
+                payload="envelope",
+                ack_mode="command_ack",
+                ack_semantics="execution_result",
+                ack_source_id="sim_device",
+                confirm_property="mode",
+                confirm_value="ready",
+                allowed_prior_values=["ready"],
+                rollback="none",
+            )
+            safety_service = ActionService(
+                engine,
+                self.settings,
+                ActionRegistry(version=1, actions=[safety_definition]),
+            )
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "INSERT INTO current_state "
+                        "(entity_id, property_name, value_json, value_type, state_status) "
+                        "VALUES ('sim_greenhouse', 'mode', CAST(:value AS jsonb), "
+                        "'string', 'current') ON CONFLICT (entity_id, property_name) "
+                        "DO UPDATE SET value_json = EXCLUDED.value_json, "
+                        "state_status = EXCLUDED.state_status"
+                    ),
+                    {"value": json.dumps({"value": "blocked"})},
+                )
+            blocked = await safety_service.request(
+                action_name="safe_sim_command", parameters={"setting": 1}, actor="llm"
+            )
+            self.assertFalse(blocked["accepted"])
+            self.assertIn("safety check failed", blocked["reason"])
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "UPDATE current_state SET value_json = CAST(:value AS jsonb) "
+                        "WHERE entity_id = 'sim_greenhouse' AND property_name = 'mode'"
+                    ),
+                    {"value": json.dumps({"value": "ready"})},
+                )
+            allowed = await safety_service.request(
+                action_name="safe_sim_command", parameters={"setting": 1}, actor="llm"
+            )
+            self.assertTrue(allowed["accepted"])
+            await safety_service.cancel(
+                uuid.UUID(allowed["action_request_id"]), actor="operator"
+            )
+
             # --- every transition durable and queryable --------------------------
             transitions = await query(
                 "SELECT count(*) AS n FROM action_transitions"
             )
-            self.assertGreaterEqual(transitions[0].n, 12)
+            self.assertGreaterEqual(transitions[0].n, 25)
         finally:
             await engine.dispose()
 

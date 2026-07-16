@@ -62,6 +62,7 @@ MEMORY_RELATIONS = ("supersedes", "conflicts_with", "duplicates", "derived_from"
 ACTION_STATUSES = (
     "requested",
     "rejected",
+    "validated",
     "awaiting_confirmation",
     "approved",
     "dispatched",
@@ -661,9 +662,9 @@ class ActionRequest(Base):
     __tablename__ = "action_requests"
     __table_args__ = (
         _in_check("status", ACTION_STATUSES, "status_valid"),
+        sa.UniqueConstraint("command_id", name="uq_action_requests_command_id"),
         sa.Index("ix_action_requests_status", "status"),
         sa.Index("ix_action_requests_action_created", "action_name", "created_at"),
-        sa.Index("ix_action_requests_command_id", "command_id"),
     )
 
     action_request_id: Mapped[UUID] = mapped_column(
