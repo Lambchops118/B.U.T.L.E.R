@@ -23,6 +23,7 @@ REQUIRED_EXTENSIONS = ("timescaledb", "vector")
 HEALTHY = "healthy"
 DEGRADED = "degraded"
 UNAVAILABLE = "unavailable"
+DISABLED = "disabled"  # deliberately off by configuration; ignored by aggregation
 
 
 @dataclass(frozen=True)
@@ -37,10 +38,11 @@ class ComponentStatus:
 
 
 def aggregate_status(components: list[ComponentStatus]) -> str:
-    database = next((c for c in components if c.name == "database"), None)
+    considered = [c for c in components if c.status != DISABLED]
+    database = next((c for c in considered if c.name == "database"), None)
     if database is not None and database.status == UNAVAILABLE:
         return UNAVAILABLE
-    if any(component.status != HEALTHY for component in components):
+    if any(component.status != HEALTHY for component in considered):
         return DEGRADED
     return HEALTHY
 
@@ -150,7 +152,9 @@ class HealthService:
             )
         return ComponentStatus(name="migrations", status=HEALTHY, data={"current": current, "head": head})
 
-    async def report(self) -> dict[str, Any]:
+    async def report(
+        self, extra_components: list[ComponentStatus] | None = None
+    ) -> dict[str, Any]:
         database = await self.database()
         if database.status == UNAVAILABLE:
             skipped = "not checked: database unreachable"
@@ -161,6 +165,7 @@ class HealthService:
             ]
         else:
             components = [database, await self.extensions(), await self.migrations()]
+        components.extend(extra_components or [])
 
         return {
             "status": aggregate_status(components),

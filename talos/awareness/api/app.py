@@ -25,12 +25,29 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.engine = engine
         app.state.health_service_factory = lambda: HealthService(engine)
+        app.state.ingestion = None
+        if settings.mqtt_enabled:
+            from talos.awareness.ingestion.service import IngestionService
+
+            ingestion = IngestionService(settings, engine)
+            try:
+                await ingestion.start()
+                app.state.ingestion = ingestion
+            except Exception:
+                # Fail safe: the API (and its truthful health report) must come
+                # up even when the registry bootstrap or broker is unreachable.
+                logger.exception(
+                    "ingestion failed to start; API continues without it",
+                    extra={"component": "ingestion"},
+                )
         logger.info(
             "awareness API started; config: %s", settings.summary(), extra={"component": "api"}
         )
         try:
             yield
         finally:
+            if app.state.ingestion is not None:
+                await app.state.ingestion.stop()
             await engine.dispose()
             logger.info("awareness API stopped", extra={"component": "api"})
 
