@@ -136,11 +136,16 @@ class SimulatedDevice:
         ]
 
     def out_of_order(self) -> list[SimMessage]:
+        # The delayed message occupies its own (never previously delivered)
+        # sequence slot: the device emitted it, the network held it back, and
+        # a later message overtook it. Reusing an already-delivered sequence
+        # would be a redelivery duplicate, not an out-of-order arrival.
+        delayed_sequence = self._next()
         newer = self._system_fields()
         older = {
             "event_id": str(uuid4()),
             "observed_at": _now_iso(-30),
-            "sequence": max(1, newer["sequence"] - 2),
+            "sequence": delayed_sequence,
             "boot_id": self.boot_id,
         }
         return [

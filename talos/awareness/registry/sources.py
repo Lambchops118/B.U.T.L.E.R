@@ -12,7 +12,7 @@ hot ingestion path never queries PostgreSQL per message.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import sqlalchemy as sa
@@ -77,7 +77,7 @@ class SourceRepository:
                     Source.allowed_topics,
                     Source.last_sequence,
                     Source.last_boot_id,
-                    Source.metadata_json,
+                    Source.metadata_json.label("metadata_json"),
                 )
             )
             snapshot: dict[str, SourceRecord] = {}
@@ -98,6 +98,22 @@ class SourceRepository:
                 )
         self._snapshot = snapshot
         self._loaded_at = time.monotonic()
+
+    def note_advance(
+        self, source_id: str, sequence: int | None, boot_id: str | None
+    ) -> None:
+        """Advance the cached (boot, sequence) after a successful ingest.
+
+        The ingestion pipeline is the only sequence writer and handles
+        messages serially, so updating the snapshot here keeps duplicate and
+        out-of-order assessment current between TTL refreshes.
+        """
+        record = self._snapshot.get(source_id)
+        if record is None or sequence is None:
+            return
+        self._snapshot[source_id] = replace(
+            record, last_sequence=sequence, last_boot_id=boot_id
+        )
 
     def match_topic(self, topic: str) -> SourceRecord | None:
         for record in self._snapshot.values():

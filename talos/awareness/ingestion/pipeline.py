@@ -174,6 +174,11 @@ class IngestionPipeline:
             await self._touch_source(source.source_id, received_at)
             return "duplicate"
 
+        if assessment.advance:
+            self._sources.note_advance(
+                envelope.source_id, envelope.sequence, envelope.source_boot_id
+            )
+
         self.metrics.accepted += 1
         if assessment.out_of_order:
             self.metrics.out_of_order += 1
