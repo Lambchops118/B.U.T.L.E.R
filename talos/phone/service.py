@@ -290,6 +290,15 @@ def _maybe_record_call_memory(record: PhoneCallRecord) -> None:
             metadata={"type": "phone_call", "call_id": record.call_id},
         )
         memory_store.refresh_session_summary(target_session)
+        transcript_digest = _build_call_transcript_digest(record)
+        if transcript_digest:
+            memory_store.upsert_fact(
+                f"session:{target_session}",
+                f"phone_call_transcript:{record.call_id}",
+                transcript_digest,
+                salience=8,
+                source_session_id=target_session,
+            )
     except Exception as exc:
         print(f"TALOS phone memory write failed: {exc}")
 
@@ -340,6 +349,32 @@ def _compose_outbound_call_brief(
         ]
     )
     return "\n".join(lines)
+
+
+_TRANSCRIPT_ROLE_LABELS = {"user": "Caller", "assistant": "TALOS", "agent": "TALOS"}
+
+
+def _build_call_transcript_digest(record: PhoneCallRecord, *, max_chars: int = 2000) -> str:
+    lines: list[str] = []
+    for item in record.transcript or []:
+        role = str(item.get("role") or "").strip().lower()
+        message = str(item.get("message") or "").strip()
+        if not message:
+            continue
+        label = _TRANSCRIPT_ROLE_LABELS.get(role, role.title() or "Speaker")
+        lines.append(f"{label}: {message}")
+    if not lines:
+        return ""
+    digest = "\n".join(lines)
+    if len(digest) <= max_chars:
+        return digest
+    # Keep the opening (purpose/greeting) and the most recent turns (outcome/resolution);
+    # drop the middle, since that's usually the least decision-relevant part of a call.
+    head_budget = min(400, max_chars // 4)
+    tail_budget = max_chars - head_budget - len("\n...[truncated]...\n")
+    head = digest[:head_budget].rsplit("\n", 1)[0]
+    tail = digest[-tail_budget:].split("\n", 1)[-1] if tail_budget > 0 else ""
+    return f"{head}\n...[truncated]...\n{tail}".strip()
 
 
 def _first_transcript_message(transcript: list[dict[str, Any]], *, role: str) -> str | None:

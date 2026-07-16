@@ -192,6 +192,10 @@ def _enforce_foreground_for_sensitive_actions(
     return decision
 
 
+def _event_session_id(data: dict | None) -> str:
+    return str((data or {}).get("session_id") or "").strip() or "events"
+
+
 def _compact_text(value: str, limit: int) -> str:
     compacted = " ".join(str(value or "").split())
     if len(compacted) <= limit:
@@ -359,7 +363,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                         f"Event {msg.payload.name}: {msg.payload.data}",
                         gui_queue,
                         snapshot,
-                        session_id="events",
+                        session_id=_event_session_id(msg.payload.data),
                         interaction_mode="text",
                     )
 

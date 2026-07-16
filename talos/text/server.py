@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from talos.agent import runtime as agent_runtime
 from talos.config import env_bool, load_environment
 from talos.jobs import get_default_job_store
-from talos.messages import Message, TextPayload
+from talos.messages import EventPayload, Message, TextPayload
 
 
 DEFAULT_ALLOWED_NETWORKS = [
@@ -49,6 +49,7 @@ class TextServerConfig:
     request_timeout: float
     terminal_request_timeout: float
     allowed_networks: tuple[Any, ...]
+    phone_push_token: str
 
     @classmethod
     def from_env(cls) -> "TextServerConfig":
@@ -68,6 +69,7 @@ class TextServerConfig:
             for entry in raw_networks.split(",")
             if entry.strip()
         )
+        phone_push_token = os.getenv("TALOS_PHONE_PUSH_TOKEN", "").strip()
         return cls(
             enabled=enabled,
             host=host,
@@ -76,6 +78,7 @@ class TextServerConfig:
             request_timeout=request_timeout,
             terminal_request_timeout=terminal_request_timeout,
             allowed_networks=allowed_networks,
+            phone_push_token=phone_push_token,
         )
 
 
@@ -132,6 +135,10 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def do_POST(self) -> None:
+        if self.path == "/phone/events":
+            self._handle_phone_event()
+            return
+
         if not self._authorize_request(require_token=True):
             return
 
@@ -361,6 +368,56 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         agent_runtime.reset_session(session_id)
         self._write_json(HTTPStatus.OK, {"ok": True, "session_id": session_id})
+
+    def _handle_phone_event(self) -> None:
+        expected_token = self.server.config.phone_push_token
+        if not expected_token:
+            self._write_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"ok": False, "error": "Phone push ingress is not configured (TALOS_PHONE_PUSH_TOKEN unset)."},
+            )
+            return
+
+        provided_token = self.headers.get("X-Phone-Push-Token", "").strip()
+        if provided_token != expected_token:
+            self._write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "Unauthorized"})
+            return
+
+        try:
+            body = self._read_json_body()
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        snapshot = body.get("call")
+        if not isinstance(snapshot, dict):
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'call' object."})
+            return
+
+        try:
+            from talos.phone import ingest_phone_bridge_snapshot
+
+            record = ingest_phone_bridge_snapshot(snapshot)
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        self.server.central_queue.put(
+            Message(
+                type="event",
+                payload=EventPayload(
+                    name="phone_call_completed",
+                    data={
+                        "call_id": record.call_id,
+                        "session_id": record.session_id or "phone:inbound",
+                        "direction": record.direction,
+                        "summary": record.summary or "",
+                    },
+                ),
+                needs_llm=True,
+            )
+        )
+        self._write_json(HTTPStatus.OK, {"ok": True, "call_id": record.call_id})
 
     def _send_bytes(
         self,

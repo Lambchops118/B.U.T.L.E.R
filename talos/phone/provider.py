@@ -39,6 +39,8 @@ class PhoneConfig:
     contacts: dict[str, str]
     allowlist: tuple[str, ...]
     bridge_sync_limit: int
+    main_notify_url: str
+    main_notify_token: str
     db_path: str | None = None
 
     @classmethod
@@ -56,6 +58,8 @@ class PhoneConfig:
             contacts=_parse_contacts(os.getenv("TALOS_PHONE_CONTACTS", "")),
             allowlist=tuple(_parse_allowlist(os.getenv("TALOS_PHONE_ALLOWLIST", ""))),
             bridge_sync_limit=max(1, env_int("TALOS_PHONE_BRIDGE_SYNC_LIMIT", 25)),
+            main_notify_url=os.getenv("TALOS_PHONE_MAIN_NOTIFY_URL", "").strip().rstrip("/"),
+            main_notify_token=os.getenv("TALOS_PHONE_PUSH_TOKEN", "").strip(),
             db_path=os.getenv("TALOS_PHONE_DB_PATH", "").strip() or None,
         )
 

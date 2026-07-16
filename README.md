@@ -363,6 +363,7 @@ TALOS_PHONE_BRIDGE_URL=https://your-public-phone-bridge.example.com
 TALOS_PHONE_BRIDGE_TOKEN=shared-bridge-token
 TALOS_PHONE_CONTACTS={"mom":"+15555550123"}
 TALOS_PHONE_ALLOWLIST=["+15555550123"]
+TALOS_PHONE_PUSH_TOKEN=shared-push-token
 ```
 
 Recommended bridge settings in the separate public deployment:
@@ -371,6 +372,8 @@ Recommended bridge settings in the separate public deployment:
 PHONE_BRIDGE_API_TOKEN=shared-bridge-token
 PHONE_BRIDGE_WEBHOOK_TOKEN=separate-webhook-token
 TALOS_PHONE_DB_PATH=/absolute/path/to/bridge_phone.sqlite3
+TALOS_PHONE_MAIN_NOTIFY_URL=http://your-main-talos-host:8420
+TALOS_PHONE_PUSH_TOKEN=shared-push-token
 ```
 
 Run the public bridge with:
@@ -392,6 +395,7 @@ Notes:
 - Named contacts must resolve through `TALOS_PHONE_CONTACTS`.
 - In the ElevenLabs agent security settings, enable `First message` and `System prompt` overrides. TALOS uses those per-call overrides, plus dynamic variables, so the phone agent knows who it called, why it called, and what message to deliver.
 - The bridge is the only component that should be internet-facing; keep the main TALOS runtime private.
+- When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `TALOS_PHONE_MAIN_NOTIFY_URL` + `TALOS_PHONE_PUSH_TOKEN`, matching `TALOS_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `TALOS_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `TALOS_PHONE_BRIDGE_URL`).
 
 ### Text Chat Over Tailscale
 

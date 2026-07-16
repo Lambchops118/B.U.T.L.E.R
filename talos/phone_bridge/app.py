@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import urllib.error
+import urllib.request
 from typing import Any
 
 from starlette.applications import Starlette
@@ -11,7 +14,33 @@ from starlette.routing import Route
 
 from talos.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
 from talos.phone.provider import PhoneConfig
-from talos.phone.store import PhoneCallStore, get_default_phone_store
+from talos.phone.store import PhoneCallRecord, PhoneCallStore, get_default_phone_store
+
+
+TERMINAL_WEBHOOK_EVENT_TYPES = {"post_call_transcription", "call_initiation_failure"}
+
+
+def _push_call_to_main(config: PhoneConfig, record: PhoneCallRecord) -> None:
+    if not config.main_notify_url:
+        return
+    url = f"{config.main_notify_url}/phone/events"
+    body = json.dumps({"call": record.to_dict()}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Phone-Push-Token": config.main_notify_token,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        print(f"[phone-bridge] main notify push failed: HTTP {exc.code}")
+    except Exception as exc:
+        print(f"[phone-bridge] main notify push failed: {exc}")
 
 
 def create_app(
@@ -64,10 +93,15 @@ def create_app(
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Webhook payload must be a JSON object."}, status_code=400)
 
+        event_type = str(payload.get("type") or "").strip()
         try:
             record = provider.ingest_call_event(payload)
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+        if event_type in TERMINAL_WEBHOOK_EVENT_TYPES:
+            threading.Thread(target=_push_call_to_main, args=(config, record), daemon=True).start()
+
         return JSONResponse({"ok": True, "call": record.to_dict()})
 
     return Starlette(

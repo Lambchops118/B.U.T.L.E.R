@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,8 @@ from talos.phone import (
 )
 from talos.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
 from talos.phone.provider import OutboundCallRequest, PhoneConfig, PhoneProvider
+from talos.phone.service import _build_call_transcript_digest
+from talos.phone.store import PhoneCallRecord
 
 
 class _FakeProvider(PhoneProvider):
@@ -283,6 +286,121 @@ class PhoneServiceTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn("Inbound call", result["summary"])
         self.assertIn("call me back tomorrow", result["summary"])
+
+
+def _make_call_record(transcript: list[dict[str, object]]) -> PhoneCallRecord:
+    return PhoneCallRecord(
+        call_id="conv_digest",
+        provider="elevenlabs_twilio",
+        provider_call_id="CA_digest",
+        conversation_id="conv_digest",
+        agent_id="agent_123",
+        session_id="main-pc",
+        direction="outbound",
+        remote_number="+15555550123",
+        contact_name="Mom",
+        purpose="Pickup",
+        brief_context=None,
+        status="completed",
+        outcome="completed",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        transcript=transcript,
+    )
+
+
+class TranscriptDigestTests(unittest.TestCase):
+    def test_labels_and_orders_turns_by_role(self) -> None:
+        record = _make_call_record(
+            [
+                {"role": "user", "message": "Can you pick me up?"},
+                {"role": "assistant", "message": "Sure, what time?"},
+                {"role": "user", "message": "Six PM."},
+            ]
+        )
+        digest = _build_call_transcript_digest(record)
+        self.assertEqual(
+            digest,
+            "Caller: Can you pick me up?\nTALOS: Sure, what time?\nCaller: Six PM.",
+        )
+
+    def test_empty_transcript_returns_empty_string(self) -> None:
+        record = _make_call_record([])
+        self.assertEqual(_build_call_transcript_digest(record), "")
+
+    def test_skips_turns_without_message_text(self) -> None:
+        record = _make_call_record([{"role": "user", "message": ""}, {"role": "agent", "message": "Hello."}])
+        self.assertEqual(_build_call_transcript_digest(record), "TALOS: Hello.")
+
+    def test_truncates_oversized_transcript_keeping_head_and_tail(self) -> None:
+        turns = [{"role": "user", "message": f"Message number {i} with some extra padding text."} for i in range(200)]
+        record = _make_call_record(turns)
+        digest = _build_call_transcript_digest(record, max_chars=500)
+        self.assertLessEqual(len(digest), 500)
+        self.assertIn("Message number 0", digest)
+        self.assertIn("...[truncated]...", digest)
+        self.assertIn("Message number 199", digest)
+
+
+class PhoneCallMemoryTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        reset_default_phone_provider()
+        reset_default_phone_store()
+
+    def test_ingest_writes_transcript_fact_findable_by_search(self) -> None:
+        from talos.memory import MemoryStore
+
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
+                    "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                    "TALOS_MEMORY_ENABLED": "1",
+                },
+                clear=False,
+            ):
+                store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
+                config = PhoneConfig.from_env()
+                provider = ElevenLabsTwilioProvider(config, store=store)
+                memory_store = MemoryStore(db_path=":memory:")
+
+                snapshot = {
+                    "call_id": "conv_mem",
+                    "provider": "elevenlabs_twilio",
+                    "conversation_id": "conv_mem",
+                    "session_id": "main-pc",
+                    "direction": "outbound",
+                    "remote_number": "+15555550123",
+                    "status": "completed",
+                    "outcome": "completed",
+                    "transcript": [
+                        {"role": "user", "message": "The pharmacy said the prescription is ready tomorrow."},
+                    ],
+                }
+                try:
+                    with mock.patch("talos.phone.service._build_provider", return_value=provider), mock.patch(
+                        "talos.phone.service.get_default_memory_store", return_value=memory_store
+                    ):
+                        ingest_phone_bridge_snapshot(snapshot)
+                        facts_first = memory_store.search_facts("pharmacy")
+
+                        # Re-ingesting an identical snapshot should not create a duplicate fact write.
+                        ingest_phone_bridge_snapshot(snapshot)
+                        facts_second = memory_store.search_facts("pharmacy")
+
+                    self.assertEqual(len(facts_first), 1)
+                    self.assertIn("pharmacy", facts_first[0].value.lower())
+                    self.assertEqual(facts_first[0].key, "phone_call_transcript:conv_mem")
+                    self.assertEqual(facts_first[0].scope, "session:main-pc")
+                    self.assertEqual(len(facts_second), 1)
+                    self.assertEqual(facts_first[0].updated_at, facts_second[0].updated_at)
+                finally:
+                    store.close()
+                    memory_store.close()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

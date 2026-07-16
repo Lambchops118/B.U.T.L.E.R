@@ -9,7 +9,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from talos.request_classifier import RequestClassification
-from talos.router import _enforce_foreground_for_sensitive_actions, _must_run_in_foreground
+from talos.router import _enforce_foreground_for_sensitive_actions, _event_session_id, _must_run_in_foreground
 
 
 class RouterPhoneRoutingTests(unittest.TestCase):
@@ -35,6 +35,14 @@ class RouterPhoneRoutingTests(unittest.TestCase):
         decision = RequestClassification(mode="status", reason="status question")
         updated = _enforce_foreground_for_sensitive_actions("call mom now", decision)
         self.assertEqual(updated, decision)
+
+    def test_event_session_id_prefers_data_session_id(self) -> None:
+        self.assertEqual(_event_session_id({"session_id": "main-pc", "call_id": "conv_123"}), "main-pc")
+
+    def test_event_session_id_falls_back_to_events_bucket(self) -> None:
+        self.assertEqual(_event_session_id({}), "events")
+        self.assertEqual(_event_session_id({"session_id": ""}), "events")
+        self.assertEqual(_event_session_id(None), "events")
 
 
 if __name__ == "__main__":
