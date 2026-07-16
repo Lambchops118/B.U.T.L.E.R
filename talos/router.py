@@ -9,6 +9,7 @@ from talos.config import env_bool
 from talos.jobs import TERMINAL_STATUSES, JobManager, JobRecord, get_default_job_store
 from talos.messages import Message, StatusPayload, TextPayload, VoicePayload
 from talos.request_classifier import RequestClassification, classify_request
+from talos.services import awareness_client
 from talos.state_store import StateStore
 
 
@@ -233,7 +234,9 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
 
             elif msg.type == "voice_cmd":
                 vp: VoicePayload = msg.payload
-                snapshot = state.snapshot()
+                # Awareness situation when the backend is up; legacy in-memory
+                # snapshot otherwise (truthful fallback, Phase 5).
+                snapshot = awareness_client.snapshot_with_fallback(state.snapshot())
                 runtime_context = _runtime_context_for_session("voice")
                 decision = _classify_with_context(
                     vp.command,
@@ -274,7 +277,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
 
             elif msg.type == "text_cmd":
                 tp: TextPayload = msg.payload
-                snapshot = state.snapshot()
+                snapshot = awareness_client.snapshot_with_fallback(state.snapshot())
                 interaction_mode = _interaction_mode_for_source(tp.source, tp.session_id)
                 runtime_context = _runtime_context_for_session(tp.session_id)
                 decision = _classify_with_context(
@@ -358,7 +361,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
 
             elif msg.type == "event":
                 if msg.needs_llm:
-                    snapshot = state.snapshot()
+                    snapshot = awareness_client.snapshot_with_fallback(state.snapshot())
                     _run_agent_command(
                         f"Event {msg.payload.name}: {msg.payload.data}",
                         gui_queue,

@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 4 (Rules, Alerts, Attention, and Notifications) complete.**
+**Status: Phase 5 (Situation, Context, and Read Tools) complete.**
 
 ## Setup
 
@@ -266,6 +266,51 @@ Channels (ADR-015, existing only):
 Delivery evidence per alert: `GET /alerts/{id}/deliveries`. Backlog and
 oldest-pending age appear under `outbox_worker` in `/health/components`.
 
+## Situation, context, and read tools (Phase 5)
+
+### Situation snapshot
+
+`GET /situation[?budget_tokens=&entity_id=]` renders a compact deterministic
+snapshot under a hard token budget — never a raw dump or generated prose.
+Fixed priority (CTX-002): active **critical alerts (always included, never
+truncated)** → other active alerts → pending attention → qualified current
+state → recent meaningful transitions (window
+`TALOS_AWARENESS_SITUATION_TRANSITION_WINDOW_MINUTES`) → unhealthy sources.
+Token accounting is a conservative estimate (`ceil(chars/3.5)`; no tokenizer
+dependency exists in this venv — overestimating is the safe direction). The
+response carries `used_tokens`, `truncated`, and a complete per-item `audit`
+(id, priority, tokens, included, reason). Every line carries temporal status,
+observation/receipt times, age, confidence, and source; overdue rows render
+`stale` even before the freshness worker's next pass. Known limitation
+(documented in the response): no user-location or conversation-relevance
+signal exists in the repo yet, so relevance is alert/attention/freshness
+priority only.
+
+### Main-agent integration
+
+The router now feeds both LLM lanes through
+`talos.services.awareness_client.snapshot_with_fallback(...)`: the rendered
+situation when the backend answers within
+`TALOS_AWARENESS_CLIENT_TIMEOUT` (cached 5 s), else the legacy in-memory
+snapshot — a backend outage degrades truthfully and never blocks commands.
+Disable with `TALOS_AWARENESS_SITUATION_ENABLED=0`.
+
+### Read tools (MCP)
+
+`talos/mcp_servers/providers/awareness.py` registers seven narrow read tools
+on the aggregate server (both LLM paths see them through the existing tool
+merge): `get_current_state`, `get_recent_events`, `get_sensor_history`,
+`get_active_alerts`, `get_system_health`, `get_event_provenance`,
+`get_awareness_capabilities`. All are thin bounded HTTP calls to the
+awareness API — no SQL/file/MQTT access, inputs clamped (≤100 events, ≤500
+points, ≤31-day windows), results carry freshness/confidence/source and
+`truncated` flags, and backend failure returns a clear `{"error": ...}`
+string instead of fabricated data. Routing lives in the docstrings: current
+facts → state, "when did X last happen" → events, numeric periods →
+aggregates, trust/why → provenance/health — exact questions never route to
+vector search. `search_memory` is reported `not_yet_implemented` by
+`GET /capabilities` until Phase 6.
+
 ## Tests
 
 ```bash
@@ -273,17 +318,20 @@ oldest-pending age appear under `outbox_worker` in `/health/components`.
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_config tests.test_awareness_event_schema \
   tests.test_awareness_health tests.test_awareness_ingestion_unit \
-  tests.test_awareness_state_unit tests.test_awareness_rules_unit
+  tests.test_awareness_state_unit tests.test_awareness_rules_unit \
+  tests.test_awareness_context_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
 docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
-  tests.test_awareness_state_integration tests.test_awareness_alerts_integration
+  tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
+  tests.test_awareness_context_integration
 
-# Text-server /notify endpoint (GUI banner channel; main venv):
-.venv-main/bin/python -m unittest tests.test_text_server_notify
+# Main-venv integration (text-server /notify, awareness client + MCP tools):
+.venv-main/bin/python -m unittest tests.test_text_server_notify \
+  tests.test_awareness_client_and_provider
 ```
 
 ## Requirements traceability
@@ -296,15 +344,15 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R1 | Ingest streams from sensors, microcontrollers, services, conversations, internal components | C2, C3 | 🔶 MQTT device/simulator ingestion (Phase 2); service/conversation adapters in Phases 5/6 |
 | R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | 🔶 store + minute/hour/day aggregates (Phase 3); summarize/discard in Phases 6/8 |
 | R3 | Distinguish current state from historical events | C5, C6 | ✅ durable current_state separate from immutable events/measurements (Phase 3) |
-| R4 | Maintain strong environmental awareness | C5, C12 | 🔶 qualified current state + freshness (Phase 3); situation broker in Phase 5 |
+| R4 | Maintain strong environmental awareness | C5, C12 | ✅ qualified state + deterministic situation snapshot with budget/audit (Phase 5) |
 | R5 | Track when, where, how, and from what source information entered | C1, C4 | ✅ envelope + provenance persisted per event (Phase 2) |
 | R6 | Track health and state of connected systems | C4, C5, C16 | ✅ source health lifecycle + history + stale/offline workers (Phase 3) |
 | R7 | Detect important events independently of the LLM | C7 | ✅ deterministic TOML rules inside the ingestion transaction; no LLM in the path (Phase 4) |
 | R8 | Proactively alert the user | C8, C9 | ✅ alert→attention→outbox→adapter delivery with persisted attempts (Phase 4) |
 | R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
-| R10 | Avoid unnecessary LLM context use | C12 | ⬜ Phase 5 |
-| R11 | Selectively push only relevant data to the LLM | C7, C12 | ⬜ Phase 5 |
-| R12 | Allow the LLM to retrieve additional information | C13 | ⬜ Phase 5 |
+| R10 | Avoid unnecessary LLM context use | C12 | ✅ hard token budget, priority truncation, audit (Phase 5) |
+| R11 | Selectively push only relevant data to the LLM | C7, C12 | ✅ relevance-selected situation; critical alerts always survive (Phase 5) |
+| R12 | Allow the LLM to retrieve additional information | C13 | 🔶 seven bounded read tools via MCP (Phase 5); search_memory in Phase 6 |
 | R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | ✅ alerts + fallback notifications are Ollama-free by construction (Phase 4) |
 | R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | ✅ pipeline dedup/sequence/gap/reorder/boot-reset classification (Phase 2); state-facing effects in Phase 3 |
 | R15 | Persist critical downstream work reliably | C10 | ✅ transactional outbox + claiming worker with backoff/dead-letter/manual retry (Phase 4) |

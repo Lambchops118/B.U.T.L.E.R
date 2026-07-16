@@ -112,6 +112,11 @@ class AwarenessSettings(BaseSettings):
     outbox_max_attempts: int = Field(default=8, ge=1)
     outbox_stale_lock_seconds: float = Field(default=300.0, gt=0)
 
+    # --- situation / context (Phase 5) ----------------------------------------
+    situation_budget_tokens: int = Field(default=600, ge=50)
+    situation_max_items_per_section: int = Field(default=20, ge=1)
+    situation_transition_window_minutes: int = Field(default=60, ge=1)
+
     @field_validator("db_port", "api_port", "mqtt_port")
     @classmethod
     def _valid_port(cls, value: int) -> int:

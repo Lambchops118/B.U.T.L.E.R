@@ -11,6 +11,7 @@ import asyncio
 from talos.awareness import __version__
 from talos.awareness.alerts.service import AlertService
 from talos.awareness.api.routes import alerts as alert_routes
+from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
 from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.config import AwarenessSettings, load_settings
@@ -109,6 +110,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(read_routes.router)
     app.include_router(alert_routes.router)
+    app.include_router(context_routes.router)
     return app
 
 
