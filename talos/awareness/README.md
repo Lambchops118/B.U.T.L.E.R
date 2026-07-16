@@ -6,11 +6,13 @@ Python 3.12, backed by PostgreSQL + TimescaleDB + pgvector. The main agent
 consumes it over HTTP; the LLM never becomes the event loop, database, or
 alert detector.
 
-Architecture, deployment topology, and owner decisions live in the repo-root
-[`DISCOVERY.md`](../../DISCOVERY.md). The implementation follows the phased
-plan in the implementation prompt (Phase 0 discovery → Phase 8 hardening).
+Architecture, deployment topology, and owner decisions live in
+[`docs/awareness-memory/DISCOVERY.md`](../../docs/awareness-memory/DISCOVERY.md).
+The implementation follows the phase-gated plan in
+[`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
+(Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 1 (Foundation and Database) complete.**
+**Status: Phase 2 (MQTT Ingestion and Event Integrity) complete.**
 
 ## Setup
 
@@ -66,15 +68,95 @@ Secrets never appear in logs or health output.
 | `TALOS_AWARENESS_MQTT_TLS` / `_MQTT_USERNAME` / `_MQTT_PASSWORD` / `_MQTT_CLIENT_ID` / … | see `config.py` | Broker security/session options |
 | `TALOS_AWARENESS_MAX_EVENT_PAYLOAD_BYTES` | `65536` | Ingestion payload bound |
 
+## MQTT ingestion (Phase 2)
+
+The `serve` process connects to the **existing** Raspberry Pi Mosquitto broker
+(`TALOS_AWARENESS_MQTT_HOST`, default `192.168.1.160:1883`; set
+`TALOS_AWARENESS_MQTT_ENABLED=0` to run API-only). No second production broker
+is deployed. The connection uses a persistent reconnect loop with bounded
+exponential backoff and jitter, restores subscriptions on every (re)connect,
+and reports truthful state (`connecting`/`connected`/`disconnected`/`stopped`),
+reconnect count, and last error at `/health/components` under `ingestion`.
+Username/password and TLS (CA + optional mutual TLS) are supported via
+configuration for later broker hardening; credentials never appear in logs.
+
+### Topics consumed and source registration
+
+Subscriptions: `home/#` (canonical scheme for new sources) and `status/#`
+(legacy device state). A message is only accepted when a **registered, enabled
+source owns its topic** (`sources.allowed_topics`, exact or `+`/trailing-`#`
+patterns); everything else is dead-lettered as `unauthorized_topic`. The known
+deployment is seeded idempotently at startup (`registry/bootstrap.py`):
+
+| Source | Topics | Notes |
+|---|---|---|
+| `fan_pico` | `status/16` | Legacy pin status; `metadata.value_inverted` (fan relay is active-low) |
+| `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
+| `sim_device` | `home/sim/#` | Simulator for development and tests |
+
+Legacy `status/{pin}` payloads (`"0"`/`"1"`) are translated by a thin adapter
+into canonical `device.pin_status` events; new sources must publish the
+canonical JSON envelope (`event_id`, `observed_at`, `sequence`, `boot_id`,
+type-specific fields — see `schemas/events.py` and `ingestion/normalization.py`).
+
+### Delivery and ordering guarantees (and non-guarantees)
+
+- Subscriptions are QoS 1: **at-least-once** from the broker; database
+  uniqueness (`event_id` PK and partial-unique
+  `(source_id, source_boot_id, sequence)`) makes ingestion idempotent, so
+  redelivery stores nothing new. We do **not** claim end-to-end exactly-once.
+- Sequence evaluation classifies duplicates, out-of-order late arrivals
+  (stored, flagged in `provenance.metadata.arrival`, never advancing the
+  counter), sequence gaps, and boot resets.
+- Retained messages are marked `provenance.retained` and freshness is judged
+  by `received_at` — a retained value is evidence, not current state.
+- The Pico firmware publishes QoS 0 with no acks, no NTP, no reconnect; no
+  buffering or delivery guarantee is claimed for those devices (their events
+  carry `clock_quality="server_received"`).
+- Rejections (`unauthorized_topic`, `source_disabled`, `oversized`,
+  `malformed_payload`, `source_mismatch`, `unsupported_topic`,
+  `internal_error`) land in `dead_letter_events` with the bounded raw payload;
+  a database outage during ingest is logged truthfully and never crashes the
+  intake loop.
+
+### Simulator
+
+```bash
+# Scenario suite against the local test broker (never the Pi by default):
+.venv-awareness/bin/python -m talos.awareness.simulator \
+  --host 127.0.0.1 --port 1885 --scenario suite
+# Individual scenarios: normal, overflow, duplicate, delayed, out_of_order,
+# sequence_gap, reboot, malformed, unauthorized, spoofed_source, oversized,
+# retained, command_ack
+```
+
+The test-only Mosquitto (owner-approved) starts with
+`docker compose -f docker-compose.awareness.yml --profile test up -d`.
+
+### Troubleshooting
+
+- `ingestion.connection.state` stuck `disconnected`: check broker address in
+  health output, broker reachability, and `last_error` (never contains
+  credentials).
+- Events missing: check `dead_letter_events.reason` and
+  `ingestion.metrics.dead_lettered` — unauthorized topics mean the source
+  registry row is missing or disabled.
+- Sequence flags look wrong after a device power-cycle: a changed `boot_id`
+  legitimately resets sequence comparison (`boot_reset`, not `out_of_order`).
+
 ## Tests
 
 ```bash
 # Unit tests (no infrastructure needed):
 .venv-awareness/bin/python -m unittest \
-  tests.test_awareness_config tests.test_awareness_event_schema tests.test_awareness_health
+  tests.test_awareness_config tests.test_awareness_event_schema \
+  tests.test_awareness_health tests.test_awareness_ingestion_unit
 
-# Integration (requires the compose database; skips cleanly when absent):
-.venv-awareness/bin/python -m unittest tests.test_awareness_migrations
+# Integration (requires the compose database — and, for ingestion, the test
+# broker profile; each skips cleanly when its infrastructure is absent):
+docker compose -f docker-compose.awareness.yml --profile test up -d --wait
+.venv-awareness/bin/python -m unittest \
+  tests.test_awareness_migrations tests.test_awareness_ingestion_integration
 ```
 
 ## Requirements traceability
@@ -84,12 +166,12 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 
 | ID | Requirement | Primary components | Status |
 |---|---|---|---|
-| R1 | Ingest streams from sensors, microcontrollers, services, conversations, internal components | C2, C3 | ⬜ Phase 2 |
+| R1 | Ingest streams from sensors, microcontrollers, services, conversations, internal components | C2, C3 | 🔶 MQTT device/simulator ingestion (Phase 2); service/conversation adapters in Phases 5/6 |
 | R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | ⬜ Phases 3/8 |
 | R3 | Distinguish current state from historical events | C5, C6 | 🔶 schemas exist (Phase 1); managers in Phase 3 |
 | R4 | Maintain strong environmental awareness | C5, C12 | ⬜ Phases 3/5 |
-| R5 | Track when, where, how, and from what source information entered | C1, C4 | 🔶 envelope + provenance schema (Phase 1) |
-| R6 | Track health and state of connected systems | C4, C5, C16 | 🔶 self-health only (Phase 1) |
+| R5 | Track when, where, how, and from what source information entered | C1, C4 | ✅ envelope + provenance persisted per event (Phase 2) |
+| R6 | Track health and state of connected systems | C4, C5, C16 | 🔶 self-health + source liveness/last-seen (Phase 2); stale/offline workers in Phase 3 |
 | R7 | Detect important events independently of the LLM | C7 | ⬜ Phase 4 |
 | R8 | Proactively alert the user | C8, C9 | ⬜ Phase 4 |
 | R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
@@ -97,12 +179,12 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R11 | Selectively push only relevant data to the LLM | C7, C12 | ⬜ Phase 5 |
 | R12 | Allow the LLM to retrieve additional information | C13 | ⬜ Phase 5 |
 | R13 | Remain functional when Ollama is unavailable | C7, C8, C16 | 🔶 nothing depends on Ollama yet by design |
-| R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | 🔶 DB uniqueness for (source, boot, sequence) (Phase 1); pipeline in Phase 2 |
+| R14 | Handle duplicate, delayed, missing, out-of-order messages | C1, C3, C5 | ✅ pipeline dedup/sequence/gap/reorder/boot-reset classification (Phase 2); state-facing effects in Phase 3 |
 | R15 | Persist critical downstream work reliably | C10 | 🔶 outbox table + constraints (Phase 1); workers in Phase 4 |
 | R16 | Support stale, conflicting, unknown, offline state | C5 | 🔶 status vocabulary + CHECKs (Phase 1); manager in Phase 3 |
 | R17 | Support validated semantic and episodic memory | C11 | ⬜ Phase 6 |
 | R18 | Preserve provenance and temporal validity of memory | C11 | ⬜ Phase 6 |
-| R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 all endpoints configurable (Phase 1) |
+| R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 configurable endpoints + resilient broker client with truthful connection health (Phase 2) |
 | R20 | Integrate with current code without unnecessary rewrites | Phase 0, C18 | ✅ additive package + separate process/venv |
 | R21 | Validate physical actions and record acknowledgements | C14 | ⬜ Phase 7 |
 | R22 | Apply configurable retention and safe deletion | C15 | 🔶 `alert_events.event_id` is `ON DELETE RESTRICT`, protecting alert evidence at the DB level; retention workers in Phase 8 |

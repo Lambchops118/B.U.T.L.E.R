@@ -92,6 +92,14 @@ class MqttIngress:
         )
 
     async def run(self, stop: asyncio.Event) -> None:
+        try:
+            await self._run_loop(stop)
+        finally:
+            # Truthful even when the task is cancelled during shutdown.
+            self._state = "stopped"
+            self._connected_since = None
+
+    async def _run_loop(self, stop: asyncio.Event) -> None:
         attempt = 0
         while not stop.is_set():
             self._state = "connecting"
@@ -146,4 +154,3 @@ class MqttIngress:
                     await asyncio.wait_for(stop.wait(), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
-        self._state = "stopped"

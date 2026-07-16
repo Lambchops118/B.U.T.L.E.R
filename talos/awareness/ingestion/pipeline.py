@@ -105,7 +105,18 @@ class IngestionPipeline:
                 message.topic,
                 extra={"component": "ingestion"},
             )
-            await self._reject(message, received_at, "internal_error", str(exc), None)
+            try:
+                await self._reject(message, received_at, "internal_error", str(exc), None)
+            except Exception:
+                # Database unavailable: the loss is logged truthfully and the
+                # intake loop must keep running — a dead-letter failure must
+                # never take down the MQTT ingress.
+                logger.exception(
+                    "failed to dead-letter message from topic %s; message lost",
+                    message.topic,
+                    extra={"component": "ingestion"},
+                )
+                return "error:dead_letter_failed"
             return "dead_letter:internal_error"
 
     async def _handle_inner(self, message: InboundMessage, received_at: datetime) -> str:

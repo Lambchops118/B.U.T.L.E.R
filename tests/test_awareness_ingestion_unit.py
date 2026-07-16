@@ -200,6 +200,45 @@ class BackoffTest(unittest.TestCase):
                 self.assertLessEqual(delay, 90.0)  # cap 60 * 1.5 jitter
 
 
+class _BrokenEngine:
+    """Stands in for an AsyncEngine whose database is unreachable."""
+
+    def connect(self):
+        raise RuntimeError("database down")
+
+    def begin(self):
+        raise RuntimeError("database down")
+
+
+class PipelineNeverRaisesTest(unittest.TestCase):
+    def test_database_outage_does_not_kill_intake(self) -> None:
+        """A dead-letter failure is logged and swallowed (INV-14): the MQTT
+        intake loop must survive a database outage."""
+        import asyncio
+        import logging
+
+        from talos.awareness.config import AwarenessSettings
+        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from talos.awareness.registry.sources import SourceRepository
+
+        settings = AwarenessSettings(_env_file=None, db_password="unit-test")
+        engine = _BrokenEngine()
+        pipeline = IngestionPipeline(engine, SourceRepository(engine), settings)
+        message = InboundMessage(topic="home/sim/greenhouse/heartbeat", payload=b"{}")
+
+        logging.disable(logging.CRITICAL)
+        try:
+            disposition = asyncio.run(pipeline.handle(message))
+        finally:
+            logging.disable(logging.NOTSET)
+
+        # The dead-letter recorder swallows its own persistence failure, so
+        # the message is classified internal_error and nothing propagates.
+        self.assertEqual(disposition, "dead_letter:internal_error")
+        self.assertEqual(pipeline.metrics.received, 1)
+        self.assertEqual(pipeline.metrics.dead_lettered.get("internal_error"), 1)
+
+
 class MetricsTest(unittest.TestCase):
     def test_dead_letter_counting_and_snapshot(self) -> None:
         metrics = IngestionMetrics()

@@ -247,9 +247,39 @@ class IngestionIntegrationTest(unittest.TestCase):
             self.assertGreaterEqual(metrics["duplicates"], 1)
             self.assertGreaterEqual(metrics["out_of_order"], 1)
             self.assertGreaterEqual(metrics["accepted"], 6)
+
+            # --- reconnect + subscription restoration ------------------------
+            # Mosquitto disconnects an existing session when a second client
+            # connects with the same client ID; the ingress must reconnect
+            # with backoff and restore its subscriptions.
+            import aiomqtt
+
+            async with aiomqtt.Client(
+                hostname=TEST_BROKER_HOST,
+                port=TEST_BROKER_PORT,
+                identifier=self.settings.mqtt_client_id,
+                timeout=5,
+            ):
+                pass  # connect and immediately disconnect: kicks the ingress
+            await wait_for(
+                "ingress reconnected after broker kick",
+                lambda: asyncio.sleep(
+                    0,
+                    service.ingress.status()["reconnects"] >= 1
+                    and service.ingress.status()["state"] == "connected",
+                ),
+            )
+            await publish(device.heartbeat())
+            await wait_for(
+                "event received after reconnect (subscriptions restored)",
+                lambda: self._count_at_least(query, 4),
+            )
         finally:
             await service.stop()
             await engine.dispose()
+
+        # --- graceful shutdown reports truthfully ----------------------------
+        self.assertEqual(service.ingress.status()["state"], "stopped")
 
     async def _count_at_least(self, query, minimum: int):
         rows = await query(
