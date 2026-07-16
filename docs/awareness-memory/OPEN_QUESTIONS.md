@@ -20,6 +20,36 @@ These questions require Phase 0 repository/deployment evidence or owner input. C
 | OQ-014 | Which components must operate while the central host, broker, database, notification endpoint, or Ollama is unavailable? | Defines partition and recovery claims. | Deployment topology and device behavior. | Firmware retains immediate safety; backend reports degraded state truthfully. |
 | OQ-015 | Are there source requirements that conflict with repository constraints? | Adaptations must preserve intent and be approved. | Phase 0 conflict inventory. | Record both facts, recommend an adaptation, and request owner confirmation. |
 
+## Phase 0 resolution status (2026-07-16)
+
+Evidence lives in [`DISCOVERY.md`](DISCOVERY.md) (section references below).
+
+| ID | Status | Resolution |
+|---|---|---|
+| OQ-001 | Resolved | Python-only, run-in-place, per-process venvs, stdlib-first, no linter/typechecker; CI is compile-only (§1). |
+| OQ-002 | Resolved | 3 SQLite stores, no ORM/migrations; defaults adopted via Docker (§7, §11, ADR-011). |
+| OQ-003 | Resolved | Yes — `timescale/timescaledb-ha:pg17` runs on the dev machine; verified live by Phase 1 health checks (§11). |
+| OQ-004 | Resolved | Home Assistant absent; backend is the authoritative layer (§8). |
+| OQ-005 | Resolved | Flat legacy topics, QoS 0, no TLS/auth observed client-side; broker-side config still unverified (§3-§4; remaining part → OQ-B below). |
+| OQ-006 | Resolved | No buffering anywhere; Pico clocks untrusted → `server_received` clock quality (§3, §9). |
+| OQ-007 | Resolved | Responses API lane + OpenAI-compatible streaming seam; no embeddings; integration points mapped (§5; addendum §15 adds `POST /phone/events`). |
+| OQ-008 | Resolved | No deterministic channel exists; v1 = GUI banner `POST /notify` + log adapter (§6, ADR-015). |
+| OQ-009 | Resolved | No action registry; `water_plants`/`toggle_fan` fire-and-forget MQTT; Phase 7 wraps them (§4, §10). |
+| OQ-010 | Resolved | No process manager in repo; plain venv processes + Docker Compose for the DB (§11, ADR-011). |
+| OQ-011 | Resolved | Text-server bearer token + localhost/Tailscale allowlist is the precedent; awareness API binds loopback (§1, §10 C17). |
+| OQ-012 | Resolved | Current traffic trivial; design target 10-100 msg/s burst; payload bound 64 KiB (§9 volumes). |
+| OQ-013 | Open | Backup destination/schedule/restore objective — due before Phase 8; owner input needed. |
+| OQ-014 | Resolved | Firmware behaviors + Pi TV controller run independently of the central host (§3). |
+| OQ-015 | Resolved | 7 conflicts inventoried with adaptations (§9.1); owner approved via ADR-011..016. |
+
+Remaining open items:
+
+| ID | Question | Needed by |
+|---|---|---|
+| OQ-013 | Backup destination, schedule, encryption, restore objective. | Phase 8 (SEC-007) |
+| OQ-B | Broker-side Mosquitto config (anonymous? ACLs?) on the Pi — unverifiable off-LAN; assumed anonymous. | Phase 8 hardening plan |
+| OQ-C | Owner appetite for firmware fixes (unique client IDs, status-topic prefixes, abort-during-run, reconnect, acks) — currently out of scope per ADR-014. | Phase 7 device acceptance |
+
 ## Potential source tension to confirm
 
 No direct contradiction was found in the source. One wording tension is deliberate: PostgreSQL/TimescaleDB/pgvector and the listed Python stack are strong defaults, while existing suitable repository technology takes precedence. Phase 0 must explicitly decide whether the defaults apply; it must not treat either side as an unconditional mandate.

@@ -10,106 +10,106 @@ Columns: **Canonical** is the detailed reorganized home; **Verify** is the accep
 
 | ID | Requirement | Original section | Canonical | Phase | Verify | Status / dependencies |
 |---|---|---|---|---:|---|---|
-| R1 | Ingest sensors, microcontrollers, services, conversations, and internal streams | §7 R1; C2-C3 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Adapter/envelope integration and simulator | not_implemented; conversation storage continues in 6 |
+| R1 | Ingest sensors, microcontrollers, services, conversations, and internal streams | §7 R1; C2-C3 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Adapter/envelope integration and simulator | in_progress — MQTT device/simulator ingestion (Phase 2); service/conversation adapters later |
 | R2 | Store, aggregate, summarize, or discard according to policy | §7 R2; C4-C6,C15 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md), [Phase 8](phases/PHASE_08_HARDENING.md) | 1,3,6,8 | Persistence, aggregate, consolidation, retention tests | not_implemented |
-| R3 | Distinguish current state from historical events | §7 R3; P1; C5-C6 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | State/history separation tests | not_implemented |
+| R3 | Distinguish current state from historical events | §7 R3; P1; C5-C6 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | State/history separation tests | in_progress — schemas separated (Phase 1); managers in Phase 3 |
 | R4 | Maintain strong environmental awareness | §7 R4; C5,C12 | [Phase 5](phases/PHASE_05_CONTEXT_AND_RETRIEVAL.md) | 3,5 | Qualified state and situation scenarios | not_implemented |
-| R5 | Track when, where, how, and source of entry | §7 R5; P7; C1,C4 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Provenance/timestamp/source queries | not_implemented |
-| R6 | Track connected-system state and health | §7 R6; C4,C5,C16 | [failure](reference/FAILURE_AND_RECOVERY.md), [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1,3,8 | Health/stale/offline tests | not_implemented |
+| R5 | Track when, where, how, and source of entry | §7 R5; P7; C1,C4 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Provenance/timestamp/source queries | verified — envelope + provenance persisted and tested (Phase 2) |
+| R6 | Track connected-system state and health | §7 R6; C4,C5,C16 | [failure](reference/FAILURE_AND_RECOVERY.md), [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1,3,8 | Health/stale/offline tests | in_progress — self-health + source liveness (Phase 2); stale/offline workers in Phase 3 |
 | R7 | Detect important events independently of LLM | §7 R7; P2; C7 | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Hard-rule and Ollama-outage E2E | not_implemented |
 | R8 | Proactively alert user | §7 R8; C8-C9 | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Overflow delivery/lifecycle tests | not_implemented |
-| R9 | Remain fully local | §7 R9; C17 | [security](reference/SECURITY_AND_PRIVACY.md) | 0-8 | Dependency/network/data-flow audit | not_implemented |
+| R9 | Remain fully local | §7 R9; C17 | [security](reference/SECURITY_AND_PRIVACY.md) | 0-8 | Dependency/network/data-flow audit | in_progress — local Docker Postgres, no cloud services so far |
 | R10 | Avoid unnecessary LLM context | §7 R10; P3; C12 | [Phase 5](phases/PHASE_05_CONTEXT_AND_RETRIEVAL.md) | 5 | Relevance/budget/context-overflow tests | not_implemented |
 | R11 | Push only relevant data to LLM | §7 R11; C7,C12 | [Phase 5](phases/PHASE_05_CONTEXT_AND_RETRIEVAL.md) | 5 | Selection/audit/unrelated-state tests | not_implemented |
 | R12 | Let LLM retrieve additional information | §7 R12; C13 | [Phase 5](phases/PHASE_05_CONTEXT_AND_RETRIEVAL.md), [Phase 6](phases/PHASE_06_LONG_TERM_MEMORY.md) | 5-6 | Strict routing and memory-search tests | not_implemented |
 | R13 | Remain functional without Ollama | §7 R13; C7,C8,C16 | [failure](reference/FAILURE_AND_RECOVERY.md) | 4,6,8 | Ollama/embedding outage scenarios | not_implemented |
-| R14 | Handle duplicates, delay, missing, and reorder | §7 R14; C1,C3,C5 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2-3 | Simulator/order/idempotency tests | not_implemented |
-| R15 | Persist critical downstream work reliably | §7 R15; C10 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4,6-8 | Crash/retry/outbox tests | not_implemented |
-| R16 | Support stale, conflicting, unknown, offline state | §7 R16; C5 | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3 | Status/freshness/conflict tests | not_implemented |
+| R14 | Handle duplicates, delay, missing, and reorder | §7 R14; C1,C3,C5 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2-3 | Simulator/order/idempotency tests | verified — dedup/gap/reorder/boot-reset classification tested (Phase 2) |
+| R15 | Persist critical downstream work reliably | §7 R15; C10 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4,6-8 | Crash/retry/outbox tests | in_progress — outbox table + constraints (Phase 1); workers in Phase 4 |
+| R16 | Support stale, conflicting, unknown, offline state | §7 R16; C5 | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3 | Status/freshness/conflict tests | in_progress — status vocabulary + CHECKs (Phase 1); manager in Phase 3 |
 | R17 | Support validated semantic/episodic memory | §7 R17; C11 | [Phase 6](phases/PHASE_06_LONG_TERM_MEMORY.md) | 6 | Candidate/episode/retrieval tests | not_implemented |
 | R18 | Preserve memory provenance and temporal validity | §7 R18; C11 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 6 | Evidence/validity/supersession tests | not_implemented |
-| R19 | Support distributed LAN deployment | §7 R19; C2,C16,C17 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0,2,8 | Topology/reconnect/security/failure tests | not_implemented |
-| R20 | Integrate without unnecessary rewrites | §7 R20; P9; C18 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0-8 | Discovery mapping and regression evidence | not_implemented |
+| R19 | Support distributed LAN deployment | §7 R19; C2,C16,C17 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0,2,8 | Topology/reconnect/security/failure tests | in_progress — configurable endpoints + resilient broker client (Phase 2) |
+| R20 | Integrate without unnecessary rewrites | §7 R20; P9; C18 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0-8 | Discovery mapping and regression evidence | in_progress — additive `talos/awareness/` package, own process/venv; mapping in `DISCOVERY.md` §10 |
 | R21 | Validate physical actions and acknowledgements | §7 R21; C14 | [Phase 7](phases/PHASE_07_ACTIONS.md) | 7 | Permission/idempotency/ack tests | not_implemented |
-| R22 | Configurable retention and safe deletion | §7 R22; C15 | [Phase 8](phases/PHASE_08_HARDENING.md) | 8 | Dry-run/protection/aggregate tests | not_implemented |
+| R22 | Configurable retention and safe deletion | §7 R22; C15 | [Phase 8](phases/PHASE_08_HARDENING.md) | 8 | Dry-run/protection/aggregate tests | in_progress — alert-evidence RESTRICT protection (Phase 1); retention workers in Phase 8 |
 
 ## Discovery, architecture, and technology
 
 | ID | Requirement | Original section | Canonical | Phase | Verify | Status / dependencies |
 |---|---|---|---|---:|---|---|
-| DISC-001 | Inspect language/runtime/toolchain and entry points | §4.1 items 1-2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence in `DISCOVERY.md` | not_implemented |
-| DISC-002 | Inspect Ollama/Qwen and tool calling | §4.1 items 3-4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Code/config mapping | not_implemented |
-| DISC-003 | Inspect STT/TTS/notification/phone/calendar/weather/voice | §4.1 item 5 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Integration map | not_implemented |
-| DISC-004 | Inspect DB/ORM/migrations/storage/cache | §4.1 item 6 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Persistence map | not_implemented |
-| DISC-005 | Inspect MQTT topics/auth/reconnect/schemas and other transports | §4.1 items 7-8 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Transport evidence | not_implemented |
-| DISC-006 | Inspect Home Assistant overlap and stop for owner ownership decision | §4.1 item 9; §4.3 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Three-option gate documented | not_implemented; owner decision |
-| DISC-007 | Inspect existing device/entity/action/event/conversation/agent models | §4.1 item 10 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Model map | not_implemented |
-| DISC-008 | Inspect deployment/process/test/CI/logging/security/backup | §4.1 items 11-14 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence/risk map | not_implemented |
-| DISC-009 | Identify every repository conflict with source | §4.1 item 15 | [open questions](OPEN_QUESTIONS.md) | 0 | Conflict table, both readings preserved | not_implemented |
-| DISC-010 | Document actual hosts, broker port/TLS/auth/ACLs, clients/endpoints/network | §4.2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Deployment topology | not_implemented |
-| DISC-011 | Document Linux/embedded clock quality and offline responsibilities | §4.2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence/unknowns labeled | not_implemented |
-| DISC-012 | Produce complete `DISCOVERY.md` outputs and C1-C18 mapping | §4.4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Deliverable checklist | not_implemented |
-| DISC-013 | Label assumptions by repo, owner, or confirmation-needed | §4.4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Label audit | not_implemented |
-| DISC-014 | Decide explicitly whether defaults apply and propose DB deployment | §4.4; §5 | [decisions](DECISIONS.md) | 0 | Owner-reviewed recommendation | not_implemented |
-| DISC-015 | Phase 0 performs no runtime implementation and stops for review | Opening; §4; §12 Phase 0; §20 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Git/file-scope and owner gate | not_implemented |
+| DISC-001 | Inspect language/runtime/toolchain and entry points | §4.1 items 1-2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence in `DISCOVERY.md` | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-002 | Inspect Ollama/Qwen and tool calling | §4.1 items 3-4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Code/config mapping | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-003 | Inspect STT/TTS/notification/phone/calendar/weather/voice | §4.1 item 5 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Integration map | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-004 | Inspect DB/ORM/migrations/storage/cache | §4.1 item 6 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Persistence map | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-005 | Inspect MQTT topics/auth/reconnect/schemas and other transports | §4.1 items 7-8 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Transport evidence | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-006 | Inspect Home Assistant overlap and stop for owner ownership decision | §4.1 item 9; §4.3 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Three-option gate documented | verified — HA absent; backend is state authority (owner-confirmed) |
+| DISC-007 | Inspect existing device/entity/action/event/conversation/agent models | §4.1 item 10 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Model map | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-008 | Inspect deployment/process/test/CI/logging/security/backup | §4.1 items 11-14 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence/risk map | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-009 | Identify every repository conflict with source | §4.1 item 15 | [open questions](OPEN_QUESTIONS.md) | 0 | Conflict table, both readings preserved | verified — conflict table in `DISCOVERY.md` §9.1 |
+| DISC-010 | Document actual hosts, broker port/TLS/auth/ACLs, clients/endpoints/network | §4.2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Deployment topology | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-011 | Document Linux/embedded clock quality and offline responsibilities | §4.2 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Evidence/unknowns labeled | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-012 | Produce complete `DISCOVERY.md` outputs and C1-C18 mapping | §4.4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Deliverable checklist | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-013 | Label assumptions by repo, owner, or confirmation-needed | §4.4 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Label audit | verified — evidence in `DISCOVERY.md` (2026-07-16) |
+| DISC-014 | Decide explicitly whether defaults apply and propose DB deployment | §4.4; §5 | [decisions](DECISIONS.md) | 0 | Owner-reviewed recommendation | verified — defaults adopted with adaptations (ADR-011); DB via Docker compose |
+| DISC-015 | Phase 0 performs no runtime implementation and stops for review | Opening; §4; §12 Phase 0; §20 | [Phase 0](phases/PHASE_00_DISCOVERY.md) | 0 | Git/file-scope and owner gate | verified — Phase 0 was documentation-only; gate waived by owner 2026-07-16 |
 | ARCH-001 | Keep current/history/telemetry/memory distinct | P1 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Cross-schema/retrieval audit | not_implemented; repeats R3 |
 | ARCH-002 | LLM never owns deterministic hot/safety paths | P2 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Outage and architecture audit | not_implemented; repeats R7/R13 |
 | ARCH-003 | Context is selected and exact questions structured | P3-P4 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 5-6 | Routing/budget tests | not_implemented; repeats R10-R12 |
-| ARCH-004 | Central DB authoritative; MQTT transport | P6; §6.1 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | State/restart/reconnect audit | not_implemented |
-| ARCH-005 | Preserve provenance/uncertainty and truthful degradation | P7-P8 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Schema/failure/result audit | not_implemented |
-| ARCH-006 | Integrate additively; modular monolith default | P9-P10 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 0-8 | Discovery mapping/regression | not_implemented |
-| OPS-001 | Existing suitable stack precedes defaults | §5 opening; §5.4 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Discovery decision | not_implemented |
-| OPS-002 | Default local stack retains documented technologies where applicable | §5.1 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1,6 | Deployment/config evidence | not_implemented |
-| OPS-003 | Redis only for demonstrated transient need, never authority | §5.3 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Decision/data-ownership audit | not_implemented |
-| OPS-004 | Substitute preserves transactions/history/state/outbox/queries/memory/migrations/backups/concurrency | §5.4 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Owner-approved property matrix | not_implemented |
+| ARCH-004 | Central DB authoritative; MQTT transport | P6; §6.1 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | State/restart/reconnect audit | in_progress — DB-authoritative writes, MQTT transport-only (Phases 1-2) |
+| ARCH-005 | Preserve provenance/uncertainty and truthful degradation | P7-P8 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Schema/failure/result audit | in_progress — provenance stored; truthful health/degradation (Phases 1-2) |
+| ARCH-006 | Integrate additively; modular monolith default | P9-P10 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 0-8 | Discovery mapping/regression | in_progress — additive modular monolith in place |
+| OPS-001 | Existing suitable stack precedes defaults | §5 opening; §5.4 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Discovery decision | verified — existing stack evaluated; defaults adopted (`DISCOVERY.md` §11) |
+| OPS-002 | Default local stack retains documented technologies where applicable | §5.1 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1,6 | Deployment/config evidence | in_progress — Python 3.12/Postgres 17+Timescale+pgvector/FastAPI/SQLAlchemy/Alembic/Pydantic deployed (Phase 1) |
+| OPS-003 | Redis only for demonstrated transient need, never authority | §5.3 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Decision/data-ownership audit | verified — Redis not used; no demonstrated need at current volumes |
+| OPS-004 | Substitute preserves transactions/history/state/outbox/queries/memory/migrations/backups/concurrency | §5.4 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-1 | Owner-approved property matrix | not_applicable — no substitution made |
 
 ## Events, MQTT, ingestion, and registries
 
 | ID | Requirement | Original section | Canonical | Phase | Verify | Status / dependencies |
 |---|---|---|---|---:|---|---|
-| EVT-001 | Use strict versioned envelope with every required identity/time/severity/retention/payload/provenance field | C1 schema | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-2 | Schema/unit/migration tests | not_implemented |
-| EVT-002 | Preserve six clock-quality values and distinct timestamp/validity semantics in UTC | C1 timestamp rules | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Parse/order/render tests | not_implemented |
-| EVT-003 | Require event ID; support sequence/boot; detect duplicate tuple/gaps/reorder | C1 identity/ordering | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Simulator and uniqueness tests | not_implemented |
-| EVT-004 | Retain delayed events even when state cannot update | C1 identity; C5 update | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 2-3 | Delayed-event E2E | not_implemented |
-| EVT-005 | Validate schema version, payload bounds, and topic ownership | C1 validation | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Reject/dead-letter tests | not_implemented |
-| EVT-006 | Malformed/unauthorized input dead-letters without crash and emits safe logs/metrics | C1 validation; C3 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Invalid/auth integration | not_implemented |
-| MQTT-001 | Reuse existing broker; do not deploy second without proof and approval | Mission; §5.2; C2 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0,2 | Deployment diff/connect test | not_implemented |
-| MQTT-002 | Preserve established topic conventions or require migration plan | C2 MQTT rules | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 0,2 | Topic inventory/config test | not_implemented |
-| MQTT-003 | Apply QoS guidance plus application idempotency | C2 QoS | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2,7 | Topic/config/duplicate tests | not_implemented |
-| MQTT-004 | Mark retained/replayed provenance, evaluate age, never assume authority | C2 retained | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-3 | Retained scenario | not_implemented |
-| MQTT-005 | Bounded jittered reconnect, health, subscription restore, session/keepalive, shutdown, lag metrics | C2 connection | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Broker interruption tests | not_implemented |
-| MQTT-006 | Thin non-MQTT adapters normalize all downstream data to events | C2 non-MQTT | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2+ | Adapter contract tests | not_implemented; implement only existing sources |
-| MQTT-007 | Repository-controlled remote buffering is disk-bounded, pre-ID, ordered/useful, duplicate-safe with drop policy | C2 buffering | [failure](reference/FAILURE_AND_RECOVERY.md) | 2,8 | Offline queue/replay/capacity tests | not_implemented; capability-dependent |
-| MQTT-008 | Do not claim buffering for clients that lack it | C2 buffering | [failure](reference/FAILURE_AND_RECOVERY.md) | 0,2 | Documentation/evidence audit | not_implemented |
-| INGEST-001 | Execute deterministic ordered pipeline stages | C3 stages | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Stage integration tests | not_implemented |
-| INGEST-002 | Support every listed classification output | C3 classification | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-8 | Enum/policy coverage | not_implemented; handlers phased |
-| INGEST-003 | Duplicate processing creates no duplicate event/alert/notification/action/memory | C3 idempotency | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2-7 | Duplicate E2E by phase | not_implemented |
-| INGEST-004 | Use DB uniqueness in addition to application checks | C3 idempotency | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-2 | Constraint/race tests | not_implemented |
-| INGEST-005 | Applicable event/history/measurement/state/health/alert/attention/memory/action/outbox intent is one transaction | C3 transaction | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-7 | Rollback/crash tests | not_implemented; phased columns |
-| INGEST-006 | No notification, embedding, network, or LLM call inside transaction | C3 transaction | [invariants](ARCHITECTURAL_INVARIANTS.md) | 2-8 | Code/integration timing audit | not_implemented |
-| REG-001 | Support all listed entity/source types and typed validity relationships | C4 entities/relationships | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1 | Schema/repository tests | not_implemented |
-| REG-002 | Preserve every required source registry field | C4 source fields | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Migration/model tests | not_implemented |
-| REG-003 | Support seven source health statuses | C4 health | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Enum/transition tests | not_implemented |
+| EVT-001 | Use strict versioned envelope with every required identity/time/severity/retention/payload/provenance field | C1 schema | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-2 | Schema/unit/migration tests | verified — strict envelope schema + persistence tests (Phases 1-2) |
+| EVT-002 | Preserve six clock-quality values and distinct timestamp/validity semantics in UTC | C1 timestamp rules | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Parse/order/render tests | in_progress — clock-quality vocabulary + UTC storage (Phases 1-2); rendering in Phase 5 |
+| EVT-003 | Require event ID; support sequence/boot; detect duplicate tuple/gaps/reorder | C1 identity/ordering | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Simulator and uniqueness tests | verified — uniqueness + simulator tests (Phase 2) |
+| EVT-004 | Retain delayed events even when state cannot update | C1 identity; C5 update | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 2-3 | Delayed-event E2E | in_progress — delayed events retained in history (Phase 2); state effects in Phase 3 |
+| EVT-005 | Validate schema version, payload bounds, and topic ownership | C1 validation | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Reject/dead-letter tests | verified — version/bounds/topic-ownership reject tests (Phase 2) |
+| EVT-006 | Malformed/unauthorized input dead-letters without crash and emits safe logs/metrics | C1 validation; C3 | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Invalid/auth integration | verified — dead-letter without crash, incl. DB-outage test (Phase 2) |
+| MQTT-001 | Reuse existing broker; do not deploy second without proof and approval | Mission; §5.2; C2 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0,2 | Deployment diff/connect test | verified — existing Pi broker reused; test-only Docker broker owner-approved, profile-gated |
+| MQTT-002 | Preserve established topic conventions or require migration plan | C2 MQTT rules | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 0,2 | Topic inventory/config test | verified — legacy topics consumed via thin adapters, none changed (Phase 2) |
+| MQTT-003 | Apply QoS guidance plus application idempotency | C2 QoS | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2,7 | Topic/config/duplicate tests | in_progress — QoS 1 + DB idempotency (Phase 2); command QoS in Phase 7 |
+| MQTT-004 | Mark retained/replayed provenance, evaluate age, never assume authority | C2 retained | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-3 | Retained scenario | verified — retained provenance + received_at freshness test (Phase 2) |
+| MQTT-005 | Bounded jittered reconnect, health, subscription restore, session/keepalive, shutdown, lag metrics | C2 connection | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Broker interruption tests | in_progress — reconnect/backoff/restore/shutdown tested (Phase 2); lag metrics pending |
+| MQTT-006 | Thin non-MQTT adapters normalize all downstream data to events | C2 non-MQTT | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2+ | Adapter contract tests | in_progress — legacy pin-status adapter only; more sources in Phases 5-6 |
+| MQTT-007 | Repository-controlled remote buffering is disk-bounded, pre-ID, ordered/useful, duplicate-safe with drop policy | C2 buffering | [failure](reference/FAILURE_AND_RECOVERY.md) | 2,8 | Offline queue/replay/capacity tests | not_applicable — no repository-controlled remote buffering exists |
+| MQTT-008 | Do not claim buffering for clients that lack it | C2 buffering | [failure](reference/FAILURE_AND_RECOVERY.md) | 0,2 | Documentation/evidence audit | verified — Pico non-guarantees documented (README/`DISCOVERY.md`) |
+| INGEST-001 | Execute deterministic ordered pipeline stages | C3 stages | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2 | Stage integration tests | verified — receive→authorize→validate→normalize→dedupe→sequence→persist (Phase 2); later stages phased |
+| INGEST-002 | Support every listed classification output | C3 classification | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-8 | Enum/policy coverage | in_progress — accept/duplicate/out-of-order/dead-letter classifications (Phase 2); rule outputs in Phase 4 |
+| INGEST-003 | Duplicate processing creates no duplicate event/alert/notification/action/memory | C3 idempotency | [Phase 2](phases/PHASE_02_MQTT_INGESTION.md) | 2-7 | Duplicate E2E by phase | in_progress — no duplicate events verified (Phase 2); alert/notification/action effects phased |
+| INGEST-004 | Use DB uniqueness in addition to application checks | C3 idempotency | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-2 | Constraint/race tests | verified — PK + partial-unique tuple constraints exercised (Phase 2) |
+| INGEST-005 | Applicable event/history/measurement/state/health/alert/attention/memory/action/outbox intent is one transaction | C3 transaction | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-7 | Rollback/crash tests | in_progress — event + registry update in one transaction (Phase 2); more domains phased |
+| INGEST-006 | No notification, embedding, network, or LLM call inside transaction | C3 transaction | [invariants](ARCHITECTURAL_INVARIANTS.md) | 2-8 | Code/integration timing audit | verified — no network/LLM calls in transaction (code audit, Phase 2) |
+| REG-001 | Support all listed entity/source types and typed validity relationships | C4 entities/relationships | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1 | Schema/repository tests | verified — schema + seeded registry (Phase 1-2) |
+| REG-002 | Preserve every required source registry field | C4 source fields | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Migration/model tests | verified — all source fields modeled and updated on ingest (Phase 2) |
+| REG-003 | Support seven source health statuses | C4 health | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Enum/transition tests | in_progress — status vocabulary enforced (Phase 1); transitions in Phase 3 |
 | REG-004 | Source silence severity follows criticality/policy | C4 health | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3-4 | Offline rule tests | not_implemented |
 
 ## State, history, and telemetry
 
 | ID | Requirement | Original section | Canonical | Phase | Verify | Status / dependencies |
 |---|---|---|---|---:|---|---|
-| STATE-001 | DB-authoritative state preserves every required field and one active entity/property | C5 authority/model | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Constraint/model tests | not_implemented |
-| STATE-002 | Support current/stale/unknown/conflicting/offline/inferred/scheduled | C5 statuses | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Enum/result tests | not_implemented |
+| STATE-001 | DB-authoritative state preserves every required field and one active entity/property | C5 authority/model | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Constraint/model tests | in_progress — schema + constraints (Phase 1); manager in Phase 3 |
+| STATE-002 | Support current/stale/unknown/conflicting/offline/inferred/scheduled | C5 statuses | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3 | Enum/result tests | in_progress — status CHECK vocabulary (Phase 1); behavior in Phase 3 |
 | STATE-003 | Compare newness, authority/priority, confidence, delay and clock quality | C5 update | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3 | Authority matrix tests | not_implemented |
 | STATE-004 | Preserve event linkage, conflicts, freshness, and meaningful transitions | C5 update | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3 | Conflict/provenance tests | not_implemented |
 | STATE-005 | Apply deadbands and hysteresis | C5 update | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3 | Jitter/threshold tests | not_implemented |
 | STATE-006 | Deterministic freshness marks stale/offline and deduplicates policy alerts | C5 freshness | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3-4 | Clock/worker/alert tests | not_implemented |
 | STATE-007 | Compact situation uses relevant state/alerts/attention/transitions/location/conversation/tasks/health | C5 situation; C12 | [Phase 5](phases/PHASE_05_CONTEXT_AND_RETRIEVAL.md) | 5 | Situation selection tests | not_implemented |
 | STATE-008 | Do not store massive regenerated prose world narrative | C5 situation | [invariants](ARCHITECTURAL_INVARIANTS.md) | 5 | Storage/context audit | not_implemented |
-| HIST-001 | Events are append-only with exact/bounded filtered/correlated/replay/provenance queries | C6 event store | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-3 | Immutability/query tests | not_implemented |
+| HIST-001 | Events are append-only with exact/bounded filtered/correlated/replay/provenance queries | C6 event store | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 2-3 | Immutability/query tests | in_progress — append-only events with provenance (Phase 2); query surface in Phase 3 |
 | HIST-002 | Telemetry preserves every typed measurement field | C6 measurements | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 3 | Migration/insert/query tests | not_implemented |
 | HIST-003 | Use suitable hypertables and configurable raw/minute/hour/day aggregates/statistics | C6 aggregation | [Phase 3](phases/PHASE_03_STATE_TELEMETRY.md) | 3,8 | Aggregate correctness/retention | not_implemented |
 | HIST-004 | Never embed raw telemetry | C6 aggregation; C11 embeddings | [invariants](ARCHITECTURAL_INVARIANTS.md) | 3,6 | Corpus audit | not_implemented |
 | HIST-005 | Reject unbounded history ranges and unlimited points | C6 query | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 3,5 | Limit/error tests | not_implemented |
-| HIST-006 | Use JSONB flexibly but typed columns for common queries | C6 event store | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Schema/index audit | not_implemented |
+| HIST-006 | Use JSONB flexibly but typed columns for common queries | C6 event store | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-3 | Schema/index audit | in_progress — typed columns + JSONB payloads (Phase 1) |
 
 ## Rules, alerts, notifications, and outbox
 
@@ -119,8 +119,8 @@ Columns: **Canonical** is the detailed reorganized home; **Verify** is the accep
 | RULE-002 | Salience may use all listed relevance/novelty/persistence/confidence/etc. inputs | C7 salience | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Score-policy tests | not_implemented; noncritical only |
 | RULE-003 | Strict version-controlled rules support thresholds/transitions/windows/health/correlation/cooldown/dedupe/escalation/resolution/suppression | C7 rules | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Schema/matching/lifecycle tests | not_implemented |
 | RULE-004 | Optional LLM classifier is async/noncritical and cannot block/override/alert/write memory | C7 optional LLM | [invariants](ARCHITECTURAL_INVARIANTS.md) | 4,6 | Architecture/outage tests | not_implemented; optional |
-| ALERT-001 | Alerts preserve all fields and five statuses | C8 alerts | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4 | Migration/lifecycle tests | not_implemented |
-| ALERT-002 | Attention preserves all fields and four interruptibility values | C8 attention | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4 | Model/policy tests | not_implemented |
+| ALERT-001 | Alerts preserve all fields and five statuses | C8 alerts | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4 | Migration/lifecycle tests | in_progress — schema + lifecycle CHECKs (Phase 1); lifecycle in Phase 4 |
+| ALERT-002 | Attention preserves all fields and four interruptibility values | C8 attention | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4 | Model/policy tests | in_progress — schema (Phase 1); policy in Phase 4 |
 | ALERT-003 | One incident updates one alert with first/last/count/latest evidence | C8 dedupe | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Repeated-overflow test | not_implemented |
 | ALERT-004 | Timing examples follow severity, criticality, call/conversation context | C8 behavior | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Policy scenario tests | not_implemented |
 | NOTIFY-001 | Use one extensible adapter interface; initially only existing channels | C9 interface | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Adapter contract tests | not_implemented |
@@ -128,10 +128,10 @@ Columns: **Canonical** is the detailed reorganized home; **Verify** is the accep
 | NOTIFY-003 | Preserve every notification delivery field | C9 delivery model | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 4 | Migration/adapter tests | not_implemented |
 | NOTIFY-004 | Delivered status requires channel-specific adapter confirmation | C9 delivery | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | False-positive prevention | not_implemented |
 | NOTIFY-005 | Support cooldown, rate limit, fallback/escalation, quiet hours, call suppression, acknowledgement | C9 cooldown/escalation | [Phase 4](phases/PHASE_04_RULES_ALERTS_NOTIFICATIONS.md) | 4 | Policy/failure tests | not_implemented |
-| OUTBOX-001 | Outbox supports every listed work type and required field | C10 outbox | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4,6-8 | Schema/handler coverage | not_implemented |
+| OUTBOX-001 | Outbox supports every listed work type and required field | C10 outbox | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,4,6-8 | Schema/handler coverage | in_progress — schema + idempotency key (Phase 1); handlers from Phase 4 |
 | OUTBOX-002 | Workers safely claim bounded batches, are idempotent, back off, release stale locks | C10 workers | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 4 | Concurrency/recovery tests | not_implemented |
 | OUTBOX-003 | Expose backlog/age; dead-letter unrecoverable; manual retry; sanitized errors | C10 workers | [failure](reference/FAILURE_AND_RECOVERY.md) | 4,8 | Health/error/manual tests | not_implemented |
-| OUTBOX-004 | Implement at-least-once plus idempotency/uniqueness; never true exactly once | C10 exactly once; §17 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Duplicate/crash/docs audit | not_implemented |
+| OUTBOX-004 | Implement at-least-once plus idempotency/uniqueness; never true exactly once | C10 exactly once; §17 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | Duplicate/crash/docs audit | in_progress — at-least-once + uniqueness in ingestion (Phase 2) |
 
 ## Context and long-term memory
 
@@ -176,47 +176,47 @@ Columns: **Canonical** is the detailed reorganized home; **Verify** is the accep
 | RET-002 | Worker dry-runs, logs exact plan, batches, aggregates first, protects evidence/provenance, resumes idempotently | C15 worker | [Phase 8](phases/PHASE_08_HARDENING.md) | 8 | Retention failure/protection tests | not_implemented |
 | RET-003 | Large artifacts stay outside DB with every metadata field and safe paths | C15 artifacts | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 8 | Path/checksum/deletion tests | not_implemented |
 | RET-004 | LLM cannot select arbitrary artifact paths | C15 artifacts | [security](reference/SECURITY_AND_PRIVACY.md) | 8 | Traversal/tool abuse tests | not_implemented |
-| FAIL-001 | Track all listed component/worker/disk/source/schema/prompt/backup health | C16 health | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1,8 | Health contract/failure tests | not_implemented |
+| FAIL-001 | Track all listed component/worker/disk/source/schema/prompt/backup health | C16 health | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1,8 | Health contract/failure tests | in_progress — DB/extensions/migration-revision/ingestion health (Phases 1-2) |
 | FAIL-002 | Ollama outage preserves deterministic behavior and queues inference work | C16 Ollama | [failure](reference/FAILURE_AND_RECOVERY.md) | 4,6,8 | Outage E2E | not_implemented |
-| FAIL-003 | DB outage is truthful; optional spool is bounded/fsynced/idempotent/documented/not permanent | C16 PostgreSQL | [failure](reference/FAILURE_AND_RECOVERY.md) | 1,8 | Restart/spool tests | not_implemented; spool optional |
-| FAIL-004 | MQTT outage exposes health, retries, preserves command state, updates freshness | C16 MQTT | [failure](reference/FAILURE_AND_RECOVERY.md) | 2,3,7,8 | Broker outage tests | not_implemented |
+| FAIL-003 | DB outage is truthful; optional spool is bounded/fsynced/idempotent/documented/not permanent | C16 PostgreSQL | [failure](reference/FAILURE_AND_RECOVERY.md) | 1,8 | Restart/spool tests | in_progress — truthful 503 + never-crash intake on DB outage (Phases 1-2); no spool |
+| FAIL-004 | MQTT outage exposes health, retries, preserves command state, updates freshness | C16 MQTT | [failure](reference/FAILURE_AND_RECOVERY.md) | 2,3,7,8 | Broker outage tests | in_progress — broker outage health/retry (Phase 2); freshness in Phase 3 |
 | FAIL-005 | Embedding outage stores text, queues work, keeps exact/full-text/state/alerts | C16 embedding | [failure](reference/FAILURE_AND_RECOVERY.md) | 6,8 | Outage/retry tests | not_implemented |
 | FAIL-006 | Notification failure persists/retries/escalates, stays undelivered, alert open | C16 notification | [failure](reference/FAILURE_AND_RECOVERY.md) | 4,8 | Adapter failure tests | not_implemented |
-| FAIL-007 | Structured logs include canonical IDs and no secrets | C16 logging | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1-8 | Log/redaction tests | not_implemented |
-| FAIL-008 | Expose every minimum metric | C16 metrics | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 2-8 | Metrics inventory/scenarios | not_implemented |
-| SEC-001 | Private binding, DB protection, MQTT auth/ACL/topic ownership/TLS support | C17 network | [security](reference/SECURITY_AND_PRIVACY.md) | 0-2,8 | Network/config/auth tests | not_implemented |
+| FAIL-007 | Structured logs include canonical IDs and no secrets | C16 logging | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1-8 | Log/redaction tests | in_progress — structured JSON logs with whitelisted IDs, no secrets (Phase 1) |
+| FAIL-008 | Expose every minimum metric | C16 metrics | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 2-8 | Metrics inventory/scenarios | in_progress — ingestion counters + connection metrics (Phase 2); full inventory in Phase 8 |
+| SEC-001 | Private binding, DB protection, MQTT auth/ACL/topic ownership/TLS support | C17 network | [security](reference/SECURITY_AND_PRIVACY.md) | 0-2,8 | Network/config/auth tests | in_progress — loopback binds, topic ownership enforced, TLS/auth supported via config (Phase 2); broker hardening in Phase 8 |
 | SEC-002 | Authenticate/authorize/rate/input-bound state-changing/sensitive APIs; CSRF as relevant | C17 APIs | [security](reference/SECURITY_AND_PRIVACY.md) | 1,4,5,7,8 | Security tests | not_implemented |
 | SEC-003 | No arbitrary SQL/shell/file/MQTT action access | C17 APIs; C13-C14 | [security](reference/SECURITY_AND_PRIVACY.md) | 5,7,8 | Abuse tests | not_implemented |
-| SEC-004 | No hard-coded secrets; examples only; real secrets excluded/redacted | C17 secrets | [security](reference/SECURITY_AND_PRIVACY.md) | 1-8 | Repo/log scan | not_implemented |
+| SEC-004 | No hard-coded secrets; examples only; real secrets excluded/redacted | C17 secrets | [security](reference/SECURITY_AND_PRIVACY.md) | 1-8 | Repo/log scan | in_progress — secrets via .env/SecretStr; examples only (Phase 1) |
 | SEC-005 | Memory labels, explicit audited deletion, configurable sensitive-data retention | C17 privacy | [security](reference/SECURITY_AND_PRIVACY.md) | 6,8 | Privacy policy/deletion tests | not_implemented |
-| SEC-006 | No stored data sent externally except intended explicit integration | C17 privacy | [security](reference/SECURITY_AND_PRIVACY.md) | 0-8 | Data-flow/network audit | not_implemented |
+| SEC-006 | No stored data sent externally except intended explicit integration | C17 privacy | [security](reference/SECURITY_AND_PRIVACY.md) | 0-8 | Data-flow/network audit | in_progress — no external data flows introduced |
 | SEC-007 | Local secured backup covers DB/schema/artifacts/nonsecret config and tested restoration | C17 backups | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 8 | Backup/restore evidence | not_implemented |
-| OPS-005 | Typed config includes every listed database/MQTT/Ollama/budget/policy/worker/data/API key and validates startup | C18 config | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1 | Config schema/failure tests | not_implemented |
+| OPS-005 | Typed config includes every listed database/MQTT/Ollama/budget/policy/worker/data/API key and validates startup | C18 config | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1 | Config schema/failure tests | in_progress — typed fail-fast config incl. DB/MQTT/Ollama keys (Phases 1-2); budget/policy keys phased |
 | OPS-006 | Internal APIs cover listed health/entity/state/event/alert/attention/source/memory/situation/action capabilities with bounds | C18 APIs | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1,3-7 | Route/auth/limit tests | not_implemented; adapt conventions |
-| OPS-007 | Startup follows validated ordered sequence without races | C18 startup | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1-8 | Startup failure/order tests | not_implemented |
-| OPS-008 | Shutdown drains/bounds intake, releases claims, closes resources, preserves retry work | C18 shutdown | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 2-8 | Shutdown/restart tests | not_implemented |
-| OPS-009 | Use migrations and every minimum table/constraint/index property | §10 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-8 | Migration/schema/index audit | not_implemented |
-| OPS-010 | Add focused modules only when their phase is implemented | §11 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | File-scope review | not_implemented |
+| OPS-007 | Startup follows validated ordered sequence without races | C18 startup | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 1-8 | Startup failure/order tests | in_progress — config→logging→DB checks→registry seed→MQTT→API order (Phase 2) |
+| OPS-008 | Shutdown drains/bounds intake, releases claims, closes resources, preserves retry work | C18 shutdown | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 2-8 | Shutdown/restart tests | in_progress — graceful ingress stop tested (Phase 2); worker draining from Phase 4 |
+| OPS-009 | Use migrations and every minimum table/constraint/index property | §10 | [schemas](reference/DATA_MODELS_AND_SCHEMAS.md) | 1-8 | Migration/schema/index audit | in_progress — Alembic migrations + constraint/index audit test (Phase 1) |
+| OPS-010 | Add focused modules only when their phase is implemented | §11 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 1-8 | File-scope review | in_progress — modules added only for implemented phases |
 | OPS-011 | Async/bounded/short transactions, batching, lag metrics, safe low-value shedding | §14 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 2-8 | Load/lock/queue tests | not_implemented |
 | OPS-012 | Representative benchmark; never intentionally shed critical events; no premature service fleet | §14 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 8 | Capacity report/architecture audit | not_implemented |
-| TEST-001 | Unit coverage includes every source-listed validation/state/rule/context/memory/retention/action area | §13 unit | [test strategy](reference/TEST_STRATEGY.md) | 1-8 | Test matrix and results | not_implemented |
-| TEST-002 | Integration covers ingest transaction, restarts/reconnects/retries/failures/tools/migrations | §13 integration | [test strategy](reference/TEST_STRATEGY.md) | 1-8 | Integration suite | not_implemented |
+| TEST-001 | Unit coverage includes every source-listed validation/state/rule/context/memory/retention/action area | §13 unit | [test strategy](reference/TEST_STRATEGY.md) | 1-8 | Test matrix and results | in_progress — config/schema/health/ingestion unit coverage (Phases 1-2) |
+| TEST-002 | Integration covers ingest transaction, restarts/reconnects/retries/failures/tools/migrations | §13 integration | [test strategy](reference/TEST_STRATEGY.md) | 1-8 | Integration suite | in_progress — ingest transaction, reconnect, DB outage, migrations covered (Phases 1-2) |
 | TEST-003 | E2E normal telemetry meets exact expected effects | §13 normal telemetry | [test strategy](reference/TEST_STRATEGY.md) | 3-5 | Scenario evidence | not_implemented |
 | TEST-004 | E2E overflow meets all nine expected effects | §13 overflow | [test strategy](reference/TEST_STRATEGY.md) | 4,6,7 | Scenario evidence | not_implemented |
-| TEST-005 | E2E offline/delayed/duplicate scenarios meet exact effects | §13 scenarios | [test strategy](reference/TEST_STRATEGY.md) | 2-4 | Simulator evidence | not_implemented |
+| TEST-005 | E2E offline/delayed/duplicate scenarios meet exact effects | §13 scenarios | [test strategy](reference/TEST_STRATEGY.md) | 2-4 | Simulator evidence | in_progress — duplicate/delayed/out-of-order simulator E2E (Phase 2); offline effects in Phase 3 |
 | TEST-006 | Current/history/numeric/recurring questions route and qualify exactly | §13 retrieval scenarios | [test strategy](reference/TEST_STRATEGY.md) | 5-6 | LLM/tool E2E | not_implemented |
 | TEST-007 | Context overflow preserves critical and bounds growth | §13 context overflow | [test strategy](reference/TEST_STRATEGY.md) | 5 | Overflow E2E | not_implemented |
 | TEST-008 | Ollama outage preserves deterministic system and queues work without fabrication | §13 Ollama | [test strategy](reference/TEST_STRATEGY.md) | 4,6,8 | Outage E2E | not_implemented |
-| TEST-009 | Simulator emits every listed telemetry/failure/order/command/firmware case through existing broker config | §13 simulator | [test strategy](reference/TEST_STRATEGY.md) | 2,7 | Simulator inventory/tests | not_implemented |
-| TEST-010 | Each phase tests, documents, updates status, reports and stops | §12 opening; §19 | [definition of done](reference/DEFINITION_OF_DONE.md) | 0-8 | Phase handoff audit | not_implemented |
-| DOC-001 | Document architecture/topology/remote broker/data flow/schema/migrations/topics/envelope/source | §15 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-3,8 | Documentation audit | not_implemented |
+| TEST-009 | Simulator emits every listed telemetry/failure/order/command/firmware case through existing broker config | §13 simulator | [test strategy](reference/TEST_STRATEGY.md) | 2,7 | Simulator inventory/tests | in_progress — all Phase 2 scenarios incl. acks; firmware-change case pending |
+| TEST-010 | Each phase tests, documents, updates status, reports and stops | §12 opening; §19 | [definition of done](reference/DEFINITION_OF_DONE.md) | 0-8 | Phase handoff audit | in_progress — per-phase tests/status/handoff maintained |
+| DOC-001 | Document architecture/topology/remote broker/data flow/schema/migrations/topics/envelope/source | §15 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-3,8 | Documentation audit | in_progress — architecture/topology/topics/envelope/source docs (`DISCOVERY.md`, awareness README) |
 | DOC-002 | Document state/freshness/conflict/history/telemetry/alerts/attention/notification/outbox | §15 | Phase 3-4 docs | 3-4,8 | Documentation audit | not_implemented |
 | DOC-003 | Document memory/write/contradiction/context/tools/action/retention | §15 | Phase 5-8 docs | 5-8 | Documentation audit | not_implemented |
-| DOC-004 | Document local/service setup, broker TLS/auth, tests/simulator, backup/restore/troubleshooting/limits/migrations | §15 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-8 | Runbook audit | not_implemented |
-| DOC-005 | Follow all coding quality requirements | §16 | [AGENTS](../../AGENTS.md), [definition of done](reference/DEFINITION_OF_DONE.md) | 1-8 | Review/lint/type/test evidence | not_implemented |
-| DOC-006 | Enforce every non-goal/guardrail | §17 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 0-8 | Architecture/security audit | not_implemented |
+| DOC-004 | Document local/service setup, broker TLS/auth, tests/simulator, backup/restore/troubleshooting/limits/migrations | §15 | [operations](reference/OPERATIONS_AND_DEPLOYMENT.md) | 0-8 | Runbook audit | in_progress — setup/broker config/tests/simulator/troubleshooting documented; backup/restore in Phase 8 |
+| DOC-005 | Follow all coding quality requirements | §16 | [AGENTS](../../AGENTS.md), [definition of done](reference/DEFINITION_OF_DONE.md) | 1-8 | Review/lint/type/test evidence | in_progress — reviewed per phase; no linter configured in repo |
+| DOC-006 | Enforce every non-goal/guardrail | §17 | [invariants](ARCHITECTURAL_INVARIANTS.md) | 0-8 | Architecture/security audit | in_progress — guardrails enforced through Phase 2 |
 | DOC-007 | Verify all 22 subsystem definition-of-done items | §18 | [definition of done](reference/DEFINITION_OF_DONE.md) | 8 | Evidence checklist | not_implemented |
-| DOC-008 | Every phase final report and final completion additions are complete | §19 | [definition of done](reference/DEFINITION_OF_DONE.md) | 0-8 | Report/handoff audit | not_implemented |
+| DOC-008 | Every phase final report and final completion additions are complete | §19 | [definition of done](reference/DEFINITION_OF_DONE.md) | 0-8 | Report/handoff audit | in_progress — Phase 0-2 reports and handoffs recorded |
 
 ## Coverage maintenance
 

@@ -2,9 +2,9 @@
 
 **Subsystem:** Robust distributed presence, awareness, event-processing, state, history, alerting, and memory backend ("awareness subsystem")
 **Repository:** TALOS / B.U.T.L.E.R (`Lambchops118/Talos`)
-**Branch:** `memory_system_2_07152026`
-**Date:** 2026-07-15
-**Status:** Phase 0 complete — awaiting owner review before scaffolding (per the execution rule in the implementation prompt).
+**Branch:** written on `memory_system_2_07152026` (2026-07-15); ported to `memory_system_3_07152026` (2026-07-16)
+**Date:** 2026-07-15, addendum 2026-07-16 (§15)
+**Status:** Phase 0 complete and owner-reviewed — on 2026-07-16 the owner waived the review gate and authorized porting the branch-2 implementation and continuing phase-by-phase on this branch.
 
 ---
 
@@ -324,4 +324,32 @@ Follow the prompt's Phases 1–8 with these repo-specific notes; the repo stays 
 
 ---
 
-*Prepared as the Phase 0 deliverable. No runtime code, dependencies, or schema files have been created or modified. Per the execution rule, implementation starts only after owner review of this document (or explicit instruction to proceed).*
+---
+
+## 15. Addendum — 2026-07-16 (branch `memory_system_3_07152026`)
+
+Re-verified on this branch before resuming implementation; all §12
+`confirmed_by_repo` facts still hold, with these updates:
+
+1. **New inbound event path (repo change since 2026-07-15):** commit
+   `15bd052` added an authenticated `POST /phone/events` push ingress on the
+   text server (`talos/text/server.py`, shared secret
+   `TALOS_PHONE_PUSH_TOKEN` in the `X-Phone-Push-Token` header). The phone
+   bridge pushes completed-call snapshots; the handler ingests them into the
+   phone SQLite store and emits a `phone_call_completed` event into the
+   central queue, which the router feeds **directly to the LLM** (still no
+   deterministic pipeline). Relevant as (a) a second push-style event source
+   for a future C2 phone adapter and (b) the established repo convention for
+   authenticated push endpoints — the same pattern proposed for the Phase 4
+   `POST /notify` adapter.
+2. **Owner decisions (2026-07-16):** the Phase 0 review gate is satisfied/
+   waived; the Phase 0+1 work (commit `88f0e64`) and partial Phase 2 (commit
+   `08b510e`) from `memory_system_2_07152026` were cherry-picked onto this
+   branch rather than reimplemented, and implementation continues
+   phase-by-phase under `docs/awareness-memory/` (which supersedes the
+   original prompt file as the working specification).
+3. This document moved from the repo root to
+   `docs/awareness-memory/DISCOVERY.md` per `phases/PHASE_00_DISCOVERY.md`.
+
+*Prepared as the Phase 0 deliverable; §1-§14 record the state observed on
+2026-07-15 before any implementation existed.*
