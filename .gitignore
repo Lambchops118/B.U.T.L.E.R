@@ -25,3 +25,6 @@ db/*.sqlite3-*
 
 # Project-specific ignores
 tests/persistent_convo.py
+
+# Local artifact/data directory for the awareness subsystem
+db/awareness/
