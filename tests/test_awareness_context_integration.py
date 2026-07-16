@@ -211,7 +211,7 @@ class ContextIntegrationTest(unittest.TestCase):
             capabilities = client.get("/capabilities").json()["capabilities"]
             self.assertEqual(capabilities["get_current_state"], "available")
             self.assertIn("available", capabilities["search_memory"])
-            self.assertIn("not_yet_implemented", capabilities["actions"])
+            self.assertEqual(capabilities["request_device_action"], "available")
 
 
 if __name__ == "__main__":

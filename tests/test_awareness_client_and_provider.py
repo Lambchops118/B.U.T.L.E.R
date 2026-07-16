@@ -122,6 +122,8 @@ class AwarenessProviderTest(unittest.TestCase):
                 "get_event_provenance",
                 "get_awareness_capabilities",
                 "search_memory",
+                "request_device_action",
+                "get_action_status",
             },
         )
 

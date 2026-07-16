@@ -10,6 +10,9 @@ import asyncio
 
 from talos.awareness import __version__
 from talos.awareness.alerts.service import AlertService
+from talos.awareness.actions.registry import load_registry
+from talos.awareness.actions.service import ActionService
+from talos.awareness.api.routes import actions as action_routes
 from talos.awareness.api.routes import alerts as alert_routes
 from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
@@ -49,10 +52,16 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         app.state.alert_service = alerts
         await _register_policy(engine, policy, logger)
 
+        action_registry = load_registry()
+        action_service = ActionService(engine, settings, action_registry)
+        app.state.action_service = action_service
+
         if settings.mqtt_enabled:
             from talos.awareness.ingestion.service import IngestionService
 
-            ingestion = IngestionService(settings, engine, rule_engine=rule_engine)
+            ingestion = IngestionService(
+                settings, engine, rule_engine=rule_engine, action_service=action_service
+            )
             try:
                 await ingestion.start()
                 app.state.ingestion = ingestion
@@ -87,6 +96,17 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
 
             await memory_service.create_episode_from_alert(_UUID(payload["alert_id"]))
 
+        async def publish_command(topic: str, body: bytes) -> None:
+            import aiomqtt
+
+            async with aiomqtt.Client(
+                hostname=settings.mqtt_host,
+                port=settings.mqtt_port,
+                identifier=f"{settings.mqtt_client_id}-actions",
+                timeout=10,
+            ) as client:
+                await client.publish(topic, body, qos=1)
+
         outbox = OutboxWorker(
             engine,
             settings,
@@ -94,6 +114,8 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                 "notification": NotificationHandler(engine, adapters),
                 "embedding": EmbeddingHandler(engine, settings),
                 "memory_episode": episode_handler,
+                "action_dispatch": action_service.dispatch_handler(publish_command),
+                "action_timeout": action_service.timeout_handler,
             },
         )
         outbox_stop = asyncio.Event()
@@ -126,6 +148,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
     app.include_router(alert_routes.router)
     app.include_router(context_routes.router)
     app.include_router(memory_routes.router)
+    app.include_router(action_routes.router)
     return app
 
 

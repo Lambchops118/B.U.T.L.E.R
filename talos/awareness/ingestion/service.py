@@ -26,13 +26,19 @@ class IngestionService:
         settings: AwarenessSettings,
         engine: AsyncEngine,
         rule_engine=None,
+        action_service=None,
     ) -> None:
         self._settings = settings
         self._engine = engine
         self.metrics = IngestionMetrics()
         self.sources = SourceRepository(engine)
         self.pipeline = IngestionPipeline(
-            engine, self.sources, settings, self.metrics, rule_engine=rule_engine
+            engine,
+            self.sources,
+            settings,
+            self.metrics,
+            rule_engine=rule_engine,
+            action_service=action_service,
         )
         prefix = settings.mqtt_topic_prefix.strip("/")
         subscriptions = [

@@ -88,6 +88,7 @@ class IngestionPipeline:
         settings: AwarenessSettings,
         metrics: IngestionMetrics | None = None,
         rule_engine: Any | None = None,
+        action_service: Any | None = None,
     ) -> None:
         self._engine = engine
         self._sources = sources
@@ -95,6 +96,7 @@ class IngestionPipeline:
         self._dead_letters = DeadLetterRecorder(engine)
         self._state_manager = StateManager()
         self._rule_engine = rule_engine
+        self._action_service = action_service
         self.metrics = metrics or IngestionMetrics()
 
     async def handle(self, message: InboundMessage) -> str:
@@ -310,6 +312,9 @@ class IngestionPipeline:
                         await self._rule_engine.apply_event(
                             connection, envelope, entity_id
                         )
+                    if self._action_service is not None:
+                        # Command acks / state evidence complete pending actions.
+                        await self._action_service.observe_event(connection, envelope)
                     if effects.telemetry or effects.state_updates:
                         if entity_id is None:
                             logger.warning(

@@ -1,0 +1,68 @@
+# Registered physical actions (C14, Phase 7). MQTT payloads come only from
+# these definitions. The deployed Pico firmware has no command acks (owner
+# decision ADR-014: no firmware changes), but it publishes status/{pin} after
+# acting — completion for legacy devices is state confirmation, not silence.
+
+version = 1
+
+# --- water a plant pot (legacy quad_pump Pico) --------------------------------
+
+[[actions]]
+name = "water_plants"
+description = "Run the pump for one pot (fixed 8s firmware cycle)"
+target_entity_id = "quad_pump"
+confirmation_required = false
+cooldown_seconds = 60.0        # firmware blocks ~8s per run; avoid stacking
+timeout_seconds = 20.0
+command_topic = "quad_pump/{pot_pin}"
+payload = "1"
+ack_mode = "state_confirmation"
+confirm_property = "pin_{pot_pin}"
+confirm_value = true
+
+[[actions.parameters]]
+name = "pot_pin"
+type = "integer"
+allowed_values = [17, 19]      # pot 1 = 17, pot 2 = 19 (deployed wiring)
+description = "Pump channel pin: 17 (pot 1) or 19 (pot 2)"
+
+# --- toggle the fan (legacy fan Pico) ------------------------------------------
+
+[[actions]]
+name = "toggle_fan"
+description = "Turn the fan relay on or off"
+target_entity_id = "fan"
+confirmation_required = false
+cooldown_seconds = 5.0
+timeout_seconds = 20.0
+command_topic = "fan/16"
+payload = "{state}"
+ack_mode = "state_confirmation"
+confirm_property = "pin_16"
+confirm_value = "{state}"      # normalized against the boolean pin state
+
+[[actions.parameters]]
+name = "state"
+type = "integer"
+allowed_values = [0, 1]
+description = "1 = on, 0 = off"
+
+# --- simulator command (test/dev; supports real command acks) ------------------
+
+[[actions]]
+name = "sim_command"
+description = "Send a command envelope to the simulated greenhouse device"
+target_entity_id = "sim_greenhouse"
+confirmation_required = true   # exercises the confirmation flow end-to-end
+confirmation_ttl_seconds = 120.0
+cooldown_seconds = 0.0
+timeout_seconds = 15.0
+command_topic = "home/sim/greenhouse/command"
+payload = "envelope"
+ack_mode = "command_ack"
+
+[[actions.parameters]]
+name = "setting"
+type = "integer"
+required = true
+description = "Arbitrary integer setting for the simulated device"

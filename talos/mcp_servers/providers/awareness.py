@@ -142,6 +142,49 @@ def register(server: FastMCP) -> None:
         )
 
     @server.tool()
+    def request_device_action(
+        action: str,
+        parameters: str = "{}",
+        correlation_id: str = "",
+    ) -> str:
+        """Request a REGISTERED physical device action through the validated
+        action service (never raw MQTT). `parameters` is a JSON object string,
+        e.g. '{"pot_pin": 17}'. Supported actions: water_plants (pot_pin 17
+        or 19), toggle_fan (state 0/1), sim_command (setting; requires
+        confirmation). The response includes the action_request_id and
+        status — 'awaiting_confirmation' means the user must approve before
+        anything is dispatched; check progress with get_action_status.
+        Dispatch, acknowledgement, timeout, and completion are tracked
+        truthfully: silence is never success."""
+        try:
+            parsed = json.loads(parameters or "{}")
+        except json.JSONDecodeError as exc:
+            return _dumps({"error": f"parameters must be a JSON object: {exc}"})
+        if not isinstance(parsed, dict):
+            return _dumps({"error": "parameters must be a JSON object"})
+        try:
+            return _dumps(
+                awareness_client.post_json(
+                    "/actions/request",
+                    {
+                        "action": action,
+                        "parameters": parsed,
+                        "actor": "llm",
+                        "correlation_id": correlation_id or None,
+                    },
+                )
+            )
+        except RuntimeError as exc:
+            return _dumps({"error": str(exc)})
+
+    @server.tool()
+    def get_action_status(action_request_id: str) -> str:
+        """Check the status and full transition audit of one action request
+        (requested/approved/dispatched/acknowledged/completed/failed/
+        timed_out/cancelled)."""
+        return _call(f"/actions/{action_request_id}")
+
+    @server.tool()
     def get_awareness_capabilities() -> str:
         """What the awareness subsystem can and cannot do right now
         (available / degraded / not_yet_implemented)."""

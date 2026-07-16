@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 6 (Long-Term Memory) complete.**
+**Status: Phase 7 (Actions) complete.**
 
 ## Setup
 
@@ -356,6 +356,50 @@ default `personal`). Exact current/numeric/temporal questions still route to
 the structured tools, not memory search. The `search_memory` MCP tool exposes
 this to both LLM lanes.
 
+## Actions (Phase 7)
+
+### Registry, validation, and confirmation
+
+Every dispatchable action is registered in versioned TOML
+([`actions/actions.toml`](actions/actions.toml)) with strict typed
+parameters, actor allowlist, cooldown, timeout, command topic, payload
+template, and action-specific completion semantics — **MQTT payloads are
+generated only from these definitions, never from model content**, and the
+model has no raw-MQTT path. Supported: `water_plants` (pot_pin 17/19),
+`toggle_fan` (state 0/1), and the simulator's `sim_command` (which requires
+confirmation and exercises that flow). Validation order before any dispatch:
+registered action → parameter schema → actor permission → allowed prior
+state → cooldown → confirmation. Confirmation binds token, actor, and exact
+request; it expires, and a materially different request needs a new one.
+
+### Lifecycle, acknowledgement, and truthful failure
+
+Every request and transition is durable (`action_requests` +
+`action_transitions`, migration `4d268f4eae02`):
+requested → approved → dispatched → acknowledged → completed, with
+rejected/failed/timed_out/cancelled as terminal audit states. Approval
+queues durable outbox work (`action_dispatch`) — intent precedes network —
+and dispatch publishes with a unique `command_id`/idempotency key, then
+schedules `action_timeout` work. Completion is action-specific and **silence
+is never success**: the legacy Picos publish `status/{pin}` after acting, so
+completion is state confirmation through the real ingestion path; the
+simulator sends `command_ack` events (negative acks fail the request
+truthfully). Late/duplicate acks are audited but cannot revive a timed-out or
+cancelled command; a crash between commit and publish leaves a dispatched
+command that the timeout marks truthfully rather than retrying a
+non-idempotent physical action. Immediate electrical/mechanical interlocks
+remain in firmware (INV-09); no rollbacks are registered because none of the
+deployed actions has a safe inverse.
+
+API: `POST /actions/request`, `POST /actions/{id}/confirm`,
+`POST /actions/{id}/cancel` (pre-dispatch only), `GET /actions[/{id}]` with
+the full transition audit. MCP tools: `request_device_action`,
+`get_action_status`. The legacy direct tools (`water_plants`, `toggle_fan`
+in `talos/services/home_automation.py`) remain untouched per INV-10 —
+cutting the main agent over to the action service is an owner decision.
+Physical hardware was not exercised (ADR-014): completion semantics are
+proven against the simulator and the legacy pin-status message shape.
+
 ## Tests
 
 ```bash
@@ -372,7 +416,8 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 .venv-awareness/bin/python -m unittest \
   tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
   tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
-  tests.test_awareness_context_integration tests.test_awareness_memory_integration
+  tests.test_awareness_context_integration tests.test_awareness_memory_integration \
+  tests.test_awareness_actions_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
 .venv-main/bin/python -m unittest tests.test_text_server_notify \
@@ -406,7 +451,7 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R18 | Preserve provenance and temporal validity of memory | C11 | ✅ provenance links, validity, supersession chains (Phase 6) |
 | R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 configurable endpoints + resilient broker client with truthful connection health (Phase 2) |
 | R20 | Integrate with current code without unnecessary rewrites | Phase 0, C18 | ✅ additive package + separate process/venv |
-| R21 | Validate physical actions and record acknowledgements | C14 | ⬜ Phase 7 |
+| R21 | Validate physical actions and record acknowledgements | C14 | ✅ registered/validated/confirmed/acknowledged actions with full transition audit (Phase 7) |
 | R22 | Apply configurable retention and safe deletion | C15 | 🔶 `alert_events.event_id` is `ON DELETE RESTRICT`, protecting alert evidence at the DB level; retention workers in Phase 8 |
 
 ## Phase 1 schema

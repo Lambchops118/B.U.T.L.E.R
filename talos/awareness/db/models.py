@@ -59,6 +59,18 @@ MEMORY_PROVENANCE_KINDS = (
     "model",
 )
 MEMORY_RELATIONS = ("supersedes", "conflicts_with", "duplicates", "derived_from")
+ACTION_STATUSES = (
+    "requested",
+    "rejected",
+    "awaiting_confirmation",
+    "approved",
+    "dispatched",
+    "acknowledged",
+    "completed",
+    "failed",
+    "timed_out",
+    "cancelled",
+)
 ENTITY_TYPES = (
     "person",
     "plant",
@@ -638,6 +650,61 @@ class MemoryRelationship(Base):
     )
     relation: Mapped[str] = mapped_column(sa.String(30))
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class ActionRequest(Base):
+    """One validated physical-action request and its current status (C14).
+
+    Every status change is also appended to ``action_transitions`` — the
+    request row is the current view, the transitions are the audit."""
+
+    __tablename__ = "action_requests"
+    __table_args__ = (
+        _in_check("status", ACTION_STATUSES, "status_valid"),
+        sa.Index("ix_action_requests_status", "status"),
+        sa.Index("ix_action_requests_action_created", "action_name", "created_at"),
+        sa.Index("ix_action_requests_command_id", "command_id"),
+    )
+
+    action_request_id: Mapped[UUID] = mapped_column(
+        primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    action_name: Mapped[str] = mapped_column(sa.String(100))
+    target_entity_id: Mapped[str | None] = mapped_column(sa.String(200))
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    parameters_hash: Mapped[str] = mapped_column(sa.String(64))
+    actor: Mapped[str] = mapped_column(sa.String(100))
+    correlation_id: Mapped[str | None] = mapped_column(sa.String(200))
+    status: Mapped[str] = mapped_column(sa.String(30), server_default="requested")
+    command_id: Mapped[UUID | None] = mapped_column()
+    idempotency_key: Mapped[str] = mapped_column(sa.String(300), unique=True)
+    confirmation_token: Mapped[str | None] = mapped_column(sa.String(64))
+    confirmation_expires_at: Mapped[datetime | None] = mapped_column()
+    dispatched_at: Mapped[datetime | None] = mapped_column()
+    acknowledged_at: Mapped[datetime | None] = mapped_column()
+    completed_at: Mapped[datetime | None] = mapped_column()
+    timeout_at: Mapped[datetime | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"), onupdate=sa.func.now())
+
+
+class ActionTransition(Base):
+    __tablename__ = "action_transitions"
+    __table_args__ = (
+        sa.Index("ix_action_transitions_request", "action_request_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    action_request_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("action_requests.action_request_id", ondelete="CASCADE")
+    )
+    from_status: Mapped[str | None] = mapped_column(sa.String(30))
+    to_status: Mapped[str] = mapped_column(sa.String(30))
+    occurred_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+    actor: Mapped[str | None] = mapped_column(sa.String(100))
+    detail: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class SchemaRegistryEntry(Base):
