@@ -68,3 +68,28 @@ Current repository state: runnable; all phases 0-8 implemented; subsystem awaiti
 Next permitted task: Owner review; owner-executed broker/firmware work; production deployment steps.
 Explicit stop point: Phase 8 boundary — no further phases exist.
 ```
+
+## Addendum — intern operator/developer guide (2026-07-16)
+
+```text
+Session goal: Create a plain-language guide that lets an intern operate TALOS awareness/memory immediately and understand its code.
+Current phase: Post-Phase-8 documentation-only follow-up; subsystem implementation remains complete.
+Bounded task completed: Added the requested golden-retriever-level guide with a mental model, isolated/live startup paths, TALOS integration flow, MCP tool routing, operator checks, maintenance, code and table maps, development recipes, tests, troubleshooting, limitations, and a first-hour checklist.
+Files added: docs/awareness-memory/like_im_a_child_or_golden_retriever.md.
+Files modified: docs/awareness-memory/README.md; IMPLEMENTATION_STATUS.md; this handoff.
+Migrations added: None.
+Decisions made: None. The requested misspelled docs/awareness-memoy path was treated as docs/awareness-memory because that is the existing canonical documentation directory.
+Assumptions confirmed or changed: Confirmed from live code that MQTT_ENABLED controls ingestion but does not independently disable action dispatch, so the guide uses the local test broker for strict development isolation and warns against treating API-only mode as an action safety lock.
+Tests run: 96-test awareness unit suite documented in the guide; 3-test main-agent home-action suite; awareness CLI --help; internal Markdown-link target check; git diff --check. The combined awareness-client/home-action main-agent suite was also attempted in the sandbox.
+Tests passed: 96 awareness unit tests; 3 main-agent home-action tests; CLI surface matched serve/migrate/check/retention/consolidate/backup; every relative link target in the guide exists; git diff --check passed. Seven of ten tests in the combined main-agent attempt completed before the suite result.
+Tests failed: The focused main-agent suite reported three PermissionError errors because the sandbox prohibited binding its local stub HTTP server; these were environment restrictions, not assertion failures. An escalated rerun was denied by the execution policy.
+Commands not run: Docker status/health, database integration tests, simulator, backup verification, retention execution, physical devices, Pi broker, live Ollama.
+Known limitations: This is a friendly entry guide, not a replacement for talos/awareness/README.md, phase references, or architectural invariants.
+Security implications: The guide documents loopback defaults, shared bearer-token requirements, test-broker isolation, safe action lifecycle, and the destructive risk of docker compose down -v. No runtime security behavior changed.
+Deployment implications: None. Existing production supervision, backup scheduling, broker hardening, token provisioning, and Ollama setup remain owner responsibilities.
+Unresolved questions: Existing OQ-B and OQ-C only; this documentation task introduced none.
+Current repository state: Runtime remains unchanged and runnable; documentation guide and required tracking updates are present in the working tree.
+Next permitted task: Owner review; owner-executed broker/firmware work; production deployment steps; separately authorized documentation corrections.
+Required reading for next session: AGENTS.md, IMPLEMENTATION_STATUS.md, this addendum, talos/awareness/README.md, and the new intern guide.
+Explicit stop point: Documentation-only task complete. No runtime changes or new phase work started.
+```

@@ -2,6 +2,11 @@
 
 This documentation divides the robust distributed presence, awareness, event-processing, state, history, alerting, and memory subsystem into bounded implementation sessions. It is designed for coding agents that must preserve the architecture without loading a 2,800-line prompt on every turn.
 
+New operator or intern? Start with
+[`like_im_a_child_or_golden_retriever.md`](like_im_a_child_or_golden_retriever.md)
+for the plain-language mental model, copy/paste startup path, TALOS integration
+map, maintenance checklist, code-reading route, and troubleshooting guide.
+
 > **Do not load everything.** A normal session should load only root `AGENTS.md`, `IMPLEMENTATION_STATUS.md`, the current phase document, and the few shared references named by that phase.
 
 ## Authority and organization
