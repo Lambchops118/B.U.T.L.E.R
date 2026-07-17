@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
@@ -442,6 +442,131 @@ class MemoryService:
             importance=0.8 if alert.severity == "critical" else 0.5,
             supersede_same_key=False,  # each incident is its own episode
         )
+
+    # --- consolidation (Phase 8) ----------------------------------------------
+
+    async def consolidate(self, now: datetime | None = None) -> dict[str, Any]:
+        """One consolidation pass (C11 path 3, run explicitly):
+
+        1. Incident-scope grouping: when one ``incident:*`` scope accumulates
+           at least ``consolidation_episode_threshold`` active episodes inside
+           the window, write one summary episode linked ``derived_from`` to
+           every source episode (sources preserved, nothing deleted) and
+           queue its embedding. Idempotent via the summary's content hash.
+        2. Weak-inference decay: model-inferred memories (no user
+           confirmation) not accessed within ``consolidation_decay_after_days``
+           lose confidence by ``consolidation_decay_factor`` per pass
+           (floor 0.05). Explicit user-confirmed memories never decay.
+        """
+        now = now or datetime.now(timezone.utc)
+        window_start = now - timedelta(days=self._settings.consolidation_window_days)
+        summaries: list[str] = []
+
+        async with self._engine.connect() as connection:
+            groups = (
+                await connection.execute(
+                    sa.select(
+                        Memory.scope,
+                        sa.func.count().label("n"),
+                        sa.func.min(Memory.learned_at).label("first"),
+                        sa.func.max(Memory.learned_at).label("last"),
+                    )
+                    .where(
+                        Memory.memory_type == "episodic",
+                        Memory.status == "active",
+                        Memory.scope.like("incident:%"),
+                        Memory.learned_at >= window_start,
+                        # source episodes only, not previous summaries
+                        sa.text("NOT (structured_content ? 'consolidated_count')"),
+                    )
+                    .group_by(Memory.scope)
+                    .having(
+                        sa.func.count() >= self._settings.consolidation_episode_threshold
+                    )
+                )
+            ).all()
+
+        for group in groups:
+            async with self._engine.connect() as connection:
+                episode_ids = (
+                    await connection.execute(
+                        sa.select(Memory.memory_id)
+                        .where(
+                            Memory.memory_type == "episodic",
+                            Memory.status == "active",
+                            Memory.scope == group.scope,
+                            Memory.learned_at >= window_start,
+                            sa.text("NOT (structured_content ? 'consolidated_count')"),
+                        )
+                        .order_by(Memory.learned_at)
+                    )
+                ).scalars().all()
+            incident = group.scope.removeprefix("incident:")
+            statement = (
+                f"Recurring incident pattern: {incident} occurred {group.n} times "
+                f"between {group.first.date().isoformat()} and "
+                f"{group.last.date().isoformat()}."
+            )
+            result = await self.write_deterministic(
+                statement=statement,
+                memory_type="episodic",
+                scope=group.scope,
+                structured_content={
+                    "consolidated_count": group.n,
+                    "window_start": window_start.isoformat(timespec="seconds"),
+                },
+                evidence=[
+                    EvidenceRef(kind="extraction_job", reference="consolidation")
+                ],
+                importance=0.7,
+                supersede_same_key=False,
+            )
+            if result["created"]:
+                async with self._engine.begin() as connection:
+                    for episode_id in episode_ids:
+                        await connection.execute(
+                            pg_insert(MemoryRelationship)
+                            .values(
+                                from_memory_id=UUID(result["memory_id"]),
+                                to_memory_id=episode_id,
+                                relation="derived_from",
+                            )
+                            .on_conflict_do_nothing()
+                        )
+                summaries.append(result["memory_id"])
+
+        decay_cutoff = now - timedelta(days=self._settings.consolidation_decay_after_days)
+        async with self._engine.begin() as connection:
+            decayed = await connection.execute(
+                sa.update(Memory)
+                .where(
+                    Memory.status == "active",
+                    Memory.confidence > 0.05,
+                    sa.or_(
+                        Memory.last_accessed_at.is_(None),
+                        Memory.last_accessed_at < decay_cutoff,
+                    ),
+                    Memory.learned_at < decay_cutoff,
+                    # explicit user evidence never decays
+                    ~sa.exists(
+                        sa.select(MemoryProvenance.id).where(
+                            MemoryProvenance.memory_id == Memory.memory_id,
+                            MemoryProvenance.kind == "user_confirmation",
+                        )
+                    ),
+                )
+                .values(
+                    confidence=sa.func.greatest(
+                        Memory.confidence * self._settings.consolidation_decay_factor,
+                        0.05,
+                    )
+                )
+            )
+        return {
+            "as_of": now.isoformat(timespec="seconds"),
+            "summaries_created": summaries,
+            "inferences_decayed": decayed.rowcount,
+        }
 
     # --- internals -------------------------------------------------------------
 

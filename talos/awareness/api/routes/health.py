@@ -93,6 +93,53 @@ async def _extra_components(request: Request) -> list[ComponentStatus]:
     )
 
 
+@router.get("/metrics")
+async def metrics(request: Request) -> dict:
+    """Minimal internal metrics endpoint (FAIL-008): ingestion counters,
+    worker/outbox state, disk usage of the data directory, last backup."""
+    import shutil
+    from datetime import datetime, timezone
+
+    from talos.awareness.backup import latest_backup
+
+    settings = request.app.state.settings
+    data: dict = {"as_of": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+    ingestion = getattr(request.app.state, "ingestion", None)
+    if ingestion is not None:
+        data["ingestion"] = ingestion.health()
+    freshness = getattr(request.app.state, "freshness", None)
+    if freshness is not None:
+        data["freshness_worker"] = freshness.status()
+    outbox = getattr(request.app.state, "outbox", None)
+    if outbox is not None:
+        data["outbox_worker"] = await outbox.status()
+
+    try:
+        usage = shutil.disk_usage(settings.data_directory if settings.data_directory.exists() else ".")
+        data["disk"] = {
+            "total_bytes": usage.total,
+            "free_bytes": usage.free,
+            "free_percent": round(usage.free / usage.total * 100, 1),
+        }
+    except OSError:
+        data["disk"] = {"error": "unavailable"}
+
+    dump = latest_backup(settings)
+    data["last_backup"] = (
+        {
+            "file": dump.name,
+            "modified_at": datetime.fromtimestamp(
+                dump.stat().st_mtime, tz=timezone.utc
+            ).isoformat(timespec="seconds"),
+            "size_bytes": dump.stat().st_size,
+        }
+        if dump is not None
+        else None
+    )
+    return data
+
+
 @router.get("/health")
 async def health(
     request: Request,

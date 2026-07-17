@@ -4,21 +4,21 @@ This file reports implementation state, not documentation availability.
 
 | Field | Current value |
 |---|---|
-| Current phase | Phase 7 — Actions — **complete; awaiting owner review** |
-| Phase state | Phases 0-7 complete on `memory_system_3_07152026`; stopped at the Phase 7 boundary per INV-19 |
-| Last completed phase | Phase 7 (2026-07-16) |
-| Current bounded task | Phase 7 evidence/documentation closure complete; no Phase 8 implementation started |
-| Completed items | Phases 0-6 as previously recorded; Phase 7 adds strict versioned action definitions (`water_plants`, `toggle_fan`, `sim_command`), durable requested→validated→confirmation/approval→dispatch→acknowledgement→completion/failure lifecycle and rejection/security audit, caller-key idempotency, database-unique command IDs, hashed bound confirmations, actor/safety/cooldown checks, bearer-gated mutation API, source-bound command/state evidence, truthful timeout/mismatch/negative-ack handling, at-most-once legacy versus device-key retry policy, MQTT auth/TLS reuse, preserved legacy MCP names re-backed by the action API, simulator execution acknowledgements, and Alembic revisions `4d268f4eae02` + `e7c11f9a4b2d` |
-| Active work | None — explicit Phase 7 stop boundary |
-| Blocked items | Phase 8 entry: owner review plus OQ-013 backup destination/schedule/encryption/restore objective; Pi broker auth/ACL state (OQ-B) remains unverifiable off-LAN and any broker migration requires owner-approved LAN work |
-| Decisions made | ADR-001..016 in `DECISIONS.md` (011-016 owner-approved 2026-07-15/16) |
-| Assumptions confirmed | See `DISCOVERY.md` §12 and §15 addendum; open-question resolution table in `OPEN_QUESTIONS.md` |
-| Open questions | OQ-013, OQ-B (broker config), OQ-C (optional firmware remediation) in `OPEN_QUESTIONS.md` |
-| Tests last run | 2026-07-16: awareness venv — 105 tests across unit/migration/MQTT/state/alerts/context/memory/actions, all pass against local Compose Postgres + test Mosquitto; main venv — 21 tests for phone/notify endpoints, awareness client/provider, preserved home-action tools, and weather, all pass. Focused clean-migration/action suite also passed (7). Local dev DB upgraded successfully to `e7c11f9a4b2d` |
-| Known failures | None. Existing `test_awareness_ingestion_integration` emits one pre-existing unawaited-coroutine `RuntimeWarning` while passing |
-| Files recently modified | `talos/awareness/actions/**`, action API/app/config/models/migration/MQTT/simulator wiring, main awareness/home-automation clients/providers, focused tests, `.env.example`, `talos/awareness/README.md`, and Phase 7 status/traceability/test docs |
-| Next permitted task | Owner review of Phase 7 and resolution of Phase 8 entry decisions; Phase 8 implementation is not yet permitted |
-| Required reading | For review: this file, `phases/PHASE_07_ACTIONS.md`, `talos/awareness/README.md` § Actions, latest handoff. If Phase 8 is authorized: `phases/PHASE_08_HARDENING.md` and all references it names |
-| Explicit stop condition | Phase 7 stopped after code, migration, tests, docs, status, handoff, and report. Do not begin Phase 8 until owner review/authorization and its entry questions are settled |
+| Current phase | Phase 8 — Retention, Security, and Hardening — **complete**. All phases 0-8 implemented. |
+| Phase state | Subsystem implementation complete on `memory_system_3_07152026` (owner authorized Phase 8 with local-backup defaults, 2026-07-16) |
+| Last completed phase | Phase 8 (2026-07-16) |
+| Current bounded task | None — subsystem awaiting final owner review |
+| Completed items | Phases 0-7 (see git history and `talos/awareness/README.md`); Phase 8: retention service (dry-run plan, bounded resumable batched deletion, aggregate-before-delete via cagg refresh, open-alert/evidence/active-memory protections), memory consolidation (incident summaries with derived_from links, weak-inference decay, user-evidence exemption), artifact store (generated rooted paths, SHA-256, table `artifacts`, migration `3337c328523b`), local backups (pg_dump in-container + config snapshot + 14-day pruning; **restore tested live: 27/27 tables**), write-auth on all mutating endpoints (actions fail-closed; others bearer-gated when `TALOS_AWARENESS_API_TOKEN` set), `/metrics` (counters/backlog/disk/last-backup), benchmark utility (**118 ev/s, p50 7.5 ms, p95 14.8 ms, 0 drops**), broker hardening plan (`BROKER_HARDENING_PLAN.md`, owner-executed), CLI: `retention`/`consolidate`/`backup [--verify]` |
+| Active work | None |
+| Blocked items | Owner-executed items only: broker auth/ACL/TLS on the Pi (OQ-B plan delivered); optional firmware remediation (OQ-C); live-model retrieval scenario runs with real Qwen |
+| Decisions made | ADR-001..016 in `DECISIONS.md`; OQ-013 resolved 2026-07-16 (local nightly backups, 14-day retention, no encryption, tested restore) |
+| Assumptions confirmed | `DISCOVERY.md` §12/§15; open-question table in `OPEN_QUESTIONS.md` |
+| Open questions | OQ-B (broker config verification + hardening execution), OQ-C (optional firmware work) — both owner-executed LAN tasks |
+| Tests last run | 2026-07-16: awareness venv — 103 tests across config/schema/health/migrations/ingestion/state/rules/alerts/context/memory/actions/hardening, all pass (integration needs `docker compose -f docker-compose.awareness.yml --profile test up -d --wait`); main venv — 15 tests (text server phone/notify, awareness client+provider), all pass. Live evidence: backup restore verified (27/27 tables, 0 warnings); benchmark 2000 events, 118 ev/s, p95 14.8 ms, 0 drops |
+| Known failures | None |
+| Files recently modified | `talos/awareness/{retention,artifacts.py,backup.py,benchmark.py,api/auth.py,memory/service.py,api/routes/*,__main__.py,config.py,db/models.py}`, migration `3337c328523b`, `tests/test_awareness_hardening_integration.py`, `docs/awareness-memory/BROKER_HARDENING_PLAN.md`, `.env.example`, READMEs |
+| Next permitted task | Owner review of the completed subsystem; owner-executed LAN work per `BROKER_HARDENING_PLAN.md`; production deployment (Ollama install, cron backup schedule, API token provisioning) |
+| Required reading | `talos/awareness/README.md` (complete operational reference), `DISCOVERY.md`, `BROKER_HARDENING_PLAN.md`, latest session handoff |
+| Explicit stop condition | Phase 8 stopped after evidence, docs, status, handoff, and final report. DoD items 1-20 evidenced; remaining items are owner-executed (broker hardening, firmware, live-model runs). No further phases exist. |
 
-Do not infer implementation progress from the presence of specification or launcher files. When work begins, replace summary values with concrete evidence, commands, results, and file paths. Session handoffs live in dated files derived from `SESSION_HANDOFF_TEMPLATE.md` (latest: `SESSION_HANDOFF_2026-07-16.md`).
+Do not infer implementation progress from the presence of specification or launcher files. Session handoffs live in dated files derived from `SESSION_HANDOFF_TEMPLATE.md` (latest: `SESSION_HANDOFF_2026-07-16.md`).

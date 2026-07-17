@@ -6,7 +6,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from talos.awareness.api.auth import require_write_auth
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from talos.awareness.memory.embeddings import EmbeddingUnavailableError, OllamaEmbeddingClient
@@ -30,7 +32,7 @@ class DeterministicWrite(BaseModel):
     sensitivity: str = "normal"
 
 
-@router.post("/memory/deterministic")
+@router.post("/memory/deterministic", dependencies=[Depends(require_write_auth)])
 async def write_deterministic(body: DeterministicWrite, request: Request) -> dict:
     try:
         return await _service(request).write_deterministic(
@@ -46,7 +48,7 @@ async def write_deterministic(body: DeterministicWrite, request: Request) -> dic
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/memory/candidates")
+@router.post("/memory/candidates", dependencies=[Depends(require_write_auth)])
 async def propose_candidate(body: dict, request: Request) -> dict:
     try:
         proposal = CandidateProposal(**body)
@@ -84,7 +86,7 @@ async def search_memory(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/memory/{memory_id}/delete")
+@router.post("/memory/{memory_id}/delete", dependencies=[Depends(require_write_auth)])
 async def delete_memory(memory_id: UUID, request: Request, reason: str = Query(...)) -> dict:
     deleted = await _service(request).delete(memory_id, reason=reason)
     if not deleted:

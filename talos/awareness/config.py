@@ -128,6 +128,25 @@ class AwarenessSettings(BaseSettings):
     memory_statement_max_chars: int = Field(default=2000, ge=10)
     memory_search_max_limit: int = Field(default=50, ge=1)
 
+    # --- retention / consolidation / backups (Phase 8) -------------------------
+    # Retention runs only when explicitly invoked (CLI or API); every policy
+    # is a configurable age in days and 0 disables that policy entirely.
+    retention_batch_size: int = Field(default=500, ge=1)
+    retention_raw_measurements_days: int = Field(default=30, ge=0)
+    retention_heartbeat_events_days: int = Field(default=7, ge=0)
+    retention_dead_letter_days: int = Field(default=30, ge=0)
+    retention_completed_outbox_days: int = Field(default=7, ge=0)
+    retention_resolved_alerts_days: int = Field(default=90, ge=0)
+    retention_state_transitions_days: int = Field(default=90, ge=0)
+    retention_source_health_history_days: int = Field(default=90, ge=0)
+    retention_discarded_memories_days: int = Field(default=30, ge=0)
+    consolidation_episode_threshold: int = Field(default=3, ge=2)
+    consolidation_window_days: int = Field(default=7, ge=1)
+    consolidation_decay_after_days: int = Field(default=60, ge=1)
+    consolidation_decay_factor: float = Field(default=0.8, gt=0, le=1)
+    backup_directory: Path | None = None  # default: {data_directory}/backups
+    backup_retention_days: int = Field(default=14, ge=1)
+
     @field_validator("db_port", "api_port", "mqtt_port")
     @classmethod
     def _valid_port(cls, value: int) -> int:

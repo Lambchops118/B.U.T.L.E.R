@@ -11,7 +11,9 @@ from __future__ import annotations
 from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from talos.awareness.api.auth import require_write_auth
 
 from talos.awareness.db.models import Alert, NotificationDelivery
 from talos.awareness.outbox.worker import retry_outbox_item
@@ -101,7 +103,7 @@ async def alert_deliveries(alert_id: UUID, request: Request) -> dict:
     }
 
 
-@router.post("/alerts/{alert_id}/acknowledge")
+@router.post("/alerts/{alert_id}/acknowledge", dependencies=[Depends(require_write_auth)])
 async def acknowledge_alert(alert_id: UUID, request: Request) -> dict:
     changed = await request.app.state.alert_service.set_status(
         request.app.state.engine, alert_id, "acknowledged"
@@ -111,7 +113,7 @@ async def acknowledge_alert(alert_id: UUID, request: Request) -> dict:
     return {"ok": True, "status": "acknowledged"}
 
 
-@router.post("/alerts/{alert_id}/resolve")
+@router.post("/alerts/{alert_id}/resolve", dependencies=[Depends(require_write_auth)])
 async def resolve_alert(alert_id: UUID, request: Request) -> dict:
     changed = await request.app.state.alert_service.set_status(
         request.app.state.engine, alert_id, "resolved"
@@ -121,7 +123,7 @@ async def resolve_alert(alert_id: UUID, request: Request) -> dict:
     return {"ok": True, "status": "resolved"}
 
 
-@router.post("/outbox/{outbox_id}/retry")
+@router.post("/outbox/{outbox_id}/retry", dependencies=[Depends(require_write_auth)])
 async def retry_outbox(outbox_id: int, request: Request) -> dict:
     changed = await retry_outbox_item(request.app.state.engine, outbox_id)
     if not changed:

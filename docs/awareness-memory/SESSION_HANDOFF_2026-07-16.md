@@ -47,3 +47,24 @@ Next permitted task: Owner review of Phase 7 plus Phase 8 entry decisions. Do no
 Required reading for next session: AGENTS.md, IMPLEMENTATION_STATUS.md, this addendum, phases/PHASE_08_HARDENING.md, discovery/decisions/open questions, ARCHITECTURAL_INVARIANTS.md, and every Phase 8-listed reference.
 Explicit stop point: Phase 7 boundary reached. No retention, artifact, consolidation, backup, load, broker-hardening, or other Phase 8 implementation started.
 ```
+
+
+## Addendum — Phase 8 session (2026-07-16, later)
+
+```text
+Session goal: Phase 8 — retention, consolidation, artifacts, backups, security completion, metrics, load benchmark.
+Bounded task completed: Full Phase 8 per phases/PHASE_08_HARDENING.md; owner authorized entry and resolved OQ-013 (local nightly backups, 14-day retention, no encryption).
+Files added: talos/awareness/retention/{__init__,service}.py, talos/awareness/artifacts.py, talos/awareness/backup.py, talos/awareness/benchmark.py, talos/awareness/api/auth.py, migration 3337c328523b (artifacts), tests/test_awareness_hardening_integration.py, docs/awareness-memory/BROKER_HARDENING_PLAN.md.
+Files modified: config.py (retention/consolidation/backup settings), memory/service.py (consolidate()), db/models.py (Artifact), __main__.py (retention/consolidate/backup commands), api/routes/{memory,alerts,health}.py (write auth + /metrics), services/awareness_client.py (bearer token), .env.example, READMEs, REQUIREMENTS_TRACEABILITY.md, IMPLEMENTATION_STATUS.md.
+Migrations added: 3337c328523b (artifacts). Applied; parity test passes.
+Decisions made: OQ-013 resolved by owner (local backups); broker hardening delivered as owner-executed plan (OQ-B).
+Tests run: 103 awareness + 15 main-venv tests, all pass. Live: backup --verify (restore into scratch DB, 27/27 tables, 0 warnings); benchmark 2000 events → 118 ev/s, p50 7.5ms, p95 14.8ms, 0 drops.
+Tests failed: 0.
+Commands not run: physical-device tests (ADR-014, simulated only); live-model retrieval scenarios (no Qwen/Ollama installed); Pi broker verification (off-LAN).
+Known limitations: no per-message MQTT lag metric; no load shedding (not needed at measured volumes, documented); rule windows/rates/correlation are extension points; call/conversation notification suppression needs conversation state; linter/typechecker not configured (repo convention).
+Security implications: all mutating endpoints bearer-gated when TALOS_AWARENESS_API_TOKEN is set (actions fail-closed without it); artifact paths store-generated; backups contain no secrets; broker hardening plan requires owner LAN work.
+Deployment implications: schedule backups via cron (.env.example example line); set TALOS_AWARENESS_API_TOKEN in both backend and main-agent env to enable actions; install Ollama + nomic-embed-text for semantic search when desired.
+Current repository state: runnable; all phases 0-8 implemented; subsystem awaiting final owner review.
+Next permitted task: Owner review; owner-executed broker/firmware work; production deployment steps.
+Explicit stop point: Phase 8 boundary — no further phases exist.
+```

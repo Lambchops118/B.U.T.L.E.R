@@ -12,7 +12,7 @@ The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
 (Phase 0 discovery → Phase 8 hardening).
 
-**Status: Phase 7 (Actions) complete.**
+**Status: Phase 8 (Retention, Security, and Hardening) complete — all phases implemented.**
 
 ## Setup
 
@@ -425,6 +425,86 @@ shape. Known physical limitations remain: ambiguous legacy `status/16`, no
 device-side command IDs/acks/reconnect, and no backend-checkable pre-command
 safety sensor for the two deployed Picos.
 
+## Retention, backups, and operations (Phase 8)
+
+### Retention
+
+`python -m talos.awareness retention` prints the exact dry-run plan (per
+policy: cutoff, eligible count, protections); `--execute` deletes in bounded
+batches (`TALOS_AWARENESS_RETENTION_BATCH_SIZE`), each batch its own
+transaction — crash-safe, resumable, idempotent. Policies (days; 0 disables):
+raw measurements (30 — the 1m/1h/1d continuous aggregates are refreshed
+through the cutoff BEFORE any raw deletion), heartbeat events (7; alert
+evidence excluded and DB-RESTRICT-protected), dead letters (30), completed
+outbox (7), resolved/expired alerts (90; open/acknowledged never eligible),
+state transitions (90), source health history (90), rejected/deleted
+memories (30; active and superseded memories — the supersession history —
+are never deleted by retention).
+
+### Consolidation
+
+`python -m talos.awareness consolidate`: incident scopes with ≥3 active
+episodes in the window get one summary episode linked `derived_from` to every
+source (sources preserved, embedding queued, idempotent by content hash);
+model-inferred memories unaccessed past the decay window lose confidence by
+the configured factor (floor 0.05) — user-confirmed memories never decay.
+
+### Artifacts
+
+`talos/awareness/artifacts.py`: bytes under `{data_directory}/artifacts/`
+with generated `{uuid}/{sanitized-name}` paths (no caller-chosen paths;
+resolved paths verified inside the root), SHA-256/MIME/size/provenance in
+the `artifacts` table, checksum verified on load.
+
+### Backups (owner decision 2026-07-16: local, nightly, 14-day retention)
+
+`python -m talos.awareness backup [--verify]` — pg_dump (custom format) runs
+inside the `talos-awareness-db` container (client/server versions always
+match), plus a non-secret config snapshot, plus pruning past
+`TALOS_AWARENESS_BACKUP_RETENTION_DAYS`. `--verify` restores into a scratch
+database using the TimescaleDB pre/post-restore protocol and compares
+schema/table counts. **Restore was tested live 2026-07-16: 27/27 tables,
+all events intact, no warnings.** Restore procedure for a real recovery:
+create an empty DB, `CREATE EXTENSION timescaledb`,
+`SELECT timescaledb_pre_restore()`, `docker exec -i talos-awareness-db
+pg_restore -U talos -d <db> --no-owner < dump`, `SELECT
+timescaledb_post_restore()`, then `python -m talos.awareness check`.
+Schedule via cron (see `.env.example`); the repo deliberately installs no
+process manager. Last-backup age is visible at `GET /metrics`.
+
+### Security posture
+
+- API binds loopback; **physical action** mutations are fail-closed (503
+  until `TALOS_AWARENESS_API_TOKEN` is set, then bearer-authenticated).
+  Non-physical mutations (memory writes/deletion, alert lifecycle, outbox
+  retry) require the same bearer token when configured and are
+  loopback-trusted otherwise — setting one token secures every mutation.
+  The main agent sends it automatically when `TALOS_AWARENESS_API_TOKEN`
+  is in its environment.
+- Secrets are `SecretStr`/env-only; the settings summary and logs are
+  sanitized; backups contain no secrets (config snapshot is the sanitized
+  summary).
+- Broker hardening (auth/ACL/TLS on the Pi) is an owner-executed plan:
+  [`docs/awareness-memory/BROKER_HARDENING_PLAN.md`](../../docs/awareness-memory/BROKER_HARDENING_PLAN.md).
+
+### Capacity (measured 2026-07-16, M3 MacBook, dockerized PG17)
+
+`python -m talos.awareness.benchmark --events 2000`: **118 events/s**
+sustained through the full pipeline (validate → dedup → persist → state/
+telemetry/rules in one transaction), p50 7.5 ms, p95 14.8 ms, max 23.8 ms,
+zero drops. Real deployed traffic is a few messages per day; the design
+target of 10-100 msg/s bursts has >1x headroom at p95 under 15 ms. No
+load-shedding is implemented because no queue ever approached its bound at
+this rate — if the fleet grows, shed only configured low-value telemetry and
+never critical events (documented limitation, revisit with measured lag).
+
+### Observability
+
+`GET /metrics`: ingestion counters, freshness/outbox worker state and
+backlog/oldest-age, data-directory disk usage, last backup. Component health
+(DB/extensions/migration revision, MQTT, workers, rules) stays at
+`GET /health/components` with truthful degradation.
+
 ## Tests
 
 ```bash
@@ -442,6 +522,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
   tests.test_awareness_migrations tests.test_awareness_ingestion_integration \
   tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
   tests.test_awareness_context_integration tests.test_awareness_memory_integration \
+  tests.test_awareness_actions_integration tests.test_awareness_hardening_integration \
   tests.test_awareness_actions_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
@@ -457,14 +538,14 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | ID | Requirement | Primary components | Status |
 |---|---|---|---|
 | R1 | Ingest streams from sensors, microcontrollers, services, conversations, internal components | C2, C3 | 🔶 MQTT device/simulator ingestion (Phase 2); service/conversation adapters in Phases 5/6 |
-| R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | 🔶 store + minute/hour/day aggregates (Phase 3); summarize/discard in Phases 6/8 |
+| R2 | Store, aggregate, summarize, or discard data according to policy | C4, C5, C6, C15 | ✅ store/aggregate/summarize/discard per policy: aggregates + consolidation + retention (Phases 3/6/8) |
 | R3 | Distinguish current state from historical events | C5, C6 | ✅ durable current_state separate from immutable events/measurements (Phase 3) |
 | R4 | Maintain strong environmental awareness | C5, C12 | ✅ qualified state + deterministic situation snapshot with budget/audit (Phase 5) |
 | R5 | Track when, where, how, and from what source information entered | C1, C4 | ✅ envelope + provenance persisted per event (Phase 2) |
 | R6 | Track health and state of connected systems | C4, C5, C16 | ✅ source health lifecycle + history + stale/offline workers (Phase 3) |
 | R7 | Detect important events independently of the LLM | C7 | ✅ deterministic TOML rules inside the ingestion transaction; no LLM in the path (Phase 4) |
 | R8 | Proactively alert the user | C8, C9 | ✅ alert→attention→outbox→adapter delivery with persisted attempts (Phase 4) |
-| R9 | Remain fully local | C17 | ✅ local Postgres/Docker; no cloud services |
+| R9 | Remain fully local | C17 | ✅ fully local: Docker PG + local Ollama seam + local backups; no cloud services (Phase 8 audit) |
 | R10 | Avoid unnecessary LLM context use | C12 | ✅ hard token budget, priority truncation, audit (Phase 5) |
 | R11 | Selectively push only relevant data to the LLM | C7, C12 | ✅ relevance-selected situation; critical alerts always survive (Phase 5) |
 | R12 | Allow the LLM to retrieve additional information | C13 | ✅ read tools + search_memory (Phases 5-6) |
@@ -477,7 +558,7 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 | R19 | Support distributed deployment over the LAN | C2, C16, C17 | 🔶 configurable endpoints + resilient broker client with truthful connection health (Phase 2) |
 | R20 | Integrate with current code without unnecessary rewrites | Phase 0, C18 | ✅ additive package + separate process/venv |
 | R21 | Validate physical actions and record acknowledgements | C14 | ✅ registered/validated/confirmed/acknowledged actions with full transition audit (Phase 7) |
-| R22 | Apply configurable retention and safe deletion | C15 | 🔶 `alert_events.event_id` is `ON DELETE RESTRICT`, protecting alert evidence at the DB level; retention workers in Phase 8 |
+| R22 | Apply configurable retention and safe deletion | C15 | ✅ configurable dry-run retention, aggregate-before-delete, evidence protection (Phase 8) |
 
 ## Phase 1 schema
 

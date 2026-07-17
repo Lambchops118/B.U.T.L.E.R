@@ -49,6 +49,11 @@ def situation_enabled() -> bool:
     }
 
 
+def _auth_headers() -> dict[str, str]:
+    token = os.getenv("TALOS_AWARENESS_API_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def get_json(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Bounded GET; raises RuntimeError with a clear, short message."""
     url = _base_url() + path
@@ -56,8 +61,9 @@ def get_json(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         filtered = {k: v for k, v in params.items() if v not in (None, "")}
         if filtered:
             url += "?" + urllib.parse.urlencode(filtered)
+    request = urllib.request.Request(url, headers=_auth_headers())
     try:
-        with urllib.request.urlopen(url, timeout=_timeout()) as response:
+        with urllib.request.urlopen(request, timeout=_timeout()) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
