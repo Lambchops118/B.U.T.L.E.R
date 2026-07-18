@@ -145,6 +145,52 @@ class MemoryStore:
         self.upsert_summary("session", session_id, summary)
         return summary
 
+    def get_recent_messages(
+        self,
+        session_id: str,
+        *,
+        message_limit: int = 8,
+        max_chars: int = 4000,
+    ) -> list[dict[str, str]]:
+        """Return bounded recent turns in Chat Completions message shape."""
+        session_id = _required_text(session_id, "session_id")
+        message_limit = max(0, int(message_limit))
+        max_chars = max(0, int(max_chars))
+        if message_limit == 0 or max_chars == 0:
+            return []
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT role, content
+                FROM messages
+                WHERE session_id = ? AND role IN ('user', 'assistant')
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (session_id, message_limit),
+            ).fetchall()
+
+        per_message_limit = max(1, min(1200, max_chars))
+        messages = [
+            {
+                "role": str(row["role"]),
+                "content": _compact_text(
+                    str(row["content"]),
+                    limit=per_message_limit,
+                ),
+            }
+            for row in reversed(rows)
+        ]
+        while len(messages) > 1 and sum(len(item["content"]) for item in messages) > max_chars:
+            messages.pop(0)
+        if messages and len(messages[0]["content"]) > max_chars:
+            messages[0]["content"] = _compact_text(
+                messages[0]["content"],
+                limit=max_chars,
+            )
+        return messages
+
     def clear_session(self, session_id: str) -> None:
         """Clear conversational context while preserving durable facts.
 
@@ -263,14 +309,16 @@ class MemoryStore:
         *,
         max_chars: int = 1600,
         project_id: str | None = None,
+        include_session_summary: bool = True,
     ) -> str:
         session_id = _required_text(session_id, "session_id")
         project_id = (project_id or os.getenv("TALOS_MEMORY_PROJECT_ID") or DEFAULT_PROJECT_ID).strip()
         summary_specs = [
             ("user", "default", "User summary"),
             ("project", project_id, "Project summary"),
-            ("session", session_id, "Active session summary"),
         ]
+        if include_session_summary:
+            summary_specs.append(("session", session_id, "Active session summary"))
 
         lines: list[str] = []
         with self._lock:
@@ -400,9 +448,12 @@ def _json_dumps(value: dict[str, Any]) -> str:
 
 
 def _compact_text(value: str, *, limit: int) -> str:
+    limit = max(0, int(limit))
     compacted = " ".join(value.split())
     if len(compacted) <= limit:
         return compacted
+    if limit <= 3:
+        return compacted[:limit]
     return compacted[: limit - 3].rsplit(" ", 1)[0] + "..."
 
 

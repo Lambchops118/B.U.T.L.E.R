@@ -14,6 +14,15 @@ from talos.agent.prompting import PromptAssembler, PromptContext
 
 
 class PromptAssemblerTests(unittest.TestCase):
+    def test_default_personality_enforces_home_presence_response_discipline(self) -> None:
+        prompt = PromptAssembler().build(PromptContext(interaction_mode="voice"))
+
+        self.assertIn("persistent presence in the home", prompt)
+        self.assertIn("For routine commands, use the shortest confirmation", prompt)
+        self.assertIn("Once the request is answered or completed, stop speaking", prompt)
+        self.assertIn("Never claim an action succeeded", prompt)
+        self.assertIn("Anything else?", prompt)
+
     def test_builds_prompt_from_base_overlay_and_memory_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

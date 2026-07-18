@@ -302,7 +302,7 @@ The store keeps structured records for:
 - durable facts
 - compact summaries
 
-At request time, the agent retrieves a compact prompt-ready memory block from summaries and relevant facts rather than scanning raw full history. After a completed turn, the runtime stores the user and assistant messages and refreshes the active session summary. This store supplies recent conversational continuity for the streaming voice lane; awareness long-term memory remains a separate evidence-backed store for validated facts and episodes.
+At request time, the agent retrieves a compact prompt-ready memory block from summaries and relevant facts rather than scanning raw full history. The streaming voice lane also supplies the bounded recent turns as actual user/assistant chat messages so conversational references such as “both” retain their immediate meaning. After a completed turn, the runtime stores the user and assistant messages and refreshes the active session summary. Awareness long-term memory remains a separate evidence-backed store for validated facts and episodes.
 
 Useful memory settings:
 
@@ -310,6 +310,8 @@ Useful memory settings:
 - `TALOS_MEMORY_DB_PATH=/absolute/path/to/talos_memory.sqlite3` overrides the SQLite location.
 - `TALOS_MEMORY_PROJECT_ID=Talos` selects the project summary key used for prompt retrieval.
 - `TALOS_PROMPT_MEMORY_CHAR_LIMIT=1600` bounds prompt memory injection.
+- `TALOS_CONVERSATION_HISTORY_MESSAGE_LIMIT=8` bounds streamed recent-message count.
+- `TALOS_CONVERSATION_HISTORY_CHAR_LIMIT=4000` bounds streamed recent-message text.
 
 ### Split Agent And Voice Worker
 

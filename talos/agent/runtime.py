@@ -32,6 +32,14 @@ ROUTER_MODEL = os.getenv("TALOS_ROUTER_MODEL", ai_model)
 MAX_TOOL_CALL_ROUNDS = max(1, env_int("TALOS_MAX_TOOL_CALL_ROUNDS", 8))
 MEMORY_ENABLED = env_bool("TALOS_MEMORY_ENABLED", True)
 PROMPT_MEMORY_CHAR_LIMIT = max(0, env_int("TALOS_PROMPT_MEMORY_CHAR_LIMIT", 1600))
+CONVERSATION_HISTORY_MESSAGE_LIMIT = max(
+    0,
+    env_int("TALOS_CONVERSATION_HISTORY_MESSAGE_LIMIT", 8),
+)
+CONVERSATION_HISTORY_CHAR_LIMIT = max(
+    0,
+    env_int("TALOS_CONVERSATION_HISTORY_CHAR_LIMIT", 4000),
+)
 OPENAI_SERVER_ERROR_RETRIES = max(0, env_int("TALOS_OPENAI_SERVER_ERROR_RETRIES", 2))
 OPENAI_SERVER_ERROR_RETRY_DELAY = max(
     0.0, env_float("TALOS_OPENAI_SERVER_ERROR_RETRY_DELAY", 1.5)
@@ -637,7 +645,13 @@ def _get_memory_store() -> MemoryStore | None:
         return None
 
 
-def _get_prompt_memory(memory_store: MemoryStore | None, session_id: str, command: str) -> str | None:
+def _get_prompt_memory(
+    memory_store: MemoryStore | None,
+    session_id: str,
+    command: str,
+    *,
+    include_session_summary: bool = True,
+) -> str | None:
     if memory_store is None or PROMPT_MEMORY_CHAR_LIMIT <= 0:
         return None
     try:
@@ -645,10 +659,32 @@ def _get_prompt_memory(memory_store: MemoryStore | None, session_id: str, comman
             session_id,
             command,
             max_chars=PROMPT_MEMORY_CHAR_LIMIT,
+            include_session_summary=include_session_summary,
         )
     except Exception as exc:
         print(f"TALOS memory retrieval failed: {_truncate_text(str(exc), 300)}")
         return None
+
+
+def _get_conversation_history(
+    memory_store: MemoryStore | None,
+    session_id: str,
+) -> list[dict[str, str]]:
+    if (
+        memory_store is None
+        or CONVERSATION_HISTORY_MESSAGE_LIMIT <= 0
+        or CONVERSATION_HISTORY_CHAR_LIMIT <= 0
+    ):
+        return []
+    try:
+        return memory_store.get_recent_messages(
+            session_id,
+            message_limit=CONVERSATION_HISTORY_MESSAGE_LIMIT,
+            max_chars=CONVERSATION_HISTORY_CHAR_LIMIT,
+        )
+    except Exception as exc:
+        print(f"TALOS conversation retrieval failed: {_truncate_text(str(exc), 300)}")
+        return []
 
 
 def _record_memory_turn(
@@ -1696,8 +1732,8 @@ def run_command_stream(
 
     Chat Completions does not provide the Responses API's
     ``previous_response_id`` threading. Cross-turn continuity therefore comes
-    from the bounded, persisted session summary in the prompt-memory store.
-    The per-session lock is acquired before that summary is read so a queued
+    from bounded, persisted user/assistant messages in the conversation store.
+    The per-session lock is acquired before those messages are read so a queued
     voice turn observes the turn that completed immediately before it. Within
     a single request the tool loop keeps full message history.
     """
@@ -1719,7 +1755,13 @@ def run_command_stream(
             except Exception as exc:
                 print(f"TALOS memory session write failed: {_truncate_text(str(exc), 300)}")
                 memory_store = None
-        memory_block = _get_prompt_memory(memory_store, session_id, command)
+        memory_block = _get_prompt_memory(
+            memory_store,
+            session_id,
+            command,
+            include_session_summary=False,
+        )
+        conversation_history = _get_conversation_history(memory_store, session_id)
         instructions = _build_prompt_instructions(
             command,
             session_id,
@@ -1735,6 +1777,7 @@ def run_command_stream(
             messages.append({"role": "system", "content": context_message})
         _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
         _maybe_add_minecraft_context(messages, tool_defs, command)
+        messages.extend(conversation_history)
         messages.append({"role": "user", "content": command})
 
         backend = _get_stream_backend()

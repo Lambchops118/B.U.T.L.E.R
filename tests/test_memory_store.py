@@ -72,6 +72,23 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertNotIn("My code is cobalt", memory)
         self.assertIn("preferred_code", memory)
 
+    def test_recent_messages_are_bounded_chat_history(self) -> None:
+        store = MemoryStore(":memory:")
+        store.record_turn("voice", "Water the plants.", "Which pot, one or two?")
+        store.record_turn("voice", "Go with both.", "Done.")
+
+        messages = store.get_recent_messages("voice", message_limit=3, max_chars=1000)
+        store.close()
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "assistant", "content": "Which pot, one or two?"},
+                {"role": "user", "content": "Go with both."},
+                {"role": "assistant", "content": "Done."},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

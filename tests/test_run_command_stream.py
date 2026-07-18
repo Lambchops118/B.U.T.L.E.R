@@ -125,11 +125,14 @@ class RunCommandStreamTests(unittest.TestCase):
         # It should stop and surface the limit note rather than loop endlessly.
         self.assertTrue(any("tool-call limit" in d for d in deltas))
 
-    def test_second_streamed_turn_receives_prior_session_context(self):
+    def test_voice_followup_receives_prior_user_and_assistant_turns(self):
         backend = _FakeBackend(
             [
-                [LLMTextDelta("Understood."), LLMCompletion(text="Understood.")],
-                [LLMTextDelta("Cobalt."), LLMCompletion(text="Cobalt.")],
+                [
+                    LLMTextDelta("Which pot, one or two?"),
+                    LLMCompletion(text="Which pot, one or two?"),
+                ],
+                [LLMTextDelta("Done."), LLMCompletion(text="Done.")],
             ]
         )
         mcp = _FakeMCP()
@@ -146,14 +149,14 @@ class RunCommandStreamTests(unittest.TestCase):
             try:
                 list(
                     agent_runtime.run_command_stream(
-                        "My code word is cobalt.",
+                        "Water the plants.",
                         session_id="voice-worker",
                         interaction_mode="voice",
                     )
                 )
                 list(
                     agent_runtime.run_command_stream(
-                        "What was my code word?",
+                        "Go with both.",
                         session_id="voice-worker",
                         interaction_mode="voice",
                     )
@@ -163,9 +166,20 @@ class RunCommandStreamTests(unittest.TestCase):
                     patcher.stop()
                 store.close()
 
-        second_turn_instructions = backend.stream_calls[1][0]["content"]
-        self.assertIn("My code word is cobalt.", second_turn_instructions)
-        self.assertIn("Understood.", second_turn_instructions)
+        second_turn_messages = backend.stream_calls[1]
+        self.assertNotIn("Active session summary", second_turn_messages[0]["content"])
+        self.assertIn(
+            {"role": "user", "content": "Water the plants."},
+            second_turn_messages,
+        )
+        self.assertIn(
+            {"role": "assistant", "content": "Which pot, one or two?"},
+            second_turn_messages,
+        )
+        self.assertEqual(
+            second_turn_messages[-1],
+            {"role": "user", "content": "Go with both."},
+        )
 
 
 if __name__ == "__main__":
