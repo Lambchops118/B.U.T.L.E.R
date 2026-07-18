@@ -10,6 +10,7 @@ from typing import Any
 import openai
 
 from talos.agent.prompting import DEFAULT_DOMAIN_OVERLAYS, PromptContext, build_instructions
+from talos.agent.thinking import thinking_suffix
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.memory import MemoryStore, get_default_memory_store
 from talos.mcp_client import get_local_mcp_client, shutdown_local_mcp_client
@@ -1758,7 +1759,12 @@ def run_command_stream(
         _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
         _maybe_add_minecraft_context(messages, tool_defs, command)
         messages.extend(conversation_history)
-        messages.append({"role": "user", "content": command})
+        # Dynamic reasoning control: suppress the Qwen3 <think> block on quick
+        # commands (the dominant local-model latency cost) and keep it for
+        # analytical requests. Only the outgoing turn is decorated; the original
+        # command is what gets persisted below, so stored history stays clean.
+        user_content = command + thinking_suffix(command, runtime_lane=runtime_lane)
+        messages.append({"role": "user", "content": user_content})
 
         backend = _get_stream_backend()
         full_text_parts: list[str] = []

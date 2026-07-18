@@ -176,9 +176,12 @@ class RunCommandStreamTests(unittest.TestCase):
             {"role": "assistant", "content": "Which pot, one or two?"},
             second_turn_messages,
         )
+        # The live outgoing turn carries the dynamic reasoning soft switch
+        # (simple command -> /no_think). The replayed prior turn above stays
+        # undecorated, confirming the token never pollutes persisted history.
         self.assertEqual(
             second_turn_messages[-1],
-            {"role": "user", "content": "Go with both."},
+            {"role": "user", "content": "Go with both. /no_think"},
         )
 
 
