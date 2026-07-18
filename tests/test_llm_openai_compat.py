@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -18,6 +20,7 @@ from talos.voice.backends.base import (
     tool_calls_to_assistant_message,
 )
 from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
+from talos.voice.backends import factory
 
 
 def _delta_chunk(content=None, tool_calls=None, finish_reason=None):
@@ -169,6 +172,28 @@ class StreamingTests(unittest.TestCase):
         sent = backend._client.chat.completions.calls[0]
         self.assertEqual(sent.get("max_completion_tokens"), 123)
         self.assertNotIn("max_tokens", sent)
+
+
+class BackendFactoryTests(unittest.TestCase):
+    def test_default_backend_targets_local_ollama_without_api_key(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"TALOS_LLM_MODEL": "mb-core-v1:latest"},
+                clear=True,
+            ),
+            mock.patch.object(factory, "load_environment"),
+            mock.patch.object(
+                OpenAICompatibleChatBackend,
+                "_build_client",
+                return_value=object(),
+            ) as build_client,
+        ):
+            backend = factory.get_llm_backend()
+
+        self.assertEqual(backend.model, "mb-core-v1:latest")
+        self.assertEqual(backend.max_tokens_param, "max_tokens")
+        build_client.assert_called_once_with("http://127.0.0.1:11434/v1", None)
 
 
 class MessageHelperTests(unittest.TestCase):

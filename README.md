@@ -31,7 +31,8 @@ Recommended prerequisites for the split-process setup:
 - Python 3.12 for the separate voice worker process
 - PortAudio development/runtime libraries for `PyAudio`
 - A reachable MQTT broker
-- Valid API credentials in `.env`
+- A local Ollama installation with the configured chat model
+- API credentials only for optional hosted integrations you choose to enable
 
 Setup the main agent environment:
 
@@ -57,7 +58,24 @@ On Windows PowerShell, activate the environment with:
 .venv-main\Scripts\Activate.ps1
 ```
 
-The application reads configuration from `.env`. At minimum, the current code references:
+The application reads configuration from `.env`. Local inference uses the
+existing OpenAI-compatible backend seam pointed at Ollama; the OpenAI SDK is
+only the protocol client and requests stay on loopback. For the installed custom
+model, use:
+
+```env
+TALOS_LLM_BACKEND=ollama
+TALOS_LLM_BASE_URL=http://127.0.0.1:11434/v1
+TALOS_LLM_MODEL=mb-core-v1:latest
+TALOS_LLM_MAX_TOKENS_PARAM=max_tokens
+TALOS_VOICE_STREAMING=1
+TALOS_REMOTE_LLM_FALLBACK=0
+TALOS_LOCAL_STT=1
+TALOS_REMOTE_STT_FALLBACK=0
+```
+
+`OPENAI_API_KEY` is not required for the streaming Ollama lane or local STT.
+The application also references these credentials for optional hosted services:
 
 - `OPENAI_API_KEY`
 - `AWS_ACCESS_KEY`

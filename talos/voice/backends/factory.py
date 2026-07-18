@@ -3,11 +3,11 @@
 The goal of this module is that the *same code* runs on the macOS dev box and the
 CUDA deploy box, with only environment variables changing. Recommended profiles:
 
-macOS dev (local, no hosted APIs)::
+Local Ollama (default, no hosted APIs)::
 
-    TALOS_LLM_BACKEND=openai_chat
+    TALOS_LLM_BACKEND=ollama
     TALOS_LLM_BASE_URL=http://127.0.0.1:11434/v1   # Ollama
-    TALOS_LLM_MODEL=qwen2.5:7b-instruct
+    TALOS_LLM_MODEL=mb-core-v1:latest
 
 CUDA deploy (5080 runs vLLM)::
 
@@ -36,10 +36,12 @@ def get_llm_backend() -> LLMBackend:
     which covers Ollama, vLLM, and hosted OpenAI-compatible providers.
     """
     load_environment()
-    backend = os.getenv("TALOS_LLM_BACKEND", "openai_chat").strip().lower()
+    backend = os.getenv("TALOS_LLM_BACKEND", "ollama").strip().lower()
 
     if backend in {"openai_chat", "chat", "ollama", "vllm"}:
         base_url = os.getenv("TALOS_LLM_BASE_URL", "").strip() or None
+        if backend == "ollama" and base_url is None:
+            base_url = "http://127.0.0.1:11434/v1"
         max_tokens_param = os.getenv("TALOS_LLM_MAX_TOKENS_PARAM", "").strip()
         if not max_tokens_param:
             is_openai = base_url is None or "openai.com" in base_url
@@ -49,7 +51,10 @@ def get_llm_backend() -> LLMBackend:
             base_url=base_url,
             api_key=os.getenv("TALOS_LLM_API_KEY", "").strip() or None,
             temperature=env_float("TALOS_LLM_TEMPERATURE", 0.5),
-            max_tokens=env_int("TALOS_LLM_MAX_TOKENS", 400),
+            max_tokens=env_int(
+                "TALOS_LLM_MAX_TOKENS",
+                env_int("TALOS_AGENT_MAX_OUTPUT_TOKENS", 400),
+            ),
             max_tokens_param=max_tokens_param,
         )
 

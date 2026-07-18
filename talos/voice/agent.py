@@ -35,17 +35,23 @@ VOICE_AGENT_TOKEN = os.getenv("TALOS_TEXT_AGENT_TOKEN", os.getenv("TEXT_AGENT_AP
 VOICE_AGENT_TIMEOUT = float(os.getenv("TALOS_TEXT_AGENT_CLIENT_TIMEOUT", "30"))
 VOICE_STREAMING = env_bool("TALOS_VOICE_STREAMING", True)
 # Use one local STT pass to serve both wake-word and command (removes the remote
-# whisper-1 round-trip and the separate local wake transcription). Falls back to
-# the remote path automatically if the local backend is unavailable.
+# whisper-1 round-trip and the separate local wake transcription).
 LOCAL_STT_ENABLED = env_bool("TALOS_LOCAL_STT", True)
+# Offline-first: a local STT failure is surfaced instead of silently sending
+# recorded speech to a hosted transcription service. The old remote fallback is
+# still available only when explicitly enabled.
+REMOTE_STT_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_STT_FALLBACK", False)
+# The legacy voice command path calls the non-streaming hosted Responses lane.
+# Keep that failover opt-in so an Ollama outage cannot silently move inference
+# off the machine.
+REMOTE_LLM_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_LLM_FALLBACK", False)
 
 audio_interface = pyaudio.PyAudio()
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
 aws_secret_key = os.getenv("AWS_SECRET_KEY")
 VOICE_AUDIO_OUTPUT_DEVICE_INDEX = os.getenv("TALOS_AUDIO_OUTPUT_DEVICE_INDEX")
 
-openai.api_key = require_env("OPENAI_API_KEY")
-client = openai.OpenAI(api_key=openai.api_key)
+_remote_stt_client = None
 polly_client = boto3.client(
     "polly",
     aws_access_key_id=aws_access_key,
@@ -57,6 +63,14 @@ _wake_model = None
 _wake_model_lock = threading.Lock()
 _wake_infer_lock = threading.Lock()
 _command_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _get_remote_stt_client():
+    global _remote_stt_client
+    if _remote_stt_client is None:
+        api_key = require_env("OPENAI_API_KEY")
+        _remote_stt_client = openai.OpenAI(api_key=api_key)
+    return _remote_stt_client
 
 
 def _resolve_output_device_index():
@@ -238,7 +252,7 @@ def _transcribe_remote_with_wake_gate(audio_data, benchmark):
     audio_file.name = "speech.wav"
 
     benchmark.mark_stage("stt_send")
-    whisper_result = client.audio.transcriptions.create(
+    whisper_result = _get_remote_stt_client().audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
         response_format="verbose_json",
@@ -257,17 +271,26 @@ def _transcribe_remote_with_wake_gate(audio_data, benchmark):
 def _acquire_transcript(audio_data, benchmark):
     """Return the transcript text (or ``None`` if the clip was already handled).
 
-    Prefers the single local STT pass; on any local failure it disables the local
-    path and falls back to the remote wake-gate + whisper-1 flow.
+    Prefers the single local STT pass. A remote whisper-1 fallback is used only
+    when ``TALOS_REMOTE_STT_FALLBACK=1`` is explicitly configured.
     """
     global _stt_unavailable
     if LOCAL_STT_ENABLED and not _stt_unavailable:
         try:
             return _transcribe_local(audio_data, benchmark)
         except Exception as exc:
-            print(f"Local STT failed ({exc}); falling back to remote STT.")
+            print(f"Local STT failed: {exc}")
             benchmark.add_error(f"Local STT error: {exc}")
             _stt_unavailable = True
+            if not REMOTE_STT_FALLBACK_ENABLED:
+                raise RuntimeError(
+                    "Local STT is unavailable and remote STT fallback is disabled."
+                ) from exc
+            print("Falling back to explicitly enabled remote STT.")
+    if not REMOTE_STT_FALLBACK_ENABLED:
+        raise RuntimeError(
+            "Local STT is disabled or unavailable and remote STT fallback is disabled."
+        )
     return _transcribe_remote_with_wake_gate(audio_data, benchmark)
 
 
@@ -360,7 +383,12 @@ def handle_command(command, benchmark=None):
                 if benchmark:
                     benchmark.emit_summary_once("voice_worker_error")
                 return
-            print("Falling back to non-streaming voice path.")
+            if not REMOTE_LLM_FALLBACK_ENABLED:
+                print("Remote LLM fallback is disabled; voice command failed locally.")
+                if benchmark:
+                    benchmark.emit_summary_once("voice_worker_error")
+                return
+            print("Falling back to explicitly enabled non-streaming voice path.")
     _handle_command_legacy(command, benchmark)
 
 

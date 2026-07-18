@@ -20,6 +20,7 @@ Only source-confirmed decisions are recorded as accepted. Repository-dependent s
 | ADR-014 | Accepted (owner, 2026-07-15) | Simulated hardware only for now: no firmware changes in scope; device-facing acceptance criteria run against the simulator. | Firmware risks (shared client ID, `status/16` collision, no reconnect/NTP) stay documented, not fixed. |
 | ADR-015 | Accepted (owner, 2026-07-15) | Notification v1 channels: GUI banner via a new authenticated `POST /notify` on the text server, plus a structured-log adapter. TTS/speaker delivery deferred. | Phase 4 scope; deterministic and LLM-free per INV-08. |
 | ADR-016 | Accepted (owner, 2026-07-16) | Waive the Phase 0 review gate; port Phase 0+1 (`88f0e64`) and partial Phase 2 (`08b510e`) from `memory_system_2_07152026` onto `memory_system_3_07152026`, and continue implementing phases in order under `docs/awareness-memory/`. | Owner selection during the 2026-07-16 session; prior work verified by the full test suite after the port. |
+| ADR-017 | Accepted (owner, 2026-07-18) | The default streamed agent inference target is the local Ollama model `mb-core-v1:latest` on loopback through the existing OpenAI-compatible backend seam. Remote STT and legacy hosted LLM fallback are opt-in, not automatic. | Owner requested replacement of hosted Chat Completions for offline home automation. Live model discovery and loopback smoke tests confirmed the model and endpoint; fail-closed defaults prevent silent audio/inference egress during local outages. |
 
 ## New decision template
 

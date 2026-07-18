@@ -1637,35 +1637,15 @@ def run_command(
 
 
 def _get_stream_backend():
-    """Build the streaming Chat Completions backend for :func:`run_command_stream`.
+    """Build the configured streaming backend through the shared factory.
 
-    Defaults to the same OpenAI model the Responses path uses, so streaming works
-    out of the box with the existing key. Point ``TALOS_LLM_BASE_URL`` /
-    ``TALOS_LLM_MODEL`` at a local server (Ollama on macOS, vLLM on CUDA) to go
-    fully local with no code change.
+    The factory owns provider selection and local endpoint defaults. In the
+    Ollama profile this never reads ``OPENAI_API_KEY`` or falls back to a hosted
+    model when local configuration is incomplete.
     """
-    from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
+    from talos.voice.backends.factory import get_llm_backend
 
-    model = os.getenv("TALOS_LLM_MODEL", "").strip() or ai_model
-    base_url = os.getenv("TALOS_LLM_BASE_URL", "").strip() or None
-    api_key = (
-        os.getenv("TALOS_LLM_API_KEY", "").strip()
-        or os.getenv("OPENAI_API_KEY", "").strip()
-        or None
-    )
-    # OpenAI's newer models want max_completion_tokens; Ollama/vLLM want max_tokens.
-    max_tokens_param = os.getenv("TALOS_LLM_MAX_TOKENS_PARAM", "").strip()
-    if not max_tokens_param:
-        is_openai = base_url is None or "openai.com" in base_url
-        max_tokens_param = "max_completion_tokens" if is_openai else "max_tokens"
-    return OpenAICompatibleChatBackend(
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0.5,
-        max_tokens=AGENT_MAX_OUTPUT_TOKENS,
-        max_tokens_param=max_tokens_param,
-    )
+    return get_llm_backend()
 
 
 def _execute_chat_tool_calls(
