@@ -293,7 +293,7 @@ Set `TALOS_PERSONALITY_PATH` to point at a different base soul document. The bui
 
 ### Durable Memory
 
-TALOS includes a SQLite-backed memory store in `talos/memory/store.py`. By default it writes to `db/talos_memory.sqlite3`, which is ignored by git because it can contain private user and session facts.
+TALOS includes a SQLite-backed conversation and prompt-memory store in `talos/memory/store.py`. It is enabled by default and writes to `db/talos_memory.sqlite3`, which is ignored by git because it can contain private user and session facts.
 
 The store keeps structured records for:
 
@@ -302,11 +302,11 @@ The store keeps structured records for:
 - durable facts
 - compact summaries
 
-At request time, the agent retrieves a compact prompt-ready memory block from summaries and relevant facts rather than scanning raw full history. After a completed turn, the runtime stores the user and assistant messages and refreshes the active session summary.
+At request time, the agent retrieves a compact prompt-ready memory block from summaries and relevant facts rather than scanning raw full history. After a completed turn, the runtime stores the user and assistant messages and refreshes the active session summary. This store supplies recent conversational continuity for the streaming voice lane; awareness long-term memory remains a separate evidence-backed store for validated facts and episodes.
 
 Useful memory settings:
 
-- `TALOS_MEMORY_ENABLED=1` enables the runtime memory integration.
+- `TALOS_MEMORY_ENABLED=0` explicitly disables local conversation and prompt memory (it is enabled by default).
 - `TALOS_MEMORY_DB_PATH=/absolute/path/to/talos_memory.sqlite3` overrides the SQLite location.
 - `TALOS_MEMORY_PROJECT_ID=Talos` selects the project summary key used for prompt retrieval.
 - `TALOS_PROMPT_MEMORY_CHAR_LIMIT=1600` bounds prompt memory injection.

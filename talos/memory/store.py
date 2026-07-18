@@ -145,6 +145,24 @@ class MemoryStore:
         self.upsert_summary("session", session_id, summary)
         return summary
 
+    def clear_session(self, session_id: str) -> None:
+        """Clear conversational context while preserving durable facts.
+
+        Session-scoped facts are explicit long-term memory and are therefore
+        intentionally not deleted by a conversation reset.
+        """
+        session_id = _required_text(session_id, "session_id")
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM summaries WHERE scope = 'session' AND scope_id = ?",
+                (session_id,),
+            )
+            self._conn.execute(
+                "DELETE FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            self._conn.commit()
+
     def upsert_fact(
         self,
         scope: str,

@@ -55,6 +55,23 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0].key, "kicad")
 
+    def test_clear_session_removes_turns_but_preserves_explicit_facts(self) -> None:
+        store = MemoryStore(":memory:")
+        store.record_turn("voice", "My code is cobalt.", "Understood.")
+        store.upsert_fact(
+            "session:voice",
+            "preferred_code",
+            "cobalt",
+            source_session_id="voice",
+        )
+
+        store.clear_session("voice")
+        memory = store.get_prompt_memory("voice", "preferred code", max_chars=2000)
+        store.close()
+
+        self.assertNotIn("My code is cobalt", memory)
+        self.assertIn("preferred_code", memory)
+
 
 if __name__ == "__main__":
     unittest.main()

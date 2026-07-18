@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from talos.agent import runtime as agent_runtime
+from talos.memory import MemoryStore
 from talos.voice.backends.base import LLMCompletion, LLMTextDelta, LLMToolCall
 
 
@@ -122,6 +124,48 @@ class RunCommandStreamTests(unittest.TestCase):
         deltas = self._run(backend, _FakeMCP())
         # It should stop and surface the limit note rather than loop endlessly.
         self.assertTrue(any("tool-call limit" in d for d in deltas))
+
+    def test_second_streamed_turn_receives_prior_session_context(self):
+        backend = _FakeBackend(
+            [
+                [LLMTextDelta("Understood."), LLMCompletion(text="Understood.")],
+                [LLMTextDelta("Cobalt."), LLMCompletion(text="Cobalt.")],
+            ]
+        )
+        mcp = _FakeMCP()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(Path(tmpdir) / "memory.sqlite3")
+            patches = [
+                mock.patch.object(agent_runtime, "get_local_mcp_client", return_value=mcp),
+                mock.patch.object(agent_runtime, "_build_tool_definitions", return_value=[]),
+                mock.patch.object(agent_runtime, "_get_memory_store", return_value=store),
+                mock.patch.object(agent_runtime, "_get_stream_backend", return_value=backend),
+            ]
+            for patcher in patches:
+                patcher.start()
+            try:
+                list(
+                    agent_runtime.run_command_stream(
+                        "My code word is cobalt.",
+                        session_id="voice-worker",
+                        interaction_mode="voice",
+                    )
+                )
+                list(
+                    agent_runtime.run_command_stream(
+                        "What was my code word?",
+                        session_id="voice-worker",
+                        interaction_mode="voice",
+                    )
+                )
+            finally:
+                for patcher in patches:
+                    patcher.stop()
+                store.close()
+
+        second_turn_instructions = backend.stream_calls[1][0]["content"]
+        self.assertIn("My code word is cobalt.", second_turn_instructions)
+        self.assertIn("Understood.", second_turn_instructions)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ _client: openai.OpenAI | None = None
 ai_model = os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-mini")
 ROUTER_MODEL = os.getenv("TALOS_ROUTER_MODEL", ai_model)
 MAX_TOOL_CALL_ROUNDS = max(1, env_int("TALOS_MAX_TOOL_CALL_ROUNDS", 8))
-MEMORY_ENABLED = env_bool("TALOS_MEMORY_ENABLED", False)
+MEMORY_ENABLED = env_bool("TALOS_MEMORY_ENABLED", True)
 PROMPT_MEMORY_CHAR_LIMIT = max(0, env_int("TALOS_PROMPT_MEMORY_CHAR_LIMIT", 1600))
 OPENAI_SERVER_ERROR_RETRIES = max(0, env_int("TALOS_OPENAI_SERVER_ERROR_RETRIES", 2))
 OPENAI_SERVER_ERROR_RETRY_DELAY = max(
@@ -1694,44 +1694,51 @@ def run_command_stream(
     content). Reuses the same prompt, tool, and memory machinery as
     :func:`run_command`.
 
-    Note: cross-turn threading (the Responses ``previous_response_id``) is not
-    replicated here yet; per-session continuity comes from the memory block
-    injected into the prompt. Within a single request the tool loop keeps full
-    message history.
+    Chat Completions does not provide the Responses API's
+    ``previous_response_id`` threading. Cross-turn continuity therefore comes
+    from the bounded, persisted session summary in the prompt-memory store.
+    The per-session lock is acquired before that summary is read so a queued
+    voice turn observes the turn that completed immediately before it. Within
+    a single request the tool loop keeps full message history.
     """
-    mcp_client = get_local_mcp_client()
-    tool_defs = _build_tool_definitions(mcp_client)
-    mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
-    memory_store = _get_memory_store()
-    if memory_store is not None:
-        try:
-            memory_store.record_session(session_id, metadata={"interaction_mode": mode})
-        except Exception as exc:
-            print(f"TALOS memory session write failed: {_truncate_text(str(exc), 300)}")
-            memory_store = None
-    memory_block = _get_prompt_memory(memory_store, session_id, command)
-    instructions = _build_prompt_instructions(
-        command,
-        session_id,
-        tool_defs,
-        memory_block=memory_block,
-        interaction_mode=mode,
-        extra_context=extra_context,
-    )
-
-    messages: list[dict[str, Any]] = [{"role": "system", "content": instructions}]
-    context_message = _format_context(state_snapshot)
-    if context_message:
-        messages.append({"role": "system", "content": context_message})
-    _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
-    _maybe_add_minecraft_context(messages, tool_defs, command)
-    messages.append({"role": "user", "content": command})
-
-    backend = _get_stream_backend()
     thread_key = _response_thread_key(session_id, runtime_lane)
-    full_text_parts: list[str] = []
 
     with _get_conversation_lock(thread_key):
+        mcp_client = get_local_mcp_client()
+        tool_defs = _build_tool_definitions(mcp_client)
+        mode = _normalize_interaction_mode(
+            interaction_mode or _infer_interaction_mode(session_id)
+        )
+        memory_store = _get_memory_store()
+        if memory_store is not None:
+            try:
+                memory_store.record_session(
+                    session_id,
+                    metadata={"interaction_mode": mode},
+                )
+            except Exception as exc:
+                print(f"TALOS memory session write failed: {_truncate_text(str(exc), 300)}")
+                memory_store = None
+        memory_block = _get_prompt_memory(memory_store, session_id, command)
+        instructions = _build_prompt_instructions(
+            command,
+            session_id,
+            tool_defs,
+            memory_block=memory_block,
+            interaction_mode=mode,
+            extra_context=extra_context,
+        )
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": instructions}]
+        context_message = _format_context(state_snapshot)
+        if context_message:
+            messages.append({"role": "system", "content": context_message})
+        _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
+        _maybe_add_minecraft_context(messages, tool_defs, command)
+        messages.append({"role": "user", "content": command})
+
+        backend = _get_stream_backend()
+        full_text_parts: list[str] = []
         rounds = 0
         while True:
             turn_text_parts: list[str] = []
@@ -1768,18 +1775,25 @@ def run_command_stream(
             messages.extend(tool_messages)
             rounds += 1
 
-    response_text = "".join(full_text_parts).replace("Monkey Butler:", "").strip()
-    _record_memory_turn(
-        memory_store,
-        session_id,
-        command,
-        response_text,
-        interaction_mode=mode,
-    )
+        response_text = "".join(full_text_parts).replace("Monkey Butler:", "").strip()
+        _record_memory_turn(
+            memory_store,
+            session_id,
+            command,
+            response_text,
+            interaction_mode=mode,
+        )
 
 
 def reset_session(session_id: str) -> None:
     _clear_session_response_ids(session_id)
+    memory_store = _get_memory_store()
+    if memory_store is None:
+        return
+    try:
+        memory_store.clear_session(session_id)
+    except Exception as exc:
+        print(f"TALOS memory session reset failed: {_truncate_text(str(exc), 300)}")
 
 
 def shutdown() -> None:

@@ -15,6 +15,7 @@ from talos.agent import runtime as agent_runtime
 from talos.config import env_bool, load_environment
 from talos.jobs import get_default_job_store
 from talos.messages import EventPayload, Message, TextPayload
+from talos.services import awareness_client
 
 
 DEFAULT_ALLOWED_NETWORKS = [
@@ -38,6 +39,12 @@ def _query_int(query: dict[str, list[str]], key: str, default: int) -> int:
         return int((query.get(key) or [default])[0])
     except (TypeError, ValueError):
         return default
+
+
+def _stream_state_snapshot(body: dict[str, Any]) -> str:
+    """Resolve the same awareness snapshot used by routed agent requests."""
+    legacy_snapshot = str(body.get("state_snapshot") or "no recent status")
+    return awareness_client.snapshot_with_fallback(legacy_snapshot)
 
 
 @dataclass(frozen=True)
@@ -305,7 +312,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         session_id = str(body.get("session_id") or "voice").strip() or "voice"
         source = str(body.get("source") or "voice").strip()
-        snapshot = str(body.get("state_snapshot") or "no recent status")
+        snapshot = _stream_state_snapshot(body)
 
         try:
             self.send_response(HTTPStatus.OK)
