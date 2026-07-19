@@ -36,7 +36,7 @@
 **Repo coding conventions relevant to this subsystem:**
 - Stdlib-first (sqlite3, http.server, dataclasses, threading, queue). Pydantic appears only transitively via the MCP SDK.
 - SQLite pattern used 3× (`memory/store.py`, `jobs.py`, `phone/store.py`): WAL mode, `threading.RLock`, `CREATE TABLE IF NOT EXISTS` "ensure schema" (no migration framework), ISO-8601 UTC TEXT timestamps, JSON-in-TEXT columns, frozen dataclass row types, module-level default-store singleton.
-- Config: flat `.env` at repo root loaded by `talos/config` helpers (`env_bool/env_int/env_float/require_env`); `.env.example` documents every variable.
+- Config: two flat dotenv files at repo root loaded by `talos/config` helpers (`env_bool/env_int/env_float/require_env`) — `settings.env` (committed, all non-secret settings, fully populated) and `.env` (git-ignored, secrets only). `settings.env` is loaded first, then `.env`; a real shell env var overrides both. `.env.example` documents the secrets template.
 - Multi-process split is an established pattern (main agent, voice worker, phone bridge are separate processes with separate venvs, talking over HTTP).
 
 ---

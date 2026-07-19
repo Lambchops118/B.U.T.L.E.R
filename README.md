@@ -58,10 +58,20 @@ On Windows PowerShell, activate the environment with:
 .venv-main\Scripts\Activate.ps1
 ```
 
-The application reads configuration from `.env`. Local inference uses the
-existing OpenAI-compatible backend seam pointed at Ollama; the OpenAI SDK is
-only the protocol client and requests stay on loopback. For the installed custom
-model, use:
+Configuration is split into two files:
+
+- **`settings.env`** — all non-secret settings (hosts, ports, model names,
+  feature flags, timeouts). It is committed with working defaults and fully
+  populated with commented options, so a fresh clone runs without editing it.
+- **`.env`** — secrets only (API keys, auth tokens, passwords). It is
+  git-ignored; copy `.env.example` to `.env` and fill in the values you need.
+
+A real shell environment variable overrides either file. Restart TALOS after
+editing.
+
+Local inference uses the existing OpenAI-compatible backend seam pointed at
+Ollama; the OpenAI SDK is only the protocol client and requests stay on
+loopback. The installed custom model ships as the default in `settings.env`:
 
 ```env
 TALOS_LLM_BACKEND=ollama
@@ -75,7 +85,8 @@ TALOS_REMOTE_STT_FALLBACK=0
 ```
 
 `OPENAI_API_KEY` is not required for the streaming Ollama lane or local STT.
-The application also references these credentials for optional hosted services:
+The application also references these credentials (in `.env`) for optional
+hosted services:
 
 - `OPENAI_API_KEY`
 - `AWS_ACCESS_KEY`
@@ -150,8 +161,8 @@ The built-in local aggregate MCP server now also includes a kitchen recipe scree
 
 The home automation provider also exposes:
 
-- `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `TALOS_TIMEZONE` in `.env` to force an IANA timezone such as `America/New_York`; otherwise TALOS falls back to the host machine's local timezone.
-- `get_current_weather`, which gives the agent the current weather, temperature, humidity, UV index, wind, and today's temperature range. By default it uses `TALOS_WEATHER_LOCATION` and `TALOS_WEATHER_UNITS` from `.env`, but the tool can also take a one-off location override. UV comes from OpenWeather One Call, while the initial location lookup uses the standard current-weather endpoint.
+- `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `TALOS_TIMEZONE` in `settings.env` to force an IANA timezone such as `America/New_York`; otherwise TALOS falls back to the host machine's local timezone.
+- `get_current_weather`, which gives the agent the current weather, temperature, humidity, UV index, wind, and today's temperature range. By default it uses `TALOS_WEATHER_LOCATION` and `TALOS_WEATHER_UNITS` from `settings.env`, but the tool can also take a one-off location override. UV comes from OpenWeather One Call, while the initial location lookup uses the standard current-weather endpoint.
 
 Server assembly is separate from tool definition:
 
@@ -187,8 +198,8 @@ Notes:
 - `headers` can also be provided directly in the JSON config if a server needs custom headers.
 - Remote MCP entries may also set `tls_verify: false` to disable certificate verification for that one server, or `tls_ca_bundle` to point at a custom CA bundle when Python cannot validate the server certificate chain on the current machine.
 - Use `tool_prefix` when a remote server might expose names that collide with local tools.
-- TALOS now supports multi-step tool execution loops. Set `TALOS_MAX_TOOL_CALL_ROUNDS` in `.env` if you need to raise or lower the default limit of `8`.
-- Set `TALOS_AGENT_MAX_OUTPUT_TOKENS` in `.env` if tool-calling requests need more room to emit long structured arguments, such as full recipe step lists. The default is `400`.
+- TALOS now supports multi-step tool execution loops. Set `TALOS_MAX_TOOL_CALL_ROUNDS` in `settings.env` if you need to raise or lower the default limit of `8`.
+- Set `TALOS_AGENT_MAX_OUTPUT_TOKENS` in `settings.env` if tool-calling requests need more room to emit long structured arguments, such as full recipe step lists. The default is `400`.
 - Resource reads are text-first. Binary resources are surfaced with MIME metadata and a base64 preview so the model can reason about what is available without flooding context.
 
 KiCad helper integration:
@@ -225,7 +236,7 @@ TALOS_FILESYSTEM_ALLOW_WRITES=0
 - Install prerequisites:
   - Node.js with `npx`
   - access to `@modelcontextprotocol/server-filesystem`, usually via `npx -y`
-- Restart TALOS after changing `.env` so the MCP list is rebuilt.
+- Restart TALOS after changing `settings.env` so the MCP list is rebuilt.
 - Verify the setup with:
 
 ```bash
@@ -246,14 +257,14 @@ Minecraft Forge/modpack diagnostics:
   - Node.js with `npx`
   - `rg` on PATH, for example `brew install ripgrep`
   - access to `@modelcontextprotocol/server-filesystem`, usually via `npx -y`
-- Recommended `.env` settings:
+- Recommended `settings.env` settings:
 
 ```env
 MINECRAFT_SERVER_DIR=/absolute/path/to/minecraft-server
 MINECRAFT_MCP_ALLOW_WRITES=0
 ```
 
-- Restart TALOS after changing `.env` so the MCP list is rebuilt.
+- Restart TALOS after changing `settings.env` so the MCP list is rebuilt.
 - Verify the setup with:
 
 ```bash
@@ -380,7 +391,9 @@ The current phone implementation lives under:
 - `talos/phone/` for provider logic, policy, persistence, and user-facing phone commands
 - `talos/phone_bridge/` for the small public webhook/API service that should run outside the private TALOS host
 
-Recommended `.env` settings for TALOS itself:
+Recommended settings for TALOS itself (secrets — `ELEVENLABS_API_KEY`,
+`TALOS_PHONE_BRIDGE_TOKEN`, `TALOS_PHONE_PUSH_TOKEN` — go in `.env`; the rest in
+`settings.env`):
 
 ```env
 TALOS_PHONE_ENABLED=1

@@ -6,10 +6,22 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Secrets and machine-specific credentials only (API keys, tokens, passwords).
+# Git-ignored; created from .env.example.
+ENV_PATH = REPO_ROOT / ".env"
+
+# Everything else: hosts, ports, model names, feature flags, timeouts. Committed
+# to the repo, fully populated with defaults, and safe to edit/share.
+SETTINGS_PATH = REPO_ROOT / "settings.env"
 
 
 def load_environment() -> None:
+    # Load non-secret settings first, then secrets. Neither call overrides a
+    # variable already present in the real process environment, so an explicit
+    # shell export still wins over both files. The two files hold disjoint keys.
+    load_dotenv(dotenv_path=SETTINGS_PATH)
     load_dotenv(dotenv_path=ENV_PATH)
 
 

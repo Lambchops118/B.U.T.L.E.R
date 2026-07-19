@@ -21,7 +21,13 @@ from pydantic import AliasChoices, Field, SecretStr, ValidationError, field_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Secrets (DB password, API/notify tokens, MQTT credentials) live in .env;
+# non-secret awareness settings live in settings.env. Both are read here because
+# the awareness backend runs as its own process and does not call
+# talos.config.load_environment(). Real environment variables still take
+# priority over either file.
 ENV_PATH = REPO_ROOT / ".env"
+SETTINGS_PATH = REPO_ROOT / "settings.env"
 
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
@@ -39,7 +45,7 @@ class SettingsError(RuntimeError):
 class AwarenessSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TALOS_AWARENESS_",
-        env_file=str(ENV_PATH),
+        env_file=(str(SETTINGS_PATH), str(ENV_PATH)),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
