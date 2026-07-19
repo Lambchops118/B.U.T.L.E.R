@@ -134,6 +134,109 @@ Run the host app:
 
 Voice benchmark summaries print directly to the main app terminal. Each app run also creates a new timestamped CSV in `logs/`, for example `voice_benchmarks_20260511_124500_123456.csv`.
 
+### One-Command Startup
+
+TALOS normally runs as several processes across separate virtual environments
+(main agent, voice worker, awareness backend) plus a Postgres container and a
+local Ollama server. The launcher starts and supervises all of them from one
+place, and pins each GPU-bound process to the right card:
+
+- the language model (Ollama) runs on the **RTX 5080** and may use all of it
+- speech-to-text (faster-whisper, in the voice worker) runs on the **RTX 2060**
+
+GPU pinning is done with `CUDA_DEVICE_ORDER=PCI_BUS_ID` plus a per-process
+`CUDA_VISIBLE_DEVICES`, so the indices line up with `nvidia-smi`. The cards are
+auto-detected by name on first run (5080 → LLM, 2060 → STT) and can be
+overridden in the GUI.
+
+Launch the GUI control panel (Windows):
+
+```powershell
+.\Start-Talos.ps1
+```
+
+or from `cmd`:
+
+```bat
+talos.cmd
+```
+
+The GUI lets you choose which components to start, the language model, whether the
+awareness system starts with MQTT enabled (and the broker host/port), and the
+GPU assignment. Component/GPU choices persist to a git-ignored
+`launcher.config.json`; the model and MQTT settings are written back into
+`settings.env` in place. Child-process logs stream into the window, and closing
+it (or **Stop**) shuts every process down.
+
+**Local vs. hosted API models.** By default TALOS runs fully local (Ollama LLM on
+the 5080, faster-whisper STT on the 2060). Tick **Use hosted API models (OpenAI)
+instead of local** (or pass `--api-models` headless) to run the LLM and STT
+against OpenAI instead (`gpt-4o-mini` by default, plus `whisper-1` for speech).
+This requires `OPENAI_API_KEY` in `.env`. The switch is applied as per-run
+environment overrides injected into the main agent and voice worker — it does
+**not** edit `settings.env`, so unticking it returns to your local config
+untouched. In API mode the launcher skips the local Ollama server (it would only
+waste VRAM).
+
+**Thinking (instant vs. reasoning).** The **Thinking** dropdown sets
+`TALOS_LLM_THINK_MODE`: `Always` forces a reasoning pass every turn, `Never` gives
+instant replies, `Auto` reasons only on complex requests, and `Off` injects
+nothing. This only affects Qwen-family local models (e.g. `mb-core-v1`) that
+understand the `/think` and `/no_think` soft switches — leave it `Off` for
+Hermes/Llama models. It writes back to `settings.env` in place. Hosted API mode
+ignores this and is forced `Off` (OpenAI models don't use the switches). Headless:
+`--think-mode {auto,always,never,off}` overrides it for one run.
+
+**Clear memory.** The **Clear memory…** button (headless: `--clear-memory`)
+permanently deletes the awareness system's long-term memory (the `memories*`
+tables) and the persistent conversation store (`db/talos_memory.sqlite3` — facts,
+summaries, and history). Presence, state, history, and alerts are left intact.
+It asks for confirmation first and requires TALOS to be stopped (the running main
+agent holds the conversation database open). Headless, add `--yes` to skip the
+prompt, or use `--clear-awareness-memory` / `--clear-conversation-memory` to clear
+just one. **This is irreversible.**
+
+Prefer no GUI? Start everything headless in the current console with the
+last-saved configuration:
+
+```powershell
+.\Start-Talos.ps1 --no-gui
+```
+
+`--no-gui` also accepts `--no-ollama`, `--no-awareness`, `--no-main`,
+`--no-voice`, and `--api-models` to adjust a single run. The launcher brings up
+the awareness Postgres container, runs migrations, waits for each service's port,
+then starts the main agent and voice worker; Ctrl+C stops them all. It skips
+Ollama if a server is already listening on `127.0.0.1:11434` (in which case that
+server keeps whatever GPU it was started with — quit a tray Ollama first if you
+want the launcher to pin it to the 5080).
+
+The launcher can also be invoked directly with any project interpreter:
+
+```bash
+.venv-main/Scripts/python.exe -m talos.launcher            # GUI
+.venv-main/Scripts/python.exe -m talos.launcher --no-gui   # headless
+```
+
+#### Note: `TALOS_TEXT_AGENT_URL` and local voice
+
+The voice worker reaches the main agent over `TALOS_TEXT_AGENT_URL`. A real
+environment variable always overrides `settings.env` (`load_environment()` never
+overwrites a variable already present in the process environment). So if a
+persistent machine-level `TALOS_TEXT_AGENT_URL` points at a remote/Tailscale
+address (e.g. `http://100.x.y.z:8420`), a locally started voice worker inherits
+it and times out — the main agent binds to `localhost`, so nothing answers on
+the remote interface (this shows up as `WinError 10060`, a connection *timeout*,
+not "connection refused").
+
+When the launcher starts the main agent locally it works around this by pinning
+the voice worker's `TALOS_TEXT_AGENT_URL` to `http://127.0.0.1:<TEXT_AGENT_PORT>`
+for that child only. If you start the voice worker by hand, or point the
+launcher at a remote agent (uncheck **Main agent**), the inherited value applies
+instead. A machine-level `TALOS_TEXT_AGENT_URL` that names *this* host's remote
+address is usually a mistake — that variable belongs on the *client* device that
+connects in, not on the host running the agent.
+
 ### MCP Tools And Resources
 
 TALOS can expose tools from one or more MCP servers. By default, if `TALOS_MCP_SERVERS` is unset, it uses the built-in local aggregate server in `talos/mcp_server.py`. If `TALOS_MCP_SERVERS` is set, `talos/mcp_client/client.py` treats it as the full MCP server list and manages all configured connections.
