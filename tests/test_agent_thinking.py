@@ -42,6 +42,12 @@ class WantsThinkingTests(unittest.TestCase):
         self.assertTrue(thinking.wants_thinking("explain how the awareness pipeline works"))
         self.assertTrue(thinking.wants_thinking("compare vLLM and Ollama for this box"))
 
+    def test_coding_requests_think(self):
+        self.assertTrue(thinking.wants_thinking("write me some code to generate a cube in pygame"))
+        self.assertTrue(thinking.wants_thinking("refactor this function"))
+        self.assertTrue(thinking.wants_thinking("give me a script to rename files"))
+        self.assertTrue(thinking.wants_thinking("what does this python traceback mean"))
+
     def test_long_request_thinks(self):
         long_request = "please " + ("adjust the schedule " * 20)
         self.assertGreaterEqual(len(long_request), 200)

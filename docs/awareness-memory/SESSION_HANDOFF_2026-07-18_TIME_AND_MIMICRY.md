@@ -1,0 +1,25 @@
+# Session Handoff — 2026-07-18 — Time Increment & Follow-up Mimicry
+
+```text
+Session goal: Investigate two reported local-model misbehaviors — (1) responses ending with "let me know what else I can help with" despite the persona forbidding it, and (2) repeated "what time is it" turns incrementing the time by one each call (5:55 -> 5:56 -> 5:57...) while the real clock was unchanged — and fix them.
+Current phase: Phases 0-8 complete; owner-authorized post-completion bounded runtime fix.
+Root cause (both bugs): in-context pattern mimicry. Qwen3 (mb-core-v1) weights recent conversation history above the system prompt, so it continues whatever pattern the history shows. Proven with the REAL production prompt (build_instructions, 9929 chars, which already forbids follow-up offers at monkey_butler.md:110-111): clean single-turn history -> calls get_current_datetime, states the real time, no pleasantry; contaminated history (prior turns incrementing the time and ending with pleasantries) -> skips the tool, echoes last_time+1, appends the forbidden pleasantry. The model itself is not at fault: with a minimal prompt it does neither bug.
+Contributing factor for the time bug: the current time was never in the prompt context — only the get_current_datetime tool provided it — so once the model stopped calling the tool (history momentum) it had no ground truth and extrapolated.
+Fixes implemented (owner choices: time = code fix; pleasantry = reset history only, no code):
+  TIME: inject an authoritative current-datetime system message into every turn's context, placed after history and immediately before the user turn so it is the freshest signal. _current_time_context() in runtime.py (reuses talos.services.home_automation.get_current_datetime, honoring TALOS_TIMEZONE), gated by TALOS_INJECT_CURRENT_TIME (default on). Wired into both run_command_stream (local streaming lane) and run_command (legacy Responses lane). Validated: with the same contaminated history that produced "5:58", injecting the real time yielded the correct "6:00 PM". Bonus: the model now rarely needs the tool call at all.
+  PLEASANTRY: no code change per owner decision (avoid a rigid output filter). Instead reset the contaminated conversation history so the existing strong persona rule takes over on clean history (clean history was shown to produce no pleasantry). Cleared session 'voice-worker' (132 messages) via MemoryStore.clear_session + a messages sweep; durable facts preserved (1). Reset is live immediately (history is read fresh from the shared WAL SQLite DB each turn).
+Files added: tests/test_current_time_context.py; docs/awareness-memory/SESSION_HANDOFF_2026-07-18_TIME_AND_MIMICRY.md. Scratchpad-only (not in repo): repro.py, repro2.py, repro3.py, repro4.py, reset_history.py.
+Files modified: talos/agent/runtime.py (INJECT_CURRENT_TIME flag, _current_time_context helper, injection in both lanes); .env.example (TALOS_INJECT_CURRENT_TIME doc).
+Migrations added: None. Data change: cleared conversation messages for session 'voice-worker' in db/talos_memory.sqlite3 (facts preserved).
+Decisions made: Fix the time bug structurally (ground-truth in context = structured retrieval, per the architectural invariant) rather than only instructing the model. For the pleasantry, owner chose history reset over a deterministic stripper to avoid making output too rigid; the stripper remains the fallback if it recurs.
+Tests run: .venv-main unittest — tests.test_current_time_context, tests.test_run_command_stream, tests.test_tool_scoping, tests.test_agent_thinking, tests.test_llm_openai_compat, tests.test_router_voice_fast_routing, tests.test_agent_runtime_recovery; py_compile; live /api/chat reproductions (repro.py..repro4.py) confirming cause and fix.
+Tests passed: 57/57 unit; py_compile OK; time-injection reproduction correct; history reset verified (messages 132 -> 0, facts preserved).
+Tests failed: None.
+Commands not run: Full repo suite; live voice.
+Known limitations: The pleasantry fix relies on history staying clean plus the persona rule; if a pleasantry ever slips through and is persisted, mimicry could restart. If that recurs, add the deterministic trailing-offer stripper (strip before speaking and before persisting) that was designed and declined this session. Time injection adds ~200 chars/turn.
+Security implications: None. Local-only. No env/service changes beyond documenting a new default-on flag.
+Deployment implications: RESTART the streamed text-agent/voice process to load the time-injection code. The history reset needs no restart. No new env required (TALOS_INJECT_CURRENT_TIME defaults on).
+Unresolved questions: Whether to add the deterministic pleasantry stripper if the reset-only approach proves insufficient in live use.
+Next permitted task: Owner live verification of both behaviors after restarting the process.
+Explicit stop point: Stop after the time-injection code, tests, docs, history reset, and this handoff. The pleasantry stripper is intentionally not implemented.
+```

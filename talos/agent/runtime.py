@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import threading
 import time
-from typing import Any
+from typing import Any, Iterator
 
 import openai
 
@@ -56,6 +57,13 @@ OPENAI_SERVER_ERROR_RECOVERY_ATTEMPTS = max(
     0, env_int("TALOS_OPENAI_SERVER_ERROR_RECOVERY_ATTEMPTS", 1)
 )
 AGENT_MAX_OUTPUT_TOKENS = max(150, env_int("TALOS_AGENT_MAX_OUTPUT_TOKENS", 400))
+# Inject the authoritative current date/time into every turn's context so the
+# model reads ground truth instead of extrapolating a stale time from history.
+INJECT_CURRENT_TIME = env_bool("TALOS_INJECT_CURRENT_TIME", True)
+# Local models sometimes print a tool call as plain text instead of returning a
+# structured tool call (the hosted Responses API could not). Recover it: parse
+# and execute the call, and keep the raw markup out of speech and stored history.
+RECOVER_LEAKED_TOOL_CALLS = env_bool("TALOS_RECOVER_LEAKED_TOOL_CALLS", True)
 KICAD_TOOL_PREFIX = os.getenv("KICAD_MCP_TOOL_PREFIX", "kicad_").strip() or "kicad_"
 TOOL_OUTPUT_CHAR_LIMIT = max(256, env_int("TALOS_TOOL_OUTPUT_CHAR_LIMIT", 4000))
 TOOL_OUTPUT_SUMMARY_ENABLED = env_bool("TALOS_SUMMARIZE_TOOL_OUTPUTS", True)
@@ -203,6 +211,53 @@ KICAD_SCHEMATIC_TO_BOARD_TERMS = {
     "route",
     "routing",
 }
+# The kitchen recipe screen registers ~27 tools. They dominate the tool list and
+# only matter when the user is actually cooking, so they are scoped out unless
+# the request shows cooking/recipe intent. Everyday groups (home automation, TV,
+# awareness) stay always-on so natural inference like "it's hot in here" still
+# reaches the right tool. Terms are deliberately broad enough to keep multi-turn
+# cooking flows ("add flour to the list", "start the timer") working.
+KITCHEN_TOOL_PREFIX = "kitchen_screen_"
+KITCHEN_RELEVANT_TERMS = {
+    "recipe",
+    "recipes",
+    "cook",
+    "cooking",
+    "cooked",
+    "bake",
+    "baking",
+    "baked",
+    "roast",
+    "grill",
+    "fry",
+    "boil",
+    "simmer",
+    "preheat",
+    "oven",
+    "stove",
+    "ingredient",
+    "ingredients",
+    "meal",
+    "dish",
+    "food",
+    "breakfast",
+    "lunch",
+    "dinner",
+    "servings",
+    "serving",
+    "timer",
+    "step",
+    "steps",
+    "note",
+    "notes",
+    "screen",
+}
+KITCHEN_HINT_PHRASES = (
+    "recipe screen",
+    "kitchen screen",
+    "on the list",
+    "to the list",
+)
 
 
 def _resource_tool_definitions() -> list[dict[str, Any]]:
@@ -531,11 +586,17 @@ def _reduce_tool_surface(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]
     return reduced
 
 
-def _build_tool_definitions(mcp_client: Any) -> list[dict[str, Any]]:
+def _build_tool_definitions(
+    mcp_client: Any, command: str | None = None
+) -> list[dict[str, Any]]:
     tool_defs = _resource_tool_definitions() + mcp_client.openai_tool_definitions()
     reduce_kicad = os.getenv("TALOS_REDUCE_KICAD_TOOL_SURFACE", "1").strip().lower()
     if reduce_kicad not in {"0", "false", "no", "off"}:
         tool_defs = _reduce_tool_surface(tool_defs)
+
+    scope_tools = os.getenv("TALOS_SCOPE_TOOL_SURFACE", "1").strip().lower()
+    if command is not None and scope_tools not in {"0", "false", "no", "off"}:
+        tool_defs = _scope_specialized_tools(tool_defs, command)
 
     try:
         tool_bytes = len(json.dumps(tool_defs).encode("utf-8"))
@@ -718,6 +779,108 @@ def _format_context(snapshot: str) -> str | None:
     return f"Context (read-only): {snapshot}"
 
 
+def _current_time_context() -> str | None:
+    """Authoritative current date/time to inject into each turn's context.
+
+    Temporal questions must use structured retrieval, not inference. A freshly
+    computed timestamp placed in the current turn gives the model ground truth
+    right where it generates, so it cannot extrapolate a stale time from
+    conversation history -- the observed failure where repeated "what time is
+    it" turns incremented by one each time instead of re-reading the clock.
+    """
+    if not INJECT_CURRENT_TIME:
+        return None
+    try:
+        from talos.services.home_automation import get_current_datetime
+
+        now_block = get_current_datetime()
+    except Exception as exc:
+        print(f"TALOS current-time context unavailable: {_truncate_text(str(exc), 200)}")
+        return None
+    return (
+        "Current authoritative date and time (already retrieved; use this "
+        "directly and do not guess or infer it from earlier messages):\n"
+        f"{now_block}"
+    )
+
+
+_TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+
+def _looks_like_tool_markup_start(stripped_text: str) -> bool:
+    """True when a streamed turn's first non-whitespace content looks like it is
+    beginning a leaked tool call rather than natural assistant speech. Natural
+    spoken replies effectively never open with ``{`` or ``<tool_call``."""
+    return stripped_text.startswith("<tool_call") or stripped_text.startswith("{")
+
+
+def _iter_json_objects(text: str) -> Iterator[Any]:
+    """Yield consecutive top-level JSON objects from the start of ``text``."""
+    decoder = json.JSONDecoder()
+    index = 0
+    length = len(text)
+    while index < length:
+        while index < length and text[index] in " \t\r\n":
+            index += 1
+        if index >= length or text[index] != "{":
+            break
+        try:
+            obj, end = decoder.raw_decode(text, index)
+        except ValueError:
+            break
+        yield obj
+        index = end
+
+
+def _extract_leaked_tool_calls(text: str) -> tuple[LLMToolCall, ...]:
+    """Parse tool-call markup a local model emitted as plain content.
+
+    Handles both ``<tool_call>{...}</tool_call>`` wrappers and one or more bare
+    ``{"name": ..., "arguments": ...}`` objects. Returns the recovered calls so
+    the runtime can execute them exactly as if they had arrived structured.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return ()
+
+    tagged = _TOOL_CALL_TAG_RE.findall(stripped)
+    if tagged:
+        objects: list[Any] = []
+        for blob in tagged:
+            try:
+                objects.append(json.loads(blob))
+            except ValueError:
+                continue
+    elif stripped.startswith("{"):
+        objects = list(_iter_json_objects(stripped))
+    else:
+        return ()
+
+    calls: list[LLMToolCall] = []
+    for idx, obj in enumerate(objects):
+        if not isinstance(obj, dict):
+            continue
+        name = obj.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        arguments = obj.get("arguments", {})
+        if isinstance(arguments, str):
+            args_str = arguments
+        else:
+            try:
+                args_str = json.dumps(arguments)
+            except (TypeError, ValueError):
+                args_str = "{}"
+        calls.append(
+            LLMToolCall(
+                call_id=f"recovered_{idx}",
+                name=name.strip(),
+                arguments=args_str or "{}",
+            )
+        )
+    return tuple(calls)
+
+
 def classify_request_route(
     command: str,
     *,
@@ -826,6 +989,41 @@ def _is_phone_request(command: str, tool_defs: list[dict[str, Any]]) -> bool:
     if not any(str(tool.get("name") or "") == "place_phone_call" for tool in tool_defs):
         return False
     return bool(_tokenize_lowered(command) & PHONE_RELEVANT_TERMS)
+
+
+def _has_kitchen_tools(tool_defs: list[dict[str, Any]]) -> bool:
+    return any(str(tool.get("name") or "").startswith(KITCHEN_TOOL_PREFIX) for tool in tool_defs)
+
+
+def _is_kitchen_request(command: str, tool_defs: list[dict[str, Any]]) -> bool:
+    lowered = command.lower()
+    if KITCHEN_TOOL_PREFIX in lowered or "kitchen" in lowered:
+        return True
+    if not _has_kitchen_tools(tool_defs):
+        return False
+    if any(phrase in lowered for phrase in KITCHEN_HINT_PHRASES):
+        return True
+    return bool(_tokenize_lowered(command) & KITCHEN_RELEVANT_TERMS)
+
+
+def _scope_specialized_tools(
+    tool_defs: list[dict[str, Any]], command: str
+) -> list[dict[str, Any]]:
+    """Drop large, single-purpose tool groups when the request shows no intent
+    for them, so a smaller model is not swamped by irrelevant tools. Only the
+    kitchen recipe screen is scoped today; everyday tool groups stay available so
+    inferential requests still reach them."""
+    if _is_kitchen_request(command, tool_defs):
+        return tool_defs
+    scoped = [
+        tool
+        for tool in tool_defs
+        if not str(tool.get("name") or "").startswith(KITCHEN_TOOL_PREFIX)
+    ]
+    dropped = len(tool_defs) - len(scoped)
+    if dropped:
+        print(f"Scoped tool surface: dropped {dropped} kitchen tools (no cooking intent).")
+    return scoped
 
 
 def _format_kicad_backend_context(raw_output: str, command: str) -> str | None:
@@ -1500,7 +1698,7 @@ def run_command(
         benchmark.set_command(command)
 
     mcp_client = get_local_mcp_client()
-    tool_defs = _build_tool_definitions(mcp_client)
+    tool_defs = _build_tool_definitions(mcp_client, command)
     mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
     memory_store = _get_memory_store()
     if memory_store is not None:
@@ -1525,6 +1723,9 @@ def run_command(
         input_items.append({"role": "system", "content": context_message})
     _maybe_add_kicad_preflight(input_items, mcp_client, tool_defs, command)
     _maybe_add_minecraft_context(input_items, tool_defs, command)
+    time_context = _current_time_context()
+    if time_context:
+        input_items.append({"role": "system", "content": time_context})
     input_items.append({"role": "user", "content": command})
 
     try:
@@ -1722,7 +1923,7 @@ def run_command_stream(
 
     with _get_conversation_lock(thread_key):
         mcp_client = get_local_mcp_client()
-        tool_defs = _build_tool_definitions(mcp_client)
+        tool_defs = _build_tool_definitions(mcp_client, command)
         mode = _normalize_interaction_mode(
             interaction_mode or _infer_interaction_mode(session_id)
         )
@@ -1759,6 +1960,12 @@ def run_command_stream(
         _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
         _maybe_add_minecraft_context(messages, tool_defs, command)
         messages.extend(conversation_history)
+        # Authoritative current time goes after history and just before the user
+        # turn, so it is the freshest signal and overrides any stale time the
+        # model might otherwise copy from earlier messages.
+        time_context = _current_time_context()
+        if time_context:
+            messages.append({"role": "system", "content": time_context})
         # Dynamic reasoning control: suppress the Qwen3 <think> block on quick
         # commands (the dominant local-model latency cost) and keep it for
         # analytical requests. Only the outgoing turn is decorated; the original
@@ -1771,32 +1978,70 @@ def run_command_stream(
         rounds = 0
         while True:
             turn_text_parts: list[str] = []
+            spoken_parts: list[str] = []
+            pending: list[str] = []
+            # None = undecided, "speak" = natural text, "suppress" = leaked markup.
+            decision: str | None = None
             completion: LLMCompletion | None = None
+
+            def _speak(text: str):
+                spoken_parts.append(text)
+                full_text_parts.append(text)
+                return text
+
             for event in backend.stream(messages, tools=tool_defs):
                 if isinstance(event, LLMTextDelta):
-                    if event.text:
-                        turn_text_parts.append(event.text)
-                        full_text_parts.append(event.text)
-                        yield event.text
+                    if not event.text:
+                        continue
+                    turn_text_parts.append(event.text)
+                    if decision is None:
+                        stripped = "".join(turn_text_parts).lstrip()
+                        if not stripped:
+                            pending.append(event.text)  # leading whitespace only
+                            continue
+                        if RECOVER_LEAKED_TOOL_CALLS and _looks_like_tool_markup_start(stripped):
+                            decision = "suppress"  # hold back; recover after the turn
+                            pending.clear()
+                        else:
+                            decision = "speak"
+                            for part in pending:
+                                yield _speak(part)
+                            pending.clear()
+                            yield _speak(event.text)
+                    elif decision == "speak":
+                        yield _speak(event.text)
+                    # decision == "suppress": drop, neither spoken nor stored
                 elif isinstance(event, LLMCompletion):
                     completion = event
             if completion is None:
                 break
 
-            if not completion.wants_tools:
+            recovered_tool_calls: tuple[LLMToolCall, ...] = ()
+            if decision == "suppress":
+                recovered_tool_calls = _extract_leaked_tool_calls("".join(turn_text_parts))
+                if recovered_tool_calls:
+                    print(
+                        f"Recovered {len(recovered_tool_calls)} leaked tool call(s) "
+                        "the model emitted as text instead of speaking the markup."
+                    )
+                else:
+                    # A rare natural reply that merely began with '{'; speak it.
+                    yield _speak("".join(turn_text_parts))
+
+            effective_tool_calls = completion.tool_calls or recovered_tool_calls
+            if not effective_tool_calls:
                 break
 
             if rounds >= MAX_TOOL_CALL_ROUNDS:
                 limit_note = " I reached the tool-call limit before finishing that request."
-                full_text_parts.append(limit_note)
-                yield limit_note
+                yield _speak(limit_note)
                 break
 
             messages.append(
-                tool_calls_to_assistant_message("".join(turn_text_parts), completion.tool_calls)
+                tool_calls_to_assistant_message("".join(spoken_parts), effective_tool_calls)
             )
             tool_messages, _events = _execute_chat_tool_calls(
-                completion.tool_calls,
+                effective_tool_calls,
                 mcp_client,
                 session_id=session_id,
                 runtime_lane=runtime_lane,

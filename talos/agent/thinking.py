@@ -78,6 +78,28 @@ _COMPLEX_CUES = (
     "recommend",
     "optimize",
     "optimise",
+    # Coding / engineering requests benefit from reasoning even when short.
+    "code",
+    "a function",
+    "a script",
+    "a program",
+    "implement",
+    "refactor",
+    "algorithm",
+    "regex",
+    "stack trace",
+    "traceback",
+    "exception",
+    "compile",
+    "python",
+    "pygame",
+    "javascript",
+    "typescript",
+    "rust",
+    "golang",
+    "powershell",
+    "bash script",
+    "sql",
 )
 
 # A long request is usually multi-constraint work; mirror the request

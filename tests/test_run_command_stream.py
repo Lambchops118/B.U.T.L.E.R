@@ -125,6 +125,30 @@ class RunCommandStreamTests(unittest.TestCase):
         # It should stop and surface the limit note rather than loop endlessly.
         self.assertTrue(any("tool-call limit" in d for d in deltas))
 
+    def test_leaked_tool_call_json_is_recovered_not_spoken(self):
+        mcp = _FakeMCP()
+        backend = _FakeBackend(
+            [
+                # The model leaks a tool call as plain text content (no structured
+                # tool_calls), exactly as a local model sometimes does.
+                [
+                    LLMTextDelta('{"name": "get_time", "arguments": {}}'),
+                    LLMCompletion(text='{"name": "get_time", "arguments": {}}'),
+                ],
+                # After the recovered tool runs, the real spoken answer arrives.
+                [LLMTextDelta("It is noon."), LLMCompletion(text="It is noon.")],
+            ]
+        )
+        deltas = self._run(backend, mcp)
+
+        # The raw JSON must never reach the caller (TTS); only the real answer.
+        self.assertEqual(deltas, ["It is noon."])
+        self.assertNotIn('{"name"', "".join(deltas))
+        # The leaked call was parsed and actually executed.
+        self.assertEqual(mcp.calls, [("get_time", "{}")])
+        # The second stream call carried the tool result back to the model.
+        self.assertIn("tool", [m.get("role") for m in backend.stream_calls[1]])
+
     def test_voice_followup_receives_prior_user_and_assistant_turns(self):
         backend = _FakeBackend(
             [
