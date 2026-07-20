@@ -278,6 +278,14 @@ class LauncherConfig:
     start_main: bool = True
     start_voice: bool = True
 
+    # Discord voice frontend (separate repo). Off by default: it is an optional
+    # external client that reaches the main agent over TALOS_TEXT_AGENT_URL, and
+    # it lives in its own repository with its own venv + Rust toolchain.
+    start_discord: bool = False
+    # Path to the Discord-Voice-Frontend checkout. Empty means "auto-detect" a
+    # sibling of the TALOS repo (see Supervisor._discord_root).
+    discord_repo_path: str = ""
+
     # Whether the launcher manages these itself vs. assuming they're already up.
     manage_ollama: bool = True
     manage_docker: bool = True

@@ -12,6 +12,7 @@ progress and interleaved child output through it.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -19,6 +20,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 from . import config
@@ -152,7 +154,13 @@ class Supervisor:
 
     # -- process spawning --------------------------------------------------
 
-    def _spawn(self, name: str, args: list[str], env: dict[str, str]) -> ManagedProcess:
+    def _spawn(
+        self,
+        name: str,
+        args: list[str],
+        env: dict[str, str],
+        cwd: Optional[Path] = None,
+    ) -> ManagedProcess:
         self._say(f"starting {name}: {' '.join(str(a) for a in args)}")
         creationflags = 0
         if os.name == "nt":
@@ -161,7 +169,7 @@ class Supervisor:
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         popen = subprocess.Popen(
             args,
-            cwd=str(REPO_ROOT),
+            cwd=str(cwd or REPO_ROOT),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -294,6 +302,91 @@ class Supervisor:
             self._say(f"pointing voice worker at local main agent: {local_url}")
         self._spawn("voice", [str(py), "-m", "talos.voice.worker"], env)
 
+    def _discord_root(self) -> Path:
+        """Locate the Discord-Voice-Frontend checkout.
+
+        Uses the configured ``discord_repo_path`` when set, otherwise looks for a
+        sibling of the TALOS repo. The Discord frontend is a separate repository,
+        so this is only ever a path we start processes *in* — never imported.
+        """
+
+        raw = (self._cfg.discord_repo_path or "").strip()
+        if raw:
+            return Path(raw).expanduser()
+        return (
+            REPO_ROOT.parent
+            / "Butler Discord Frontend"
+            / "Discord-Voice-Frontend"
+        )
+
+    def _start_discord(self, base: dict[str, str]) -> None:
+        """Start the Discord voice frontend: Python STT/TTS/brain-bridge service
+        plus the Rust voice gateway. Both run in the Discord repo, not TALOS.
+
+        The frontend talks to the main agent over ``TALOS_TEXT_AGENT_URL`` (its
+        ``LLM_PROVIDER=talos`` path), so when the launcher also starts the main
+        agent locally we pin that URL to loopback, exactly like the voice worker.
+        Nothing here is fatal: missing repo/venv/toolchain is logged and skipped
+        so the rest of the stack keeps running.
+        """
+
+        root = self._discord_root()
+        if not root.exists():
+            self._say(
+                f"discord: repo not found at {root}. Set discord_repo_path in "
+                "launcher.config.json. Skipping Discord frontend."
+            )
+            return
+
+        # Env shared by both child processes. Point the frontend at the local
+        # main agent when we started it; default it to the TALOS brain backend.
+        discord_env = dict(base)
+        discord_env.setdefault("LLM_PROVIDER", "talos")
+        if self._cfg.start_main:
+            local_url = f"http://127.0.0.1:{self._ports.text_agent}"
+            discord_env["TALOS_TEXT_AGENT_URL"] = local_url
+            self._say(f"pointing discord frontend at local main agent: {local_url}")
+
+        # 1) Python service — uses the Discord repo's own venv (faster-whisper,
+        #    boto3, fastapi, ...). Run from the repo root so its .env resolves.
+        py = root / ".venv" / "Scripts" / "python.exe"
+        if not py.exists():
+            py = root / ".venv" / "bin" / "python"
+        app = root / "python-service" / "app.py"
+        if py.exists() and app.exists():
+            self._spawn(
+                "discord-svc",
+                [str(py), str(app)],
+                _venv_env(discord_env, py),
+                cwd=root,
+            )
+        else:
+            self._say(
+                f"discord: python service not startable (interpreter={py.exists()}, "
+                f"app={app.exists()}). Create the repo's .venv first. Skipping service."
+            )
+
+        # 2) Rust voice gateway — cargo reuses an existing build; the first build
+        #    can take several minutes.
+        cargo = shutil.which("cargo")
+        manifest = root / "rust-bot" / "Cargo.toml"
+        if cargo and manifest.exists():
+            self._say(
+                "discord: starting rust voice gateway (first build may take a "
+                "few minutes)..."
+            )
+            self._spawn(
+                "discord-bot",
+                [cargo, "run", "--release", "--manifest-path", str(manifest)],
+                dict(base),
+                cwd=root,
+            )
+        else:
+            self._say(
+                f"discord: cargo on PATH={bool(cargo)}, manifest={manifest.exists()}. "
+                "Skipping rust gateway."
+            )
+
     def _run_blocking(
         self, args: list[str], name: str, env: dict[str, str] | None = None
     ) -> int:
@@ -359,6 +452,8 @@ class Supervisor:
             self._start_main(base)
         if self._cfg.start_voice:
             self._start_voice(base)
+        if self._cfg.start_discord:
+            self._start_discord(base)
 
         self._say("all requested components launched.")
 
@@ -424,7 +519,13 @@ def run_headless(cfg: LauncherConfig, log: Optional[LogFn] = None) -> int:
     supervisor = Supervisor(cfg, log=log)
     supervisor.start()
     if not supervisor.is_running() and not any(
-        [cfg.start_awareness_db, cfg.start_awareness, cfg.start_main, cfg.start_voice]
+        [
+            cfg.start_awareness_db,
+            cfg.start_awareness,
+            cfg.start_main,
+            cfg.start_voice,
+            cfg.start_discord,
+        ]
     ):
         return 0
     supervisor.wait()
