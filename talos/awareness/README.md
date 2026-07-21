@@ -259,15 +259,45 @@ locks, dead-letters after `TALOS_AWARENESS_OUTBOX_MAX_ATTEMPTS`, and supports
 manual retry (`POST /outbox/{id}/retry`). Semantics are at-least-once with
 idempotent handlers — never exactly-once.
 
-Channels (ADR-015, existing only):
+Channels (existing transports only):
 
 | Channel | Transport | "Confirmed" means | Limitation |
 |---|---|---|---|
+| `voice` | authenticated `POST /speak` on the text server (:8420) → router `voice_cmd` lane → agent phrases and speaks it (TTS) | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent + Ollama up |
 | `gui` | authenticated `POST /notify` on the text server (:8420) → router `ui` lane → pygame GUI | text server accepted and enqueued the banner | not proof a human saw the screen |
 | `log` | structured awareness log | log record emitted | passive; always-available fallback |
 
+The default preferred channel for the seeded rules is `voice` (owner decision:
+maximize spoken presence): the awareness backend still **detects and renders
+factual wording deterministically** (no Ollama in the backend), and the LLM
+only phrases the sentence spoken aloud on the main-agent side. `voice` is built
+whenever `TALOS_AWARENESS_NOTIFY_URL` is set and `TALOS_AWARENESS_NOTIFY_VOICE_ENABLED`
+is true (default); the fallback order after a failed preferred channel is
+`voice → gui → log`, so a wedged agent still degrades to a banner and the log.
+
 Delivery evidence per alert: `GET /alerts/{id}/deliveries`. Backlog and
 oldest-pending age appear under `outbox_worker` in `/health/components`.
+
+### Reminders and the due-time worker
+
+The awareness backend owns time-based reminders so the system can speak up on
+its own at a wall-clock moment (the earlier design was event-driven only and
+had no clock). A reminder is a durable row (`reminders` table, migration
+`b8f2a1c7d3e9`) with an absolute `due_at`; the LLM parses the user's natural
+language ("remind me at 7pm") into that timestamp via the `set_reminder` tool,
+and the backend only stores and fires it — **the LLM is never the clock**.
+
+A deterministic `ReminderWorker` (interval `TALOS_AWARENESS_REMINDER_INTERVAL_SECONDS`,
+default 15s) polls `scheduled` reminders whose `due_at` has passed with
+`FOR UPDATE SKIP LOCKED` and, in the same transaction, raises an attention item
+through the normal egress (default channel `TALOS_AWARENESS_REMINDER_CHANNEL=voice`,
+interruptibility `TALOS_AWARENESS_REMINDER_INTERRUPTIBILITY=immediate`) and
+marks the reminder `fired` — so a crash commits both or neither and a reminder
+never fires twice. Quiet hours defer the spoken delivery of a due reminder
+exactly as they do other noncritical attention. API: `POST /reminders`,
+`GET /reminders[?status=&limit=]`, `POST /reminders/{id}/cancel`. MCP tools:
+`set_reminder`, `list_reminders`, `cancel_reminder`. Worker state is at
+`reminder_worker` in `/health/components` and `/metrics`.
 
 ## Situation, context, and read tools (Phase 5)
 
@@ -564,7 +594,8 @@ prompt; ✅ = implemented, 🔶 = partially implemented, ⬜ = planned (phase no
 
 Tables: `locations`, `entities`, `entity_relationships`, `sources`, `events`,
 `dead_letter_events`, `current_state`, `alerts`, `alert_events`,
-`attention_items`, `outbox`, `schema_registry`.
+`attention_items`, `outbox`, `schema_registry`. Later migrations add
+telemetry/state, memory, action, artifact, and `reminders` tables.
 
 Key constraints (see `db/models.py`):
 

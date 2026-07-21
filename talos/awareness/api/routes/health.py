@@ -77,6 +77,19 @@ async def _outbox_component(request: Request) -> list[ComponentStatus]:
     return [ComponentStatus(name="outbox_worker", status=status, detail=detail, data=data)]
 
 
+def _reminder_component(request: Request) -> list[ComponentStatus]:
+    worker = getattr(request.app.state, "reminder_worker", None)
+    if worker is None:
+        return []
+    data = worker.status()
+    if data["state"] == "running" and data["last_error"] is None:
+        status, detail = HEALTHY, ""
+    else:
+        status = DEGRADED
+        detail = f"reminder worker {data['state']}: {data['last_error'] or ''}".strip()
+    return [ComponentStatus(name="reminder_worker", status=status, detail=detail, data=data)]
+
+
 def _rules_component(request: Request) -> list[ComponentStatus]:
     engine = getattr(request.app.state, "rule_engine", None)
     if engine is None:
@@ -89,6 +102,7 @@ async def _extra_components(request: Request) -> list[ComponentStatus]:
         _mqtt_component(request)
         + _freshness_component(request)
         + await _outbox_component(request)
+        + _reminder_component(request)
         + _rules_component(request)
     )
 
@@ -114,6 +128,9 @@ async def metrics(request: Request) -> dict:
     outbox = getattr(request.app.state, "outbox", None)
     if outbox is not None:
         data["outbox_worker"] = await outbox.status()
+    reminder_worker = getattr(request.app.state, "reminder_worker", None)
+    if reminder_worker is not None:
+        data["reminder_worker"] = reminder_worker.status()
 
     try:
         usage = shutil.disk_usage(settings.data_directory if settings.data_directory.exists() else ".")

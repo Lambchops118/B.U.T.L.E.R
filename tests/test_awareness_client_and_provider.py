@@ -155,6 +155,9 @@ class AwarenessProviderTest(unittest.TestCase):
                 "search_memory",
                 "request_device_action",
                 "get_action_status",
+                "set_reminder",
+                "list_reminders",
+                "cancel_reminder",
             },
         )
 

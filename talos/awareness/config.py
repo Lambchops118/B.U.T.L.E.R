@@ -109,6 +109,15 @@ class AwarenessSettings(BaseSettings):
     default_offline_after_seconds: float = Field(default=900.0, gt=0)
     freshness_interval_seconds: float = Field(default=30.0, gt=0)
 
+    # --- reminders / scheduled attention (due-time worker) -------------------
+    # A deterministic worker polls durable reminders and, at their due time,
+    # raises an attention item that flows through the normal notification
+    # egress (spoken by default). The LLM parses "7pm" into an absolute time
+    # when creating the reminder; the backend only stores and fires it.
+    reminder_interval_seconds: float = Field(default=15.0, gt=0)
+    reminder_interruptibility: str = "immediate"
+    reminder_channel: str = "voice"
+
     # --- bounded read queries (Phase 3) --------------------------------------
     max_query_range_days: int = Field(default=31, ge=1)
     max_query_points: int = Field(default=10000, ge=1)
@@ -120,6 +129,11 @@ class AwarenessSettings(BaseSettings):
     notify_url: str = "http://127.0.0.1:8420"  # existing text server (GUI banner)
     notify_token: SecretStr | None = None  # text server bearer token
     notify_timeout_seconds: float = Field(default=5.0, gt=0)
+    # Proactive spoken notifications: deliver alerts through the text server's
+    # /speak lane so the agent phrases and speaks them aloud (LLM wording; the
+    # awareness backend still detects and renders deterministically). The GUI
+    # banner and log remain as automatic fallback channels.
+    notify_voice_enabled: bool = True
     outbox_interval_seconds: float = Field(default=2.0, gt=0)
     outbox_batch_size: int = Field(default=20, ge=1)
     outbox_max_attempts: int = Field(default=8, ge=1)

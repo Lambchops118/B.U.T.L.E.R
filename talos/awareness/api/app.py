@@ -18,6 +18,7 @@ from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
 from talos.awareness.api.routes import memory as memory_routes
 from talos.awareness.api.routes import reads as read_routes
+from talos.awareness.api.routes import reminders as reminder_routes
 from talos.awareness.config import AwarenessSettings, load_settings
 from talos.awareness.db.session import build_engine
 from talos.awareness.health.service import HealthService
@@ -27,6 +28,7 @@ from talos.awareness.memory.embeddings import EmbeddingHandler
 from talos.awareness.memory.service import MemoryService
 from talos.awareness.notifications.handler import NotificationHandler
 from talos.awareness.outbox.worker import OutboxWorker
+from talos.awareness.reminders.worker import ReminderWorker
 from talos.awareness.rules.engine import RuleEngine
 from talos.awareness.rules.policy import load_policy
 from talos.awareness.state.freshness import FreshnessWorker
@@ -118,6 +120,13 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         outbox_stop = asyncio.Event()
         outbox_task = asyncio.create_task(outbox.run(outbox_stop), name="awareness-outbox")
         app.state.outbox = outbox
+
+        reminder_worker = ReminderWorker(engine, settings, alerts)
+        reminder_stop = asyncio.Event()
+        reminder_task = asyncio.create_task(
+            reminder_worker.run(reminder_stop), name="awareness-reminders"
+        )
+        app.state.reminder_worker = reminder_worker
         logger.info(
             "awareness API started; config: %s", settings.summary(), extra={"component": "api"}
         )
@@ -127,6 +136,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
             for stop_event, task in (
                 (freshness_stop, freshness_task),
                 (outbox_stop, outbox_task),
+                (reminder_stop, reminder_task),
             ):
                 stop_event.set()
                 task.cancel()
@@ -146,6 +156,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
     app.include_router(context_routes.router)
     app.include_router(memory_routes.router)
     app.include_router(action_routes.router)
+    app.include_router(reminder_routes.router)
     return app
 
 

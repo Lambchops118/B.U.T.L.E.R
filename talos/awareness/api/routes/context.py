@@ -123,5 +123,8 @@ async def get_capabilities(request: Request) -> dict:
             "search_memory": reads + "; semantic (vector) component degrades to full-text while Ollama is unavailable" if db_ok else reads,
             "request_device_action": action_request,
             "get_action_status": reads,
+            "set_reminder": reads,
+            "list_reminders": reads,
+            "cancel_reminder": reads,
         }
     }

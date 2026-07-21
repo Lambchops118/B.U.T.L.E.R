@@ -164,17 +164,17 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         "mqtt": 1,
         "panels": 1,
         "waterer": 1,
-        "placeholder2": 0,
-        "placeholder3": 1,
+        "discord": 0,
+        "engassist": 1,
     }
 
 
     dynamo_configs = [
         dict(id="mqtt", x=1700, y=250, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "MQTT Broker", subtext="[status]"),
-        dict(id="panels",x=1700, y=475, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "Display Panels", subtext="[status]"),
+        dict(id="panels",x=1700, y=475, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "Home Automation MCP", subtext="[status]"),
         dict(id="waterer",x=1700, y=700, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "Auto Waterer", subtext="[status]"),
-        dict(id="placeholder2",x=1700, y=925,  base_deg=45,  surface=framebuffer, scale=scale, color=color, supertext= "Undefined Subystem", subtext=""),
-        dict(id="placeholder3",x=1700, y=1150, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "Undefined Subystem", subtext="")
+        dict(id="discord",x=1700, y=925,  base_deg=45,  surface=framebuffer, scale=scale, color=color, supertext= "Discord Frontend", subtext=""),
+        dict(id="engassist",x=1700, y=1150, base_deg=45, surface=framebuffer, scale=scale, color=color, supertext= "Engineering Assist", subtext="")
     ]
     
     # This takes the dynamo configs and creates the actual Dynamo objects.
@@ -303,10 +303,10 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
 
         # Update Dynamo Statuses Here.
         dynamo_system_status["mqtt"]         = 1 #if (second >= 0) else 0  #placeholder code to simulate status changes. replace with actual
-        dynamo_system_status["panels"]       = 1 #if (second >= 10) else 0
-        dynamo_system_status["waterer"]      = 1 #if (second >= 20) else 0
-        dynamo_system_status["placeholder2"] = 1 #if (second >= 30) else 0
-        dynamo_system_status["placeholder3"] = 1 #if (second >= 40) else 0
+        dynamo_system_status["panels"]       = 0 #if (second >= 10) else 0
+        dynamo_system_status["waterer"]      = 0 #if (second >= 20) else 0
+        dynamo_system_status["discord"]      = 1 #if (second >= 30) else 0
+        dynamo_system_status["engassist"]    = 0 #if (second >= 40) else 0
 
         debug = False
         if debug:

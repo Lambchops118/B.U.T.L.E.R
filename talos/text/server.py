@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from talos.agent import runtime as agent_runtime
 from talos.config import env_bool, load_environment
 from talos.jobs import get_default_job_store
-from talos.messages import EventPayload, Message, TextPayload
+from talos.messages import EventPayload, Message, TextPayload, VoicePayload
 from talos.services import awareness_client
 
 
@@ -161,6 +161,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/notify":
             self._handle_notify()
             return
+        if self.path == "/speak":
+            self._handle_speak()
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def _handle_notify(self) -> None:
@@ -187,6 +190,44 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         banner_title = title if title.startswith("[") else f"[{severity.upper()}] {title}"
         self.server.central_queue.put(
             Message(type="ui", payload=("VOICE_CMD", banner_title, text or title))
+        )
+        self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
+
+    def _handle_speak(self) -> None:
+        """Spoken, LLM-phrased proactive alert for the awareness backend.
+
+        Unlike ``/notify`` (a silent GUI banner), this enqueues a ``voice_cmd``
+        so the agent phrases the alert in its own voice and speaks it out loud
+        without the user prompting. The awareness backend detects the condition
+        deterministically and renders factual title/body; the LLM only decides
+        the wording. 200 means the message was enqueued for the router, not
+        that a human heard it.
+        """
+        try:
+            body = self._read_json_body()
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        title = str(body.get("title", "")).strip()
+        text = str(body.get("body", "")).strip()
+        severity = str(body.get("severity", "notice")).strip() or "notice"
+        if not title:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'title'."})
+            return
+
+        instruction = (
+            "[This is an automated home-awareness alert, not something the user "
+            "said out loud. Speak it to the user naturally and briefly in your own "
+            "voice. Do not read it back verbatim and do not mention that this is a "
+            "system message.]\n"
+            f"Severity: {severity}\n"
+            f"Alert: {title}"
+        )
+        if text:
+            instruction += f"\nDetails: {text}"
+        self.server.central_queue.put(
+            Message(type="voice_cmd", payload=VoicePayload(instruction))
         )
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
 

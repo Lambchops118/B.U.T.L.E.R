@@ -38,6 +38,13 @@ def _call(path: str, params: dict | None = None) -> str:
         return _dumps({"error": str(exc)})
 
 
+def _post(path: str, body: dict) -> dict:
+    try:
+        return awareness_client.post_json(path, body)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
 def register(server: FastMCP) -> None:
     """Register the awareness subsystem's read tools on a FastMCP server."""
 
@@ -186,6 +193,47 @@ def register(server: FastMCP) -> None:
         (requested/approved/dispatched/acknowledged/completed/failed/
         timed_out/cancelled)."""
         return _call(f"/actions/{action_request_id}")
+
+    @server.tool()
+    def set_reminder(text: str, due_at: str, entity_id: str = "") -> str:
+        """Set a time-based reminder the system will SPEAK OUT LOUD on its own
+        when it comes due — use whenever the user says "remind me…", "set a
+        reminder", "at 7pm tell me…", or "in 20 minutes…". YOU convert the
+        user's natural-language time into `due_at` as an absolute ISO 8601
+        timestamp WITH a timezone offset (e.g. '2026-07-20T19:00:00-04:00' for
+        7:00pm local); the current date/time is in your context. `text` is what
+        to say (write it as the reminder content, e.g. "take the laundry out").
+        The reminder is stored durably and fired by a deterministic clock, not
+        by you. Returns the reminder_id and stored due_at. If the time is in the
+        past or missing an offset the call is rejected — ask the user to
+        clarify rather than guessing."""
+        return _dumps(
+            _post(
+                "/reminders",
+                {
+                    "text": text,
+                    "due_at": due_at,
+                    "entity_id": entity_id or None,
+                },
+            )
+        )
+
+    @server.tool()
+    def list_reminders(status: str = "scheduled", limit: int = 50) -> str:
+        """List reminders, soonest due first. `status` filters by
+        scheduled/fired/cancelled/expired (default scheduled = still pending).
+        Use for "what reminders do I have" or before cancelling one."""
+        return _call(
+            "/reminders",
+            {"status": status or None, "limit": max(1, min(limit, 200))},
+        )
+
+    @server.tool()
+    def cancel_reminder(reminder_id: str) -> str:
+        """Cancel a still-pending reminder by its reminder_id (from
+        set_reminder or list_reminders). Only 'scheduled' reminders can be
+        cancelled; returns an error if it already fired or does not exist."""
+        return _dumps(_post(f"/reminders/{reminder_id}/cancel", {}))
 
     @server.tool()
     def get_awareness_capabilities() -> str:

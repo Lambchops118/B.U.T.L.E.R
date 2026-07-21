@@ -45,6 +45,7 @@ ATTENTION_DELIVERY_STATUSES = ("pending", "delivering", "delivered", "failed", "
 SOURCE_HEALTH_STATUSES = ("healthy", "degraded", "stale", "offline", "misconfigured", "unauthorized", "unknown")
 CLOCK_QUALITIES = ("unknown", "unsynchronized", "device_local", "device_synced", "gateway_stamped", "server_received")
 OUTBOX_STATUSES = ("pending", "completed", "failed", "dead_letter")
+REMINDER_STATUSES = ("scheduled", "fired", "cancelled", "expired")
 MEMORY_TYPES = ("semantic", "episodic")
 MEMORY_STATUSES = ("candidate", "accepted", "rejected", "active", "superseded", "expired", "deleted")
 MEMORY_SENSITIVITIES = ("normal", "personal", "sensitive", "restricted")
@@ -729,6 +730,36 @@ class Artifact(Base):
     provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
     retention_class: Mapped[str | None] = mapped_column(sa.String(100))
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+
+
+class Reminder(Base):
+    """Durable user reminder / scheduled attention. A deterministic worker
+    fires reminders whose ``due_at`` has passed by raising an attention item
+    (spoken by default); the LLM parses the natural-language time into an
+    absolute ``due_at`` when creating one — the backend only stores and fires."""
+
+    __tablename__ = "reminders"
+    __table_args__ = (
+        _in_check("status", REMINDER_STATUSES, "status_valid"),
+        sa.Index("ix_reminders_status_due_at", "status", "due_at"),
+    )
+
+    reminder_id: Mapped[UUID] = mapped_column(
+        primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    text: Mapped[str] = mapped_column(sa.Text)
+    due_at: Mapped[datetime] = mapped_column()
+    status: Mapped[str] = mapped_column(sa.String(20), server_default="scheduled")
+    created_by: Mapped[str | None] = mapped_column(sa.String(200))
+    entity_id: Mapped[str | None] = mapped_column(sa.String(200))
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
+    fired_at: Mapped[datetime | None] = mapped_column()
+    cancelled_at: Mapped[datetime | None] = mapped_column()
+    attention_item_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("attention_items.attention_item_id", ondelete="SET NULL")
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(sa.String(300), unique=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=sa.text("'{}'::jsonb"))
 
 
 class SchemaRegistryEntry(Base):
