@@ -276,7 +276,7 @@ def _finalize_call_record(record: PhoneCallRecord) -> PhoneCallRecord:
 
 
 def _maybe_record_call_memory(record: PhoneCallRecord) -> None:
-    if not env_bool("TALOS_MEMORY_ENABLED", False):
+    if not env_bool("TALOS_MEMORY_ENABLED", True):
         return
     if not record.summary:
         return
