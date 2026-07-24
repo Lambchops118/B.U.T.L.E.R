@@ -16,6 +16,7 @@ free of heavy dependencies. ``WhisperModel`` can be injected for tests.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from talos.voice.backends.base import AudioChunk, STTBackend, TranscriptResult
@@ -41,6 +42,8 @@ class FasterWhisperSTT(STTBackend):
         self._compute_type = compute_type
         self._model = model
         self._lock = threading.Lock()
+        self.last_model_preloaded: bool | None = None
+        self.last_model_load_ms: float | None = None
 
     def _resolve_device(self) -> tuple[str, str]:
         device = self._device or ("cuda" if _cuda_available() else "cpu")
@@ -66,7 +69,15 @@ class FasterWhisperSTT(STTBackend):
     def transcribe(self, audio: AudioChunk) -> TranscriptResult:
         import numpy as np
 
+        model_preloaded = self._model is not None
+        model_load_started = time.perf_counter()
         model = self._ensure_model()
+        self.last_model_preloaded = model_preloaded
+        self.last_model_load_ms = (
+            0.0
+            if model_preloaded
+            else round((time.perf_counter() - model_load_started) * 1000.0, 1)
+        )
         samples = np.frombuffer(audio.pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if samples.size == 0:
             return TranscriptResult(text="")

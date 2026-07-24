@@ -81,6 +81,7 @@ class LLMCompletion:
     tool_calls: tuple[LLMToolCall, ...] = ()
     finish_reason: str = "stop"
     raw: Any = None
+    telemetry: dict[str, Any] = field(default_factory=dict)
 
     @property
     def wants_tools(self) -> bool:

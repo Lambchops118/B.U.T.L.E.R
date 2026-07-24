@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 import queue
 import re
+import urllib.request
 from typing import Optional
 
 from talos.agent import runtime as agent_runtime
@@ -14,6 +17,31 @@ from talos.state_store import StateStore
 
 
 BACKGROUND_ACK = "I can do that. I'm working on it now."
+# Proactive voice_cmd messages (scheduled reports, awareness alerts, fired
+# reminders) are phrased by the agent here in the main process, but only the
+# voice worker owns TTS + the audio device — so we hand it the finished text to
+# speak aloud. Best-effort: the router never blocks on audio, and a missing
+# voice worker just means the banner shows without sound.
+VOICE_SPEAK_URL = os.getenv("TALOS_VOICE_SPEAK_URL", "http://127.0.0.1:8610")
+VOICE_SPEAK_ENABLED = env_bool("TALOS_VOICE_SPEAK_ENABLED", True)
+
+
+def _speak_via_voice_worker(text: str) -> None:
+    text = (text or "").strip()
+    if not text or not VOICE_SPEAK_ENABLED:
+        return
+    try:
+        request = urllib.request.Request(
+            VOICE_SPEAK_URL.rstrip("/") + "/speak",
+            data=json.dumps({"text": text}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(request, timeout=2)
+    except Exception:
+        # Audio is a best-effort add-on to the GUI banner; never break the
+        # router loop because the voice worker is down or slow.
+        pass
 # The voice lane is latency-sensitive: skip the extra model-based route call and
 # rely on the local heuristic classifier. Set TALOS_VOICE_MODEL_ROUTING=1 to
 # restore the LLM route decision for voice commands.
@@ -247,7 +275,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                 )
                 decision = _enforce_foreground_for_sensitive_actions(vp.command, decision)
                 if decision.mode == "status":
-                    _run_agent_command(
+                    response_text = _run_agent_command(
                         vp.command,
                         gui_queue,
                         snapshot,
@@ -255,6 +283,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                         interaction_mode="voice",
                         extra_context=runtime_context,
                     )
+                    _speak_via_voice_worker(response_text)
                 elif decision.mode == "background":
                     job = job_manager.submit(
                         session_id="voice",
@@ -266,14 +295,16 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     )
                     ack_text = decision.response.strip() or BACKGROUND_ACK
                     gui_queue.put(("VOICE_CMD", vp.command, f"{ack_text} Job ID: {job.job_id}"))
+                    _speak_via_voice_worker(ack_text)
                 else:
-                    _run_agent_command(
+                    response_text = _run_agent_command(
                         vp.command,
                         gui_queue,
                         snapshot,
                         session_id="voice",
                         interaction_mode="voice",
                     )
+                    _speak_via_voice_worker(response_text)
 
             elif msg.type == "text_cmd":
                 tp: TextPayload = msg.payload

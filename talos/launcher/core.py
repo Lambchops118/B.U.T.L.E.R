@@ -225,6 +225,20 @@ class Supervisor:
             return
         env = _gpu_env(base, self._cfg.llm_gpu_index)
         # Ollama uses all VRAM on the visible card by default.
+        # Keep the selected chat model resident so casual home-automation
+        # commands never pay a cold reload (~15-20s for a multi-GB model):
+        #   KEEP_ALIVE=-1        never unload the model on idle
+        #   MAX_LOADED_MODELS=1  only one model resident at a time, so a second
+        #                        model can never co-load and shrink the chat
+        #                        model onto CPU (slow partial-offload inference)
+        #   CONTEXT_LENGTH=16384 give the model room for the system prompt + full
+        #                        tool surface AND the conversation history; at the
+        #                        8192 default Ollama truncates the oldest messages
+        #                        (the history) first, so the assistant "forgets"
+        # setdefault lets a deliberate environment override still win.
+        env.setdefault("OLLAMA_KEEP_ALIVE", "-1")
+        env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
+        env.setdefault("OLLAMA_CONTEXT_LENGTH", "16384")
         self._spawn("ollama", ["ollama", "serve"], env)
         self._wait_port("ollama", "127.0.0.1", self._ports.ollama, timeout=60)
 

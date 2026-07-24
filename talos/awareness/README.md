@@ -263,7 +263,7 @@ Channels (existing transports only):
 
 | Channel | Transport | "Confirmed" means | Limitation |
 |---|---|---|---|
-| `voice` | authenticated `POST /speak` on the text server (:8420) → router `voice_cmd` lane → agent phrases and speaks it (TTS) | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent + Ollama up |
+| `voice` | authenticated `POST /speak` on the text server (:8420) → router `voice_cmd` lane → agent phrases it → router hands the text to the **voice worker's** `/speak` (127.0.0.1:8610) → Polly TTS + audio out | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent + Ollama + the voice worker running |
 | `gui` | authenticated `POST /notify` on the text server (:8420) → router `ui` lane → pygame GUI | text server accepted and enqueued the banner | not proof a human saw the screen |
 | `log` | structured awareness log | log record emitted | passive; always-available fallback |
 

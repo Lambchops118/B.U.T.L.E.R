@@ -18,6 +18,7 @@ import numpy as np
 import speech_recognition as sr
 
 from talos.config import env_bool, load_environment, require_env
+from talos.telemetry import emit_pipeline_event
 from talos.text.service_client import send_message, stream_message
 from talos.voice.benchmarking import VoiceBenchmarkSession
 from talos.voice.streaming.speaker import StreamingSpeaker
@@ -63,6 +64,20 @@ _wake_model = None
 _wake_model_lock = threading.Lock()
 _wake_infer_lock = threading.Lock()
 _command_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _emit_voice_pipeline_event(benchmark, event: str, **fields) -> None:
+    if benchmark is None:
+        return
+    snapshot = benchmark.pipeline_snapshot()
+    emit_pipeline_event(
+        request_id=benchmark.session_id,
+        component="voice_worker",
+        event=event,
+        dimensions=snapshot.get("dimensions") or {},
+        metrics=snapshot.get("latencies_ms") or {},
+        **fields,
+    )
 
 
 def _get_remote_stt_client():
@@ -191,6 +206,9 @@ def play_audio(filename, benchmark=None):
             stream.stop_stream()
             stream.close()
             print(f"Finished playback for '{filename}'.")
+            if benchmark:
+                benchmark.mark_stage("pipeline_done")
+                _emit_voice_pipeline_event(benchmark, "voice_pipeline_completed")
 
         time.sleep(0.2)
         os.remove(filename)
@@ -199,6 +217,12 @@ def play_audio(filename, benchmark=None):
         if benchmark:
             benchmark.add_error(f"Audio playback error: {exc}")
             benchmark.emit_summary_once("audio_playback_error")
+            benchmark.mark_stage("pipeline_done")
+            _emit_voice_pipeline_event(
+                benchmark,
+                "voice_pipeline_failed",
+                error_type=type(exc).__name__,
+            )
         print(f"Error in play_audio: {exc}")
 
 
@@ -222,9 +246,22 @@ def _transcribe_local(audio_data, benchmark):
     from talos.voice.backends.base import AudioChunk
 
     raw = audio_data.get_raw_data(convert_rate=16000, convert_width=2)
+    backend = _get_stt_backend()
+    benchmark.set_dimension("stt_backend", "local:faster_whisper")
     benchmark.mark_stage("stt_send")
-    result = _get_stt_backend().transcribe(AudioChunk(pcm=raw, sample_rate=16000))
+    result = backend.transcribe(AudioChunk(pcm=raw, sample_rate=16000))
     benchmark.mark_stage("stt_done")
+    model_load_ms = getattr(backend, "last_model_load_ms", None)
+    if model_load_ms is not None:
+        benchmark.set_metric("stt_model_load_ms", model_load_ms)
+    _emit_voice_pipeline_event(
+        benchmark,
+        "stt_completed",
+        backend="local:faster_whisper",
+        model=getattr(backend, "model_size", "unknown"),
+        model_load_ms=model_load_ms,
+        model_preloaded=getattr(backend, "last_model_preloaded", None),
+    )
     return result.text
 
 
@@ -234,6 +271,7 @@ def _transcribe_remote_with_wake_gate(audio_data, benchmark):
     Returns the transcript text, or ``None`` if the wake gate rejected the clip
     (already logged/emitted).
     """
+    benchmark.set_dimension("stt_backend", "hosted:openai-whisper-1")
     if WAKE_WORD_MODE == "local":
         benchmark.mark_stage("local_wake_send")
         wake_detected = _local_wake_word_detect(audio_data)
@@ -261,6 +299,12 @@ def _transcribe_remote_with_wake_gate(audio_data, benchmark):
         timestamp_granularities=["word"],
     )
     benchmark.mark_stage("stt_done")
+    _emit_voice_pipeline_event(
+        benchmark,
+        "stt_completed",
+        backend="hosted:openai-whisper-1",
+        fallback_used=bool(LOCAL_STT_ENABLED),
+    )
 
     text = _extract_transcription_text(whisper_result).strip().lower()
     if text:
@@ -351,6 +395,102 @@ def recognition_callback(recognizer, audio_data):
         benchmark.emit_summary_once("recognition_callback_error")
 
 
+_speak_lock = threading.Lock()
+
+
+def speak_text(text: str) -> None:
+    """Vocalize already-composed text through the same Polly + audio-output path
+    used for spoken replies, WITHOUT invoking the LLM.
+
+    Proactive speech (reminders, awareness alerts, scheduled reports) is phrased
+    upstream in the main-agent router and handed here only to be heard, so the
+    system can speak without the user prompting it. Serialized on a lock so two
+    proactive utterances never fight over the output device.
+    """
+    text = " ".join((text or "").split())
+    if not text:
+        return
+    with _speak_lock:
+        output_device_index = _resolve_output_device_index()
+        print(f"Speaking proactively on output device: {_describe_output_device(output_device_index)}")
+        stream = audio_interface.open(
+            format=audio_interface.get_format_from_width(2),
+            channels=1,
+            rate=16000,
+            output=True,
+            output_device_index=output_device_index,
+        )
+
+        def synth(chunk):
+            with contextlib.closing(
+                polly_client.synthesize_speech(
+                    VoiceId="Brian",
+                    OutputFormat="pcm",
+                    SampleRate="16000",
+                    Text=chunk,
+                    Engine="neural",
+                ).get("AudioStream")
+            ) as audio_stream:
+                return [audio_stream.read()]
+
+        def sink(pcm):
+            stream.write(pcm)
+
+        try:
+            StreamingSpeaker(synth, sink).speak_stream([text])
+        finally:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+
+
+def run_speak_server(port: int | None = None):
+    """Serve a loopback endpoint the rest of TALOS uses to make the assistant
+    speak proactively: ``POST /speak {"text": "..."}`` enqueues one utterance on
+    the voice worker (the only process with TTS + the audio device). Returns the
+    already-serving ``ThreadingHTTPServer`` so the caller can shut it down.
+    """
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    if port is None:
+        port = int(os.getenv("TALOS_VOICE_SPEAK_PORT", "8610"))
+
+    class _SpeakHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/speak":
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                text = str(body.get("text", "")).strip()
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+                return
+            if text:
+                # Off the HTTP thread: return immediately, play in the background.
+                _command_executor.submit(speak_text, text)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+
+        def log_message(self, *args):  # silence default request logging
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), _SpeakHandler)
+    threading.Thread(
+        target=server.serve_forever, name="talos-voice-speak", daemon=True
+    ).start()
+    print(f"Voice speak server listening on 127.0.0.1:{port}")
+    return server
+
+
 def run_voice_recognition():
     mic = sr.Microphone()
     print("Microphone initialized.")
@@ -369,6 +509,9 @@ def run_voice_recognition():
 
 def handle_command(command, benchmark=None):
     print(f"Handling voice command: {command}")
+    if benchmark:
+        benchmark.mark_stage("command_start")
+        benchmark.set_dimension("llm_fallback_used", False)
     if VOICE_STREAMING:
         progress = {"spoke": False}
         try:
@@ -378,17 +521,36 @@ def handle_command(command, benchmark=None):
             print(f"Streaming voice path error: {exc}")
             if benchmark:
                 benchmark.add_error(f"Streaming path error: {exc}")
+                _emit_voice_pipeline_event(
+                    benchmark,
+                    "streaming_path_failed",
+                    error_type=type(exc).__name__,
+                )
             if progress["spoke"]:
                 # Audio already started; do not replay via the fallback path.
                 if benchmark:
                     benchmark.emit_summary_once("voice_worker_error")
+                    benchmark.mark_stage("pipeline_done")
+                    _emit_voice_pipeline_event(
+                        benchmark,
+                        "voice_pipeline_failed",
+                        error_type=type(exc).__name__,
+                    )
                 return
             if not REMOTE_LLM_FALLBACK_ENABLED:
                 print("Remote LLM fallback is disabled; voice command failed locally.")
                 if benchmark:
                     benchmark.emit_summary_once("voice_worker_error")
+                    benchmark.mark_stage("pipeline_done")
+                    _emit_voice_pipeline_event(
+                        benchmark,
+                        "voice_pipeline_failed",
+                        error_type=type(exc).__name__,
+                    )
                 return
             print("Falling back to explicitly enabled non-streaming voice path.")
+            if benchmark:
+                benchmark.set_dimension("llm_fallback_used", True)
     _handle_command_legacy(command, benchmark)
 
 
@@ -396,6 +558,8 @@ def _handle_command_streaming(command, benchmark, progress):
     """Stream the agent response and speak it sentence-by-sentence as it arrives."""
     output_device_index = _resolve_output_device_index()
     print(f"Opening streaming playback on output device: {_describe_output_device(output_device_index)}")
+    if benchmark:
+        benchmark.mark_stage("audio_open_start")
     stream = audio_interface.open(
         format=audio_interface.get_format_from_width(2),
         channels=1,
@@ -403,9 +567,12 @@ def _handle_command_streaming(command, benchmark, progress):
         output=True,
         output_device_index=output_device_index,
     )
+    if benchmark:
+        benchmark.mark_stage("audio_stream_ready")
     marks = {"polly": False}
 
     def synth(text):
+        synth_started = time.perf_counter()
         if benchmark and not marks["polly"]:
             marks["polly"] = True
             benchmark.mark_stage("polly_send")
@@ -418,10 +585,23 @@ def _handle_command_streaming(command, benchmark, progress):
                 Engine="neural",
             ).get("AudioStream")
         ) as audio_stream:
-            return [audio_stream.read()]
+            pcm = audio_stream.read()
+        if benchmark:
+            duration_ms = round((time.perf_counter() - synth_started) * 1000.0, 1)
+            benchmark.add_metric("polly_total_ms", duration_ms)
+            benchmark.add_metric("polly_request_count", 1)
+            if marks["polly"]:
+                benchmark.mark_stage("polly_done")
+        return [pcm]
 
     def sink(pcm):
+        write_started = time.perf_counter()
         stream.write(pcm)
+        if benchmark:
+            benchmark.add_metric(
+                "audio_write_total_ms",
+                round((time.perf_counter() - write_started) * 1000.0, 1),
+            )
 
     def on_first_audio():
         progress["spoke"] = True
@@ -433,19 +613,27 @@ def _handle_command_streaming(command, benchmark, progress):
         if benchmark:
             benchmark.mark_stage("llm_send")
         seen_first = False
-        for delta in stream_message(
-            command,
-            session_id=VOICE_SESSION_ID,
-            source="voice",
-            base_url=VOICE_AGENT_URL,
-            token=VOICE_AGENT_TOKEN,
-            timeout=None,
-        ):
-            if not seen_first:
-                seen_first = True
-                if benchmark:
-                    benchmark.mark_stage("llm_first_done")
-            yield delta
+        try:
+            for delta in stream_message(
+                command,
+                session_id=VOICE_SESSION_ID,
+                source="voice",
+                base_url=VOICE_AGENT_URL,
+                token=VOICE_AGENT_TOKEN,
+                timeout=None,
+                request_id=benchmark.session_id if benchmark else None,
+                telemetry_callback=(
+                    benchmark.apply_pipeline_telemetry if benchmark else None
+                ),
+            ):
+                if not seen_first:
+                    seen_first = True
+                    if benchmark:
+                        benchmark.mark_stage("llm_first_done")
+                yield delta
+        finally:
+            if benchmark:
+                benchmark.mark_stage("llm_done")
 
     speaker = StreamingSpeaker(synth, sink, on_first_audio=on_first_audio)
     try:
@@ -458,8 +646,9 @@ def _handle_command_streaming(command, benchmark, progress):
             pass
 
     if benchmark:
-        benchmark.mark_stage("llm_done")
         benchmark.set_response_text(response_text)
+        benchmark.mark_stage("pipeline_done")
+        _emit_voice_pipeline_event(benchmark, "voice_pipeline_completed")
     print(f"Bot response: {response_text}")
 
 
@@ -467,6 +656,9 @@ def _handle_command_legacy(command, benchmark=None):
     print(f"Handling voice command (legacy path): {command}")
     try:
         if benchmark:
+            benchmark.set_dimension("llm_backend", "openai_responses")
+            benchmark.set_dimension("llm_backend_location", "hosted")
+            benchmark.set_dimension("llm_model", os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-mini"))
             benchmark.mark_stage("llm_send")
         response_text = send_message(
             command,
@@ -514,16 +706,28 @@ def _handle_command_legacy(command, benchmark=None):
         if benchmark:
             benchmark.add_error(f"OpenAI API error: {exc}")
             benchmark.emit_summary_once("openai_error")
+            benchmark.mark_stage("pipeline_done")
+            _emit_voice_pipeline_event(
+                benchmark, "voice_pipeline_failed", error_type=type(exc).__name__
+            )
         print(f"OpenAI API Error: {exc}")
     except boto3.exceptions.Boto3Error as exc:
         if benchmark:
             benchmark.add_error(f"AWS Polly error: {exc}")
             benchmark.emit_summary_once("polly_error")
+            benchmark.mark_stage("pipeline_done")
+            _emit_voice_pipeline_event(
+                benchmark, "voice_pipeline_failed", error_type=type(exc).__name__
+            )
         print(f"AWS Polly Error: {exc}")
     except Exception as exc:
         if benchmark:
             benchmark.add_error(f"Voice worker command error: {exc}")
             benchmark.emit_summary_once("voice_worker_error")
+            benchmark.mark_stage("pipeline_done")
+            _emit_voice_pipeline_event(
+                benchmark, "voice_pipeline_failed", error_type=type(exc).__name__
+            )
         print(f"Unexpected Error: {exc}")
 
 

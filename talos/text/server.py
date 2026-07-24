@@ -5,6 +5,8 @@ import json
 import os
 import queue
 import threading
+import time
+import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +18,7 @@ from talos.config import env_bool, load_environment
 from talos.jobs import get_default_job_store
 from talos.messages import EventPayload, Message, TextPayload, VoicePayload
 from talos.services import awareness_client
+from talos.telemetry import emit_pipeline_event
 
 
 DEFAULT_ALLOWED_NETWORKS = [
@@ -346,6 +349,8 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
+        request_started = time.perf_counter()
+        request_id = str(body.get("request_id") or uuid.uuid4().hex[:12])[:100]
         command = str(body.get("message") or body.get("command") or "").strip()
         if not command:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'message'."})
@@ -353,7 +358,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         session_id = str(body.get("session_id") or "voice").strip() or "voice"
         source = str(body.get("source") or "voice").strip()
+        snapshot_started = time.perf_counter()
         snapshot = _stream_state_snapshot(body)
+        awareness_snapshot_ms = round(
+            (time.perf_counter() - snapshot_started) * 1000.0, 1
+        )
 
         try:
             self.send_response(HTTPStatus.OK)
@@ -365,23 +374,67 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             return
 
         full_parts: list[str] = []
+
+        def send_telemetry(payload: dict[str, Any]) -> None:
+            self._send_sse(
+                {
+                    "type": "telemetry",
+                    "request_id": request_id,
+                    "data": payload,
+                }
+            )
+
         try:
+            snapshot_event = {
+                "event": "awareness_snapshot_completed",
+                "awareness_snapshot_ms": awareness_snapshot_ms,
+            }
+            emit_pipeline_event(
+                request_id=request_id,
+                component="text_server",
+                **snapshot_event,
+            )
+            send_telemetry(snapshot_event)
             for delta in agent_runtime.run_command_stream(
                 command,
                 snapshot,
                 session_id=session_id,
                 interaction_mode="voice",
                 runtime_lane="foreground",
+                request_id=request_id,
+                telemetry_callback=send_telemetry,
             ):
                 if not delta:
                     continue
                 full_parts.append(delta)
                 self._send_sse({"type": "delta", "text": delta})
+            request_total_ms = round(
+                (time.perf_counter() - request_started) * 1000.0, 1
+            )
+            completed_event = {
+                "event": "text_stream_completed",
+                "text_stream_total_ms": request_total_ms,
+            }
+            emit_pipeline_event(
+                request_id=request_id,
+                component="text_server",
+                **completed_event,
+            )
+            send_telemetry(completed_event)
             self._send_sse({"type": "done", "text": "".join(full_parts).strip()})
         except (BrokenPipeError, ConnectionResetError):
             print("[text-agent] stream client disconnected")
         except Exception as exc:  # noqa: BLE001 - report to client then end stream
             print(f"[text-agent] stream error: {exc}")
+            emit_pipeline_event(
+                request_id=request_id,
+                component="text_server",
+                event="text_stream_failed",
+                text_stream_total_ms=round(
+                    (time.perf_counter() - request_started) * 1000.0, 1
+                ),
+                error_type=type(exc).__name__,
+            )
             self._send_sse({"type": "error", "error": str(exc)})
 
     def _send_sse(self, payload: dict[str, Any]) -> None:

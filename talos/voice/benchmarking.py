@@ -19,6 +19,7 @@ TIMESTAMP_COLUMNS = [
     "callback_started",
     "recording_started_est",
     "recording_ended_est",
+    "command_start",
     "local_wake_send",
     "local_wake_done",
     "stt_send",
@@ -32,6 +33,7 @@ TIMESTAMP_COLUMNS = [
     "audio_open_start",
     "audio_stream_ready",
     "first_audio",
+    "pipeline_done",
 ]
 
 METRIC_COLUMNS = [
@@ -51,6 +53,33 @@ METRIC_COLUMNS = [
     "audio_file_open_latency_ms",
     "mp3_open_latency_ms",
     "total_end_of_speech_to_first_audio_ms",
+    "stt_model_load_ms",
+    "prompt_tokens_estimated",
+    "provider_prompt_tokens",
+    "provider_completion_tokens",
+    "provider_total_tokens",
+    "llm_model_load_ms",
+    "ollama_context_length",
+    "awareness_snapshot_ms",
+    "tool_build_ms",
+    "memory_context_ms",
+    "prompt_assembly_ms",
+    "tool_execution_total_ms",
+    "agent_stream_total_ms",
+    "text_stream_total_ms",
+    "polly_request_count",
+    "polly_total_ms",
+    "audio_write_total_ms",
+    "voice_pipeline_total_ms",
+]
+
+DIMENSION_COLUMNS = [
+    "stt_backend",
+    "llm_backend",
+    "llm_backend_location",
+    "llm_model",
+    "llm_fallback_used",
+    "llm_model_load_measurement",
 ]
 
 CSV_COLUMNS = [
@@ -63,6 +92,7 @@ CSV_COLUMNS = [
     "command",
     "transcript",
     "response_preview",
+    *DIMENSION_COLUMNS,
     *[f"ts_{name}" for name in TIMESTAMP_COLUMNS],
     *METRIC_COLUMNS,
     "llm_ttft_note",
@@ -107,6 +137,7 @@ class VoiceBenchmarkSession:
     stages_wall: dict[str, float] = field(default_factory=dict)
     stages_mono: dict[str, float] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
+    dimensions: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     command: Optional[str] = None
@@ -127,6 +158,58 @@ class VoiceBenchmarkSession:
     def set_metric(self, key: str, value: Any) -> None:
         with self._lock:
             self.metrics[key] = value
+
+    def add_metric(self, key: str, value: float) -> None:
+        with self._lock:
+            current = self.metrics.get(key) or 0.0
+            self.metrics[key] = round(float(current) + float(value), 1)
+
+    def set_dimension(self, key: str, value: Any) -> None:
+        with self._lock:
+            self.dimensions[key] = value
+
+    def apply_pipeline_telemetry(self, payload: dict[str, Any]) -> None:
+        """Merge bounded main-process SSE telemetry into this voice request."""
+        if not isinstance(payload, dict):
+            return
+        event = str(payload.get("event") or "")
+        dimension_map = {
+            "backend": "llm_backend",
+            "backend_location": "llm_backend_location",
+            "model": "llm_model",
+            "model_load_measurement": "llm_model_load_measurement",
+        }
+        metric_map = {
+            "prompt_tokens_estimated": "prompt_tokens_estimated",
+            "provider_prompt_tokens": "provider_prompt_tokens",
+            "provider_completion_tokens": "provider_completion_tokens",
+            "provider_total_tokens": "provider_total_tokens",
+            "model_load_ms": "llm_model_load_ms",
+            "ollama_context_length": "ollama_context_length",
+            "awareness_snapshot_ms": "awareness_snapshot_ms",
+            "tool_build_ms": "tool_build_ms",
+            "memory_context_ms": "memory_context_ms",
+            "prompt_assembly_ms": "prompt_assembly_ms",
+            "tool_execution_total_ms": "tool_execution_total_ms",
+            "text_stream_total_ms": "text_stream_total_ms",
+            "agent_stream_total_ms": "agent_stream_total_ms",
+            "llm_ttft_ms": "llm_ttft_ms",
+        }
+        for source, target in dimension_map.items():
+            value = payload.get(source)
+            if value is not None:
+                self.set_dimension(target, value)
+        for source, target in metric_map.items():
+            value = payload.get(source)
+            if value is not None:
+                self.set_metric(target, value)
+        if event == "llm_round_failed":
+            exact = payload.get("provider_prompt_tokens")
+            if exact is not None:
+                self.set_metric("provider_prompt_tokens", exact)
+
+    def pipeline_snapshot(self) -> dict[str, Any]:
+        return self._snapshot()
 
     def add_note(self, note: str) -> None:
         if not note:
@@ -203,6 +286,7 @@ class VoiceBenchmarkSession:
             stages_wall = dict(self.stages_wall)
             stages_mono = dict(self.stages_mono)
             metrics = dict(self.metrics)
+            dimensions = dict(self.dimensions)
             notes = list(self.notes)
             errors = list(self.errors)
             command = self.command
@@ -223,6 +307,7 @@ class VoiceBenchmarkSession:
         metrics.setdefault("audio_file_open_latency_ms", delta_ms("audio_open_start", "audio_stream_ready"))
         metrics.setdefault("mp3_open_latency_ms", metrics.get("audio_file_open_latency_ms"))
         metrics.setdefault("total_end_of_speech_to_first_audio_ms", delta_ms("recording_ended_est", "first_audio"))
+        metrics.setdefault("voice_pipeline_total_ms", delta_ms("command_start", "pipeline_done"))
         metrics.setdefault("llm_ttft_ms", None)
         metrics.setdefault("llm_ttft_note", "Unavailable with the current non-streaming OpenAI Responses API call.")
         metrics.setdefault("mp3_open_note", "Current playback pipeline uses a WAV/PCM file synthesized from Polly output.")
@@ -245,6 +330,7 @@ class VoiceBenchmarkSession:
             "command": command,
             "transcript": transcript,
             "response_preview": _preview(response_text),
+            "dimensions": dimensions,
             "timestamps": {name: _wall_iso(ts) for name, ts in sorted(stages_wall.items())},
             "latencies_ms": metrics,
             "notes": notes,
@@ -290,6 +376,9 @@ class VoiceBenchmarkSession:
             "errors": " | ".join(payload.get("errors") or []),
         }
 
+        for name in DIMENSION_COLUMNS:
+            row[name] = payload.get("dimensions", {}).get(name)
+
         for name in TIMESTAMP_COLUMNS:
             row[f"ts_{name}"] = payload["timestamps"].get(name)
 
@@ -320,6 +409,18 @@ class VoiceBenchmarkSession:
             f"audio_open={lat.get('audio_file_open_latency_ms')}ms",
             f"end_of_speech_to_first_audio={lat.get('total_end_of_speech_to_first_audio_ms')}ms",
         ]
+        dimensions = payload.get("dimensions") or {}
+        if dimensions.get("llm_backend"):
+            parts.append(
+                "backend="
+                f"{dimensions.get('llm_backend_location')}:"
+                f"{dimensions.get('llm_backend')}/"
+                f"{dimensions.get('llm_model')}"
+            )
+        if lat.get("provider_prompt_tokens") is not None:
+            parts.append(f"prompt_tokens={lat.get('provider_prompt_tokens')}")
+        elif lat.get("prompt_tokens_estimated") is not None:
+            parts.append(f"prompt_tokens_est={lat.get('prompt_tokens_estimated')}")
 
         if lat.get("recording_start_to_wake_word_ms") is not None:
             parts.append(f"recording_to_wake={lat.get('recording_start_to_wake_word_ms')}ms")

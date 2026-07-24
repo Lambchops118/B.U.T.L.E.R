@@ -40,6 +40,8 @@ class FasterWhisperSTTTests(unittest.TestCase):
         self.assertIsInstance(result, TranscriptResult)
         self.assertEqual(result.text, "Butler   what time is it")
         self.assertEqual(result.language, "en")
+        self.assertTrue(stt.last_model_preloaded)
+        self.assertEqual(stt.last_model_load_ms, 0.0)
 
     def test_empty_audio_returns_empty_without_calling_model(self):
         model = FakeModel(["should not be used"])

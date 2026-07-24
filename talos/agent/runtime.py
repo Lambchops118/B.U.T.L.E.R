@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import re
 import threading
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import openai
 
@@ -15,12 +16,14 @@ from talos.agent.thinking import thinking_suffix
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.memory import MemoryStore, get_default_memory_store
 from talos.mcp_client import get_local_mcp_client, shutdown_local_mcp_client
+from talos.telemetry import emit_pipeline_event
 from talos.tool_arguments import parse_tool_arguments
 from talos.voice.backends.base import (
     LLMCompletion,
     LLMTextDelta,
     LLMToolCall,
     chat_messages_to_tool_result,
+    responses_tools_to_chat_tools,
     tool_calls_to_assistant_message,
 )
 
@@ -604,6 +607,62 @@ def _build_tool_definitions(
         tool_bytes = 0
     print(f"Tool definitions prepared: {len(tool_defs)} tools, {tool_bytes} bytes")
     return tool_defs
+
+
+def _estimate_prompt_tokens(
+    messages: list[dict[str, Any]], tool_defs: list[dict[str, Any]]
+) -> tuple[int, int]:
+    """Return a conservative tokenizer-free estimate and serialized byte count."""
+    serialized = json.dumps(
+        {
+            "messages": messages,
+            "tools": responses_tools_to_chat_tools(tool_defs),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return max(1, math.ceil(len(serialized) / 3.5)), len(
+        serialized.encode("utf-8")
+    )
+
+
+def _prompt_limits_from_error(exc: Exception) -> dict[str, int]:
+    """Extract Ollama's exact context figures from an OpenAI-compatible error."""
+    text = str(exc)
+    result: dict[str, int] = {}
+    patterns = {
+        "provider_prompt_tokens": r'"n_prompt_tokens"\s*:\s*(\d+)',
+        "ollama_context_length": r'"n_ctx"\s*:\s*(\d+)',
+    }
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text)
+        if match:
+            result[key] = int(match.group(1))
+    return result
+
+
+def _emit_runtime_telemetry(
+    callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    request_id: str,
+    event: str,
+    **fields: Any,
+) -> None:
+    payload = {"event": event, **fields}
+    emit_pipeline_event(
+        request_id=request_id,
+        component="agent_runtime",
+        event=event,
+        **fields,
+    )
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        # The structured process-local log above remains available even if a
+        # client cannot accept telemetry over its streaming transport.
+        return
 
 
 def _normalize_interaction_mode(mode: str | None) -> str:
@@ -1903,6 +1962,8 @@ def run_command_stream(
     interaction_mode: str | None = None,
     runtime_lane: str = "foreground",
     extra_context: str | None = None,
+    request_id: str | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
 ):
     """Streaming variant of :func:`run_command`.
 
@@ -1919,14 +1980,19 @@ def run_command_stream(
     voice turn observes the turn that completed immediately before it. Within
     a single request the tool loop keeps full message history.
     """
+    telemetry_id = str(request_id or session_id or "stream")
+    pipeline_started = time.perf_counter()
     thread_key = _response_thread_key(session_id, runtime_lane)
 
     with _get_conversation_lock(thread_key):
+        tool_build_started = time.perf_counter()
         mcp_client = get_local_mcp_client()
         tool_defs = _build_tool_definitions(mcp_client, command)
+        tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
         mode = _normalize_interaction_mode(
             interaction_mode or _infer_interaction_mode(session_id)
         )
+        memory_started = time.perf_counter()
         memory_store = _get_memory_store()
         if memory_store is not None:
             try:
@@ -1944,6 +2010,8 @@ def run_command_stream(
             include_session_summary=False,
         )
         conversation_history = _get_conversation_history(memory_store, session_id)
+        memory_context_ms = round((time.perf_counter() - memory_started) * 1000.0, 1)
+        prompt_assembly_started = time.perf_counter()
         instructions = _build_prompt_instructions(
             command,
             session_id,
@@ -1974,8 +2042,32 @@ def run_command_stream(
         messages.append({"role": "user", "content": user_content})
 
         backend = _get_stream_backend()
+        prompt_tokens_estimated, prompt_bytes = _estimate_prompt_tokens(
+            messages, tool_defs
+        )
+        prompt_assembly_ms = round(
+            (time.perf_counter() - prompt_assembly_started) * 1000.0, 1
+        )
+        _emit_runtime_telemetry(
+            telemetry_callback,
+            request_id=telemetry_id,
+            event="prompt_ready",
+            backend=str(getattr(backend, "backend_name", "unknown")),
+            backend_location=(
+                "local" if bool(getattr(backend, "is_local", False)) else "hosted"
+            ),
+            model=str(getattr(backend, "model", "unknown")),
+            tool_count=len(tool_defs),
+            message_count=len(messages),
+            prompt_tokens_estimated=prompt_tokens_estimated,
+            prompt_bytes=prompt_bytes,
+            tool_build_ms=tool_build_ms,
+            memory_context_ms=memory_context_ms,
+            prompt_assembly_ms=prompt_assembly_ms,
+        )
         full_text_parts: list[str] = []
         rounds = 0
+        tool_execution_total_ms = 0.0
         while True:
             turn_text_parts: list[str] = []
             spoken_parts: list[str] = []
@@ -1989,32 +2081,68 @@ def run_command_stream(
                 full_text_parts.append(text)
                 return text
 
-            for event in backend.stream(messages, tools=tool_defs):
-                if isinstance(event, LLMTextDelta):
-                    if not event.text:
-                        continue
-                    turn_text_parts.append(event.text)
-                    if decision is None:
-                        stripped = "".join(turn_text_parts).lstrip()
-                        if not stripped:
-                            pending.append(event.text)  # leading whitespace only
+            round_number = rounds + 1
+            round_prompt_tokens, round_prompt_bytes = _estimate_prompt_tokens(
+                messages, tool_defs
+            )
+            round_started = time.perf_counter()
+            _emit_runtime_telemetry(
+                telemetry_callback,
+                request_id=telemetry_id,
+                event="llm_round_started",
+                round=round_number,
+                prompt_tokens_estimated=round_prompt_tokens,
+                prompt_bytes=round_prompt_bytes,
+            )
+            try:
+                for event in backend.stream(messages, tools=tool_defs):
+                    if isinstance(event, LLMTextDelta):
+                        if not event.text:
                             continue
-                        if RECOVER_LEAKED_TOOL_CALLS and _looks_like_tool_markup_start(stripped):
-                            decision = "suppress"  # hold back; recover after the turn
-                            pending.clear()
-                        else:
-                            decision = "speak"
-                            for part in pending:
-                                yield _speak(part)
-                            pending.clear()
+                        turn_text_parts.append(event.text)
+                        if decision is None:
+                            stripped = "".join(turn_text_parts).lstrip()
+                            if not stripped:
+                                pending.append(event.text)  # leading whitespace only
+                                continue
+                            if RECOVER_LEAKED_TOOL_CALLS and _looks_like_tool_markup_start(stripped):
+                                decision = "suppress"  # hold back; recover after the turn
+                                pending.clear()
+                            else:
+                                decision = "speak"
+                                for part in pending:
+                                    yield _speak(part)
+                                pending.clear()
+                                yield _speak(event.text)
+                        elif decision == "speak":
                             yield _speak(event.text)
-                    elif decision == "speak":
-                        yield _speak(event.text)
-                    # decision == "suppress": drop, neither spoken nor stored
-                elif isinstance(event, LLMCompletion):
-                    completion = event
+                        # decision == "suppress": drop, neither spoken nor stored
+                    elif isinstance(event, LLMCompletion):
+                        completion = event
+            except Exception as exc:
+                _emit_runtime_telemetry(
+                    telemetry_callback,
+                    request_id=telemetry_id,
+                    event="llm_round_failed",
+                    round=round_number,
+                    llm_request_ms=round(
+                        (time.perf_counter() - round_started) * 1000.0, 1
+                    ),
+                    prompt_tokens_estimated=round_prompt_tokens,
+                    **_prompt_limits_from_error(exc),
+                )
+                raise
             if completion is None:
                 break
+            completion_telemetry = dict(completion.telemetry or {})
+            _emit_runtime_telemetry(
+                telemetry_callback,
+                request_id=telemetry_id,
+                event="llm_round_completed",
+                round=round_number,
+                prompt_tokens_estimated=round_prompt_tokens,
+                **completion_telemetry,
+            )
 
             recovered_tool_calls: tuple[LLMToolCall, ...] = ()
             if decision == "suppress":
@@ -2040,11 +2168,24 @@ def run_command_stream(
             messages.append(
                 tool_calls_to_assistant_message("".join(spoken_parts), effective_tool_calls)
             )
+            tool_execution_started = time.perf_counter()
             tool_messages, _events = _execute_chat_tool_calls(
                 effective_tool_calls,
                 mcp_client,
                 session_id=session_id,
                 runtime_lane=runtime_lane,
+            )
+            tool_execution_ms = round(
+                (time.perf_counter() - tool_execution_started) * 1000.0, 1
+            )
+            tool_execution_total_ms += tool_execution_ms
+            _emit_runtime_telemetry(
+                telemetry_callback,
+                request_id=telemetry_id,
+                event="tools_completed",
+                round=round_number,
+                tool_call_count=len(effective_tool_calls),
+                tool_execution_ms=tool_execution_ms,
             )
             messages.extend(tool_messages)
             rounds += 1
@@ -2056,6 +2197,16 @@ def run_command_stream(
             command,
             response_text,
             interaction_mode=mode,
+        )
+        _emit_runtime_telemetry(
+            telemetry_callback,
+            request_id=telemetry_id,
+            event="agent_stream_completed",
+            llm_round_count=rounds + 1,
+            tool_execution_total_ms=round(tool_execution_total_ms, 1),
+            agent_stream_total_ms=round(
+                (time.perf_counter() - pipeline_started) * 1000.0, 1
+            ),
         )
 
 

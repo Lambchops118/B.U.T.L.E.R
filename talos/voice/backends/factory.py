@@ -56,6 +56,7 @@ def get_llm_backend() -> LLMBackend:
                 env_int("TALOS_AGENT_MAX_OUTPUT_TOKENS", 400),
             ),
             max_tokens_param=max_tokens_param,
+            backend_name=backend,
         )
 
     raise RuntimeError(

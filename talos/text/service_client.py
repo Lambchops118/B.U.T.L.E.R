@@ -5,6 +5,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any, Callable
 
 
 DEFAULT_URL = os.getenv("TALOS_TEXT_AGENT_URL", "http://127.0.0.1:8420")
@@ -149,6 +150,8 @@ def stream_message(
     token: str = DEFAULT_TOKEN,
     state_snapshot: str | None = None,
     timeout: float | None = None,
+    request_id: str | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
 ):
     """Yield assistant text fragments from the ``/chat/stream`` SSE endpoint.
 
@@ -159,6 +162,8 @@ def stream_message(
     payload = {"message": message, "session_id": session_id, "source": source}
     if state_snapshot is not None:
         payload["state_snapshot"] = state_snapshot
+    if request_id:
+        payload["request_id"] = request_id
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         build_url(base_url, "/chat/stream"),
@@ -197,6 +202,13 @@ def stream_message(
                     yield text
             elif event_type == "done":
                 return
+            elif event_type == "telemetry":
+                telemetry = event.get("data")
+                if telemetry_callback is not None and isinstance(telemetry, dict):
+                    try:
+                        telemetry_callback(telemetry)
+                    except Exception:
+                        pass
             elif event_type == "error":
                 raise RuntimeError(str(event.get("error") or "stream error"))
 

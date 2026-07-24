@@ -86,3 +86,31 @@ Required reading for next session: talos/awareness/README.md (voice channel + re
 Explicit stop point: implementation and offline tests complete; stopped before any live
   voice/TTS/Ollama run (not available here) and before committing — awaiting owner review.
 ```
+
+## Follow-up 2026-07-21 — speech actually reaches the speakers
+
+Bug found in owner testing: reminders/alerts showed on the GUI but were never spoken.
+Root cause: TTS (AWS Polly + audio device) lives ONLY in the voice-worker process and
+fired ONLY for mic commands. The `voice` channel's chain ended at the main-process
+router → `gui_queue` (text display), which has no audio out. So `/speak` → `voice_cmd`
+displayed but never vocalized (the scheduled morning report had the same gap).
+
+Fix (main + voice venvs):
+  - `talos/voice/agent.py`: new `speak_text(text)` (reuses the Polly synth + pyaudio
+    output + `StreamingSpeaker`, serialized on `_speak_lock`, no LLM) and
+    `run_speak_server()` — a loopback `POST /speak {"text"}` endpoint (default
+    127.0.0.1:8610, `TALOS_VOICE_SPEAK_PORT`) that plays text off the request thread.
+  - `talos/voice/worker.py`: starts/stops the speak server alongside recognition.
+  - `talos/router.py`: the `voice_cmd` lane now hands its phrased response to the voice
+    worker via `_speak_via_voice_worker()` (POST to `TALOS_VOICE_SPEAK_URL`, default
+    :8610; toggle `TALOS_VOICE_SPEAK_ENABLED`). Best-effort, 2s timeout, swallowed on
+    failure — a missing/stopped voice worker just means banner-without-sound, never a
+    router stall. Covers both fired reminders/alerts AND the scheduled morning report.
+Chain now: awareness voice adapter → text server `/speak` → `voice_cmd` → router
+  (LLM phrases → GUI banner) → voice worker `/speak` → Polly → speakers.
+Tests: router voice/job + text-server suites pass (10/10 + 3/3); best-effort speak
+  degrades cleanly when the voice worker is absent (verified — POST fails, swallowed).
+  Not run here: live audio/Polly (no audio device or AWS creds in this environment).
+New env vars (all optional): TALOS_VOICE_SPEAK_PORT (voice worker), TALOS_VOICE_SPEAK_URL
+  / TALOS_VOICE_SPEAK_ENABLED (router).
+Owner live check: fire a near-term reminder and confirm it is spoken aloud, not just shown.

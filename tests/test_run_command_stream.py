@@ -47,6 +47,7 @@ class RunCommandStreamTests(unittest.TestCase):
             mock.patch.object(agent_runtime, "_get_prompt_memory", return_value=""),
             mock.patch.object(agent_runtime, "_record_memory_turn"),
             mock.patch.object(agent_runtime, "_get_stream_backend", return_value=backend),
+            mock.patch.object(agent_runtime, "emit_pipeline_event"),
         ]
 
     def _run(self, backend, mcp):
@@ -77,6 +78,37 @@ class RunCommandStreamTests(unittest.TestCase):
         )
         deltas = self._run(backend, _FakeMCP())
         self.assertEqual(deltas, ["The light ", "is on."])
+
+    def test_emits_prompt_backend_and_stage_telemetry(self):
+        backend = _FakeBackend(
+            [[LLMTextDelta("Done."), LLMCompletion(text="Done.")]]
+        )
+        mcp = _FakeMCP()
+        telemetry = []
+        patches = self._patches(backend, mcp)
+        for patcher in patches:
+            patcher.start()
+        try:
+            output = list(
+                agent_runtime.run_command_stream(
+                    "test telemetry",
+                    session_id="voice",
+                    interaction_mode="voice",
+                    request_id="req-123",
+                    telemetry_callback=telemetry.append,
+                )
+            )
+        finally:
+            for patcher in patches:
+                patcher.stop()
+
+        self.assertEqual(output, ["Done."])
+        by_event = {item["event"]: item for item in telemetry}
+        self.assertGreater(by_event["prompt_ready"]["prompt_tokens_estimated"], 0)
+        self.assertIn("tool_build_ms", by_event["prompt_ready"])
+        self.assertEqual(by_event["llm_round_started"]["round"], 1)
+        self.assertEqual(by_event["llm_round_completed"]["round"], 1)
+        self.assertIn("agent_stream_total_ms", by_event["agent_stream_completed"])
 
     def test_tool_round_then_final_answer(self):
         mcp = _FakeMCP()

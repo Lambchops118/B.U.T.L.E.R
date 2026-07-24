@@ -20,13 +20,13 @@ from talos.voice.backends.base import (
     tool_calls_to_assistant_message,
 )
 from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
-from talos.voice.backends import factory
+from talos.voice.backends import factory, llm_openai_compat
 
 
-def _delta_chunk(content=None, tool_calls=None, finish_reason=None):
+def _delta_chunk(content=None, tool_calls=None, finish_reason=None, usage=None):
     delta = SimpleNamespace(content=content, tool_calls=tool_calls)
     choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
-    return SimpleNamespace(choices=[choice])
+    return SimpleNamespace(choices=[choice], usage=usage)
 
 
 def _tool_delta(index, *, call_id=None, name=None, arguments=None):
@@ -107,6 +107,46 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(completions[0].text, "Hello world.")
         self.assertFalse(completions[0].wants_tools)
         self.assertEqual(completions[0].finish_reason, "stop")
+        self.assertEqual(completions[0].telemetry["backend"], "openai_compatible")
+        self.assertEqual(completions[0].telemetry["backend_location"], "hosted")
+        self.assertIsNotNone(completions[0].telemetry["llm_request_ms"])
+
+    def test_reports_provider_token_usage(self):
+        usage = SimpleNamespace(
+            prompt_tokens=123,
+            completion_tokens=17,
+            total_tokens=140,
+        )
+        backend = OpenAICompatibleChatBackend(
+            model="test",
+            client=FakeClient([_delta_chunk(finish_reason="stop", usage=usage)]),
+        )
+        completion = backend.complete([{"role": "user", "content": "x"}])
+        telemetry = completion.telemetry
+        self.assertEqual(telemetry["provider_prompt_tokens"], 123)
+        self.assertEqual(telemetry["provider_completion_tokens"], 17)
+        self.assertEqual(telemetry["provider_total_tokens"], 140)
+
+    def test_reports_loaded_ollama_context_without_claiming_load_latency(self):
+        backend = OpenAICompatibleChatBackend(
+            model="mb-core-v1:latest",
+            base_url="http://127.0.0.1:11434/v1",
+            backend_name="ollama",
+            client=FakeClient([_delta_chunk(finish_reason="stop")]),
+        )
+        with mock.patch.object(
+            llm_openai_compat,
+            "_ollama_model_status",
+            return_value={"loaded": True, "context_length": 16384},
+        ):
+            completion = backend.complete([{"role": "user", "content": "x"}])
+
+        self.assertTrue(completion.telemetry["model_preloaded"])
+        self.assertEqual(completion.telemetry["model_load_ms"], 0.0)
+        self.assertEqual(
+            completion.telemetry["model_load_measurement"], "already_loaded"
+        )
+        self.assertEqual(completion.telemetry["ollama_context_length"], 16384)
 
     def test_accumulates_streamed_tool_call_arguments(self):
         script = [
