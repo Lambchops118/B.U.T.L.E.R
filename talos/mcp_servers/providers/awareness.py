@@ -157,8 +157,10 @@ def register(server: FastMCP) -> None:
     ) -> str:
         """Request a REGISTERED physical device action through the validated
         action service (never raw MQTT). `parameters` is a JSON object string,
-        e.g. '{"pot_pin": 17}'. Supported actions: water_plants (pot_pin 17
-        or 19), toggle_fan (state 0/1), sim_command (setting; requires
+        e.g. '{"channel": 1}'. Supported actions: run_pump (channel 1-4,
+        optional duration_seconds 1-30), stop_pump (channel 1-4),
+        water_plants (pot_pin 17 or 19; legacy path for pots 1 and 2),
+        toggle_fan (state 0/1), sim_command (setting; requires
         confirmation). The response includes the action_request_id and
         status — 'awaiting_confirmation' means the user must approve before
         anything is dispatched; check progress with get_action_status.

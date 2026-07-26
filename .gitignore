@@ -31,3 +31,6 @@ launcher.config.json
 
 # Local artifact/data directory for the awareness subsystem
 db/awareness/
+
+# Device-local firmware secrets (Wi-Fi/broker); see qp_secrets_example.py
+Peripherals/quad_pump/qp_secrets.py

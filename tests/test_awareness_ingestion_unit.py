@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timezone
 
@@ -237,6 +238,190 @@ class PipelineNeverRaisesTest(unittest.TestCase):
         self.assertEqual(disposition, "dead_letter:internal_error")
         self.assertEqual(pipeline.metrics.received, 1)
         self.assertEqual(pipeline.metrics.dead_lettered.get("internal_error"), 1)
+
+
+def _pump_source(**overrides) -> SourceRecord:
+    values = {
+        "source_id": "quad_pump_canonical",
+        "source_type": "microcontroller",
+        "entity_id": "quad_pump",
+        "clock_quality": "server_received",
+        "allowed_topics": (
+            "home/irrigation/quad_pump/state",
+            "home/irrigation/quad_pump/event",
+            "home/irrigation/quad_pump/health",
+            "home/irrigation/quad_pump/heartbeat",
+            "home/irrigation/quad_pump/telemetry/+",
+        ),
+    }
+    values.update(overrides)
+    return _source(**values)
+
+
+class CanonicalQuadPumpTest(unittest.TestCase):
+    """The canonical quad-pump firmware contract (Peripherals/quad_pump)."""
+
+    def test_state_snapshot_normalizes_relays_and_fuses(self) -> None:
+        payload = {
+            "event_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+            "sequence": 43,
+            "boot_id": "boot-a",
+            "payload": {
+                "relay_1": False,
+                "fuse_1": "unknown",
+                "relay_2": True,
+                "fuse_2": "unknown",
+                "relay_3": False,
+                "fuse_3": "unknown",
+                "relay_4": False,
+                "fuse_4": "unknown",
+            },
+        }
+        envelope = _normalize(
+            "home/irrigation/quad_pump/state",
+            json.dumps(payload).encode(),
+            _pump_source(),
+        )
+        self.assertEqual(envelope.event_type, "irrigation.state.reported")
+        self.assertEqual(envelope.entity_id, "quad_pump")
+        self.assertEqual(envelope.sequence, 43)
+        self.assertEqual(envelope.source_boot_id, "boot-a")
+        self.assertIs(envelope.payload["relay_2"], True)
+        self.assertEqual(envelope.payload["fuse_4"], "unknown")
+
+    def test_command_ack_keeps_event_type_and_correlation(self) -> None:
+        payload = {
+            "event_type": "quad_pump.command_ack",
+            "sequence": 44,
+            "boot_id": "boot-a",
+            "correlation_id": "5c9f1d84-2b6e-4f1a-9d3c-0c2a1b3d4e5f",
+            "severity": "info",
+            "payload": {
+                "command_id": "5c9f1d84-2b6e-4f1a-9d3c-0c2a1b3d4e5f",
+                "ok": True,
+                "result": "completed",
+                "channel": 2,
+                "relay_state": "off",
+                "fuse_state": "unknown",
+            },
+        }
+        envelope = _normalize(
+            "home/irrigation/quad_pump/event",
+            json.dumps(payload).encode(),
+            _pump_source(),
+        )
+        # The action service keys completion off this suffix and payload shape.
+        self.assertTrue(envelope.event_type.endswith("command_ack"))
+        self.assertIs(envelope.payload["ok"], True)
+        self.assertEqual(
+            envelope.payload["command_id"], "5c9f1d84-2b6e-4f1a-9d3c-0c2a1b3d4e5f"
+        )
+        self.assertEqual(
+            envelope.correlation_id, "5c9f1d84-2b6e-4f1a-9d3c-0c2a1b3d4e5f"
+        )
+
+    def test_health_and_heartbeat_normalize(self) -> None:
+        health = _normalize(
+            "home/irrigation/quad_pump/health",
+            json.dumps(
+                {
+                    "sequence": 2,
+                    "boot_id": "boot-a",
+                    "payload": {
+                        "firmware_version": "quad_pump-2.0.0",
+                        "mqtt_connected": True,
+                        "fuse_sensing": "unavailable",
+                    },
+                }
+            ).encode(),
+            _pump_source(),
+        )
+        self.assertEqual(health.event_type, "irrigation.health.reported")
+        self.assertEqual(health.payload["firmware_version"], "quad_pump-2.0.0")
+
+        heartbeat = _normalize(
+            "home/irrigation/quad_pump/heartbeat",
+            json.dumps({"sequence": 3, "boot_id": "boot-a", "payload": {"uptime_ms": 61000}}).encode(),
+            _pump_source(),
+        )
+        self.assertEqual(heartbeat.event_type, "irrigation.heartbeat")
+        self.assertEqual(heartbeat.retention_class, "heartbeat")
+
+    def test_untrusted_device_clock_is_evidence_not_ordering(self) -> None:
+        envelope = _normalize(
+            "home/irrigation/quad_pump/state",
+            json.dumps(
+                {
+                    "observed_at": "2026-07-26T12:00:00+00:00",
+                    "payload": {"relay_1": False},
+                }
+            ).encode(),
+            _pump_source(),
+        )
+        self.assertIsNotNone(envelope.observed_at)
+        self.assertTrue(envelope.provenance.metadata.get("observed_at_untrusted"))
+        self.assertEqual(envelope.received_at, RECEIVED_AT)
+
+    def test_another_client_cannot_claim_the_pump_source(self) -> None:
+        with self.assertRaises(NormalizationError) as caught:
+            _normalize(
+                "home/irrigation/quad_pump/state",
+                json.dumps(
+                    {"source_id": "fan_pico", "payload": {"relay_1": True}}
+                ).encode(),
+                _pump_source(),
+            )
+        self.assertEqual(caught.exception.reason, "source_mismatch")
+
+    def test_event_topic_without_an_event_type_is_dead_lettered(self) -> None:
+        with self.assertRaises(NormalizationError) as caught:
+            _normalize(
+                "home/irrigation/quad_pump/event",
+                json.dumps({"payload": {"command_id": "x", "ok": True}}).encode(),
+                _pump_source(),
+            )
+        self.assertEqual(caught.exception.reason, "malformed_payload")
+
+    def test_malformed_json_is_dead_lettered_not_guessed(self) -> None:
+        with self.assertRaises(NormalizationError) as caught:
+            _normalize(
+                "home/irrigation/quad_pump/state", b"{relay_1:", _pump_source()
+            )
+        self.assertEqual(caught.exception.reason, "malformed_payload")
+
+    def test_source_owns_only_the_device_published_topics(self) -> None:
+        source = _pump_source()
+        for topic in (
+            "home/irrigation/quad_pump/state",
+            "home/irrigation/quad_pump/event",
+            "home/irrigation/quad_pump/health",
+            "home/irrigation/quad_pump/heartbeat",
+            "home/irrigation/quad_pump/telemetry/fuse_1_voltage",
+        ):
+            self.assertTrue(
+                any(topic_matches(pattern, topic) for pattern in source.allowed_topics),
+                topic,
+            )
+        # The backend publishes commands; the device never does.
+        self.assertFalse(
+            any(
+                topic_matches(pattern, "home/irrigation/quad_pump/command")
+                for pattern in source.allowed_topics
+            )
+        )
+
+    def test_legacy_status_still_normalizes_during_the_transition(self) -> None:
+        legacy = _source(
+            source_id="quad_pump_pico",
+            entity_id="quad_pump",
+            allowed_topics=("status/17", "status/18", "status/19"),
+            metadata={"legacy": "pin_status"},
+            clock_quality="server_received",
+        )
+        envelope = _normalize("status/17", b"0", legacy)
+        self.assertEqual(envelope.event_type, "device.pin_status.reported")
+        self.assertEqual(envelope.payload["pin"], 17)
+        self.assertEqual(envelope.payload["raw_value"], "0")
 
 
 class MetricsTest(unittest.TestCase):

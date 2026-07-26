@@ -72,6 +72,12 @@ class ActionDefinition(_Strict):
     confirmation_ttl_seconds: float = Field(default=120.0, gt=0)
     safety_checks: list[Literal["allowed_state"]]
     cooldown_seconds: float = Field(default=0.0, ge=0)
+    # "action" (default) rate-limits the action as a whole — the legacy
+    # behavior. "parameter" scopes the cooldown to one validated parameter
+    # value, so watering pot 1 does not lock out pot 2. Firmware safety limits
+    # apply either way; this is a backend rate limit, not an interlock.
+    cooldown_scope: Literal["action", "parameter"] = "action"
+    cooldown_parameter: str | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)
     idempotency_behavior: Literal["at_most_once", "device_key"]
     # Topic may reference validated parameters: "quad_pump/{pot_pin}".
@@ -133,6 +139,19 @@ class ActionDefinition(_Strict):
             raise ValueError(
                 "allowed_prior_values requires the allowed_state safety check"
             )
+
+        if self.cooldown_scope == "parameter":
+            if self.cooldown_parameter not in parameter_names:
+                raise ValueError(
+                    "cooldown_scope='parameter' requires cooldown_parameter to "
+                    "name a declared parameter"
+                )
+            if self.cooldown_seconds <= 0:
+                raise ValueError(
+                    "cooldown_scope='parameter' requires a positive cooldown_seconds"
+                )
+        elif self.cooldown_parameter is not None:
+            raise ValueError("cooldown_parameter requires cooldown_scope='parameter'")
 
         if self.idempotency_behavior == "device_key" and self.payload != "envelope":
             raise ValueError(

@@ -112,6 +112,43 @@ class ClassificationTest(unittest.TestCase):
         self.assertEqual(effects.state_updates, ())
         self.assertEqual(effects.telemetry, ())
 
+    def test_quad_pump_state_yields_one_property_per_relay_and_fuse(self) -> None:
+        effects = classify(
+            _envelope(
+                "irrigation.state.reported",
+                {
+                    "relay_1": False,
+                    "fuse_1": "unknown",
+                    "relay_2": True,
+                    "fuse_2": "unknown",
+                    "relay_3": False,
+                    "fuse_3": "unknown",
+                    "relay_4": False,
+                    "fuse_4": "unknown",
+                },
+                entity_id="quad_pump",
+            )
+        )
+        updates = {update.property_name: update for update in effects.state_updates}
+        self.assertEqual(len(updates), 8)
+        self.assertIs(updates["relay_2"].value, True)
+        self.assertEqual(updates["relay_2"].value_type, "boolean")
+        # Fuse state is a truthful enum string, never a fabricated voltage.
+        self.assertEqual(updates["fuse_3"].value, "unknown")
+        self.assertEqual(updates["fuse_3"].value_type, "string")
+        self.assertEqual(effects.telemetry, ())
+
+    def test_quad_pump_command_ack_has_no_state_effect(self) -> None:
+        effects = classify(
+            _envelope(
+                "quad_pump.command_ack",
+                {"command_id": "abc", "ok": True, "result": "completed"},
+                entity_id="quad_pump",
+            )
+        )
+        self.assertEqual(effects.state_updates, ())
+        self.assertEqual(effects.telemetry, ())
+
     def test_value_types(self) -> None:
         self.assertEqual(value_type_of(True), "boolean")
         self.assertEqual(value_type_of(1), "number")

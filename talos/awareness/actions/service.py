@@ -186,7 +186,9 @@ class ActionService:
                     reason=state_error,
                     now=now,
                 )
-            cooldown_error = await self._check_cooldown(connection, definition, now)
+            cooldown_error = await self._check_cooldown(
+                connection, definition, now, parameters=validated
+            )
             if cooldown_error:
                 return await self._persist_rejected(
                     connection,
@@ -297,7 +299,11 @@ class ActionService:
                 connection, definition, dict(row.parameters)
             )
             cooldown_error = await self._check_cooldown(
-                connection, definition, now, exclude_request_id=action_request_id
+                connection,
+                definition,
+                now,
+                parameters=dict(row.parameters),
+                exclude_request_id=action_request_id,
             )
             if state_error or cooldown_error:
                 reason = state_error or cooldown_error or "validation failed"
@@ -805,6 +811,7 @@ class ActionService:
         definition: ActionDefinition,
         now: datetime,
         *,
+        parameters: dict[str, Any] | None = None,
         exclude_request_id: UUID | None = None,
     ) -> str | None:
         if definition.cooldown_seconds <= 0:
@@ -815,12 +822,29 @@ class ActionService:
             ActionRequest.created_at
             > now - timedelta(seconds=definition.cooldown_seconds),
         )
+        scoped_value: Any = None
+        if definition.cooldown_scope == "parameter":
+            # Rate-limit one target (e.g. one pump channel) instead of the whole
+            # action, so unrelated targets stay usable.
+            scoped_value = (parameters or {}).get(definition.cooldown_parameter)
+            if scoped_value is None:
+                return None
+            statement = statement.where(
+                ActionRequest.parameters[definition.cooldown_parameter].astext
+                == str(scoped_value)
+            )
         if exclude_request_id is not None:
             statement = statement.where(
                 ActionRequest.action_request_id != exclude_request_id
             )
         recent = (await connection.execute(statement.limit(1))).first()
         if recent is not None:
+            if definition.cooldown_scope == "parameter":
+                return (
+                    f"cooldown: {definition.name} "
+                    f"{definition.cooldown_parameter}={scoped_value} ran within "
+                    f"the last {definition.cooldown_seconds:.0f}s"
+                )
             return (
                 f"cooldown: {definition.name} ran within the last "
                 f"{definition.cooldown_seconds:.0f}s"

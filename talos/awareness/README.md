@@ -95,7 +95,21 @@ deployment is seeded idempotently at startup (`registry/bootstrap.py`):
 |---|---|---|
 | `fan_pico` | `status/16` | Legacy pin status; `metadata.value_inverted` (fan relay is active-low) |
 | `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
+| `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
 | `sim_device` | `home/sim/#` | Simulator for development and tests |
+
+Seed rows are inserted with `ON CONFLICT DO NOTHING`, so editing a seed never
+reaches a database that has already booted. `bootstrap.apply_source_migrations`
+is the explicit update path: each migration names the exact previous value it
+expects, so a field an operator deliberately changed is left untouched.
+
+The quad-pump source owns only what the device publishes. The command topic
+`home/irrigation/quad_pump/command` is published **by** this backend and is
+deliberately unowned — action requests are already durable in
+`action_requests`. Consequence: the backend's own command publications come
+back on the `home/#` subscription and are dead-lettered as
+`unauthorized_topic`, the same pre-existing behavior the simulator's command
+topic has. Device→backend traffic is unaffected.
 
 Legacy `status/{pin}` payloads (`"0"`/`"1"`) are translated by a thin adapter
 into canonical `device.pin_status` events; new sources must publish the
@@ -400,15 +414,48 @@ policy, cooldown, timeout, command topic, idempotency behavior, acknowledgement
 source/semantics, and rollback (`none` for all deployed actions). **MQTT
 payloads are generated only from these definitions, never from model
 content**, wildcard command topics are rejected, and the model has no raw-MQTT
-path. Supported: `water_plants` (pot_pin 17/19), `toggle_fan` (state 0/1), and
-the simulator's `sim_command` (which requires confirmation and exercises that
-flow). Validation order before any dispatch: registered action → parameter
-schema/bounds → actor permission → configured safety/allowed prior state →
-cooldown → confirmation. Rejections are durable. Confirmation binds a
+path. Supported: `run_pump` (channel 1-4, optional duration_seconds 1-30),
+`stop_pump` (channel 1-4), `water_plants` (pot_pin 17/19), `toggle_fan`
+(state 0/1), and the simulator's `sim_command` (which requires confirmation and
+exercises that flow). Validation order before any dispatch: registered action →
+parameter schema/bounds → actor permission → configured safety/allowed prior
+state → cooldown → confirmation. Rejections are durable. Confirmation binds a
 one-time returned token, actor, and exact request; only a SHA-256 digest is
 stored, the token expires, and a materially different request needs a new
 one. Action mutations fail closed unless `TALOS_AWARENESS_API_TOKEN` is
 configured and supplied as a bearer token.
+
+Cooldown defaults to action-wide (`cooldown_scope = "action"`). `run_pump`
+uses `cooldown_scope = "parameter"` with `cooldown_parameter = "channel"`, so
+watering pot 1 does not lock out pot 2; `stop_pump` has no cooldown because
+stopping must never be rate-limited. Cooldown is a backend rate limit, not an
+interlock — the firmware's one-pump-at-a-time rule and 30 s hard deadline are
+the real safety bounds (INV-09).
+
+### Canonical quad-pump contract
+
+The rewritten firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump))
+speaks logical channels 1-4 at every external interface; GPIO numbers exist
+only in its hardware mapping. `run_pump`/`stop_pump` publish the standard JSON
+command envelope to `home/irrigation/quad_pump/command` and complete on a
+source-bound `quad_pump.command_ack` carrying `payload.command_id` and a
+boolean `payload.ok`. A successful ack is emitted only after the relay has been
+driven off. Device state arrives as `relay_1..4` (boolean) and `fuse_1..4`
+(enum string) on the canonical state topic.
+
+**Fuse sensing is not implemented on the current board.** The signal is an
+analog divider wired to GP6-GP9, which have no ADC (the Pico W exposes only
+GP26-GP28, and only three of them). Every channel therefore reports
+`fuse_N = "unknown"` — never a fabricated `ok` or a voltage — and no fuse
+interlock is active. See OQ-D in
+[`OPEN_QUESTIONS.md`](../../docs/awareness-memory/OPEN_QUESTIONS.md).
+
+Rollout is staged. `water_plants` deliberately still dispatches on the legacy
+`quad_pump/{pot_pin}` topic, and the new firmware answers both surfaces
+(legacy pin 17 → channel 1, pin 19 → channel 2; unmapped legacy pins are
+rejected, never inferred from ordering) and republishes `status/{pin}=0` after
+a legacy cycle. Switching `water_plants` to the canonical command is a
+separate owner-gated step after physical acceptance.
 
 ### Lifecycle, acknowledgement, and truthful failure
 
@@ -424,7 +471,10 @@ returns the existing lifecycle, while changed content is rejected. Command
 IDs are database-unique.
 
 Approval queues durable `action_dispatch` work before network I/O. Legacy
-Picos cannot dedupe command IDs, so they use an at-most-once policy: the
+Picos cannot dedupe command IDs, and the canonical pump path stays
+`at_most_once` too until its device-side persistent deduplication passes the
+power-loss bench tests — command acknowledgements alone do not make a retry
+safe. Those paths use an at-most-once policy: the
 attempt is recorded before publish and an uncertain/failed publish is failed
 without an automatic physical retry. Canonical simulator commands carry the
 same command/idempotency key on bounded retry, so broker failure leaves the
@@ -451,9 +501,12 @@ are preserved but now call the action API; their result reports the durable
 request status and never claims physical success before evidence. Physical
 hardware was not exercised (ADR-014): completion/failure semantics are proven
 against the simulator and the repository-confirmed legacy firmware/status
-shape. Known physical limitations remain: ambiguous legacy `status/16`, no
-device-side command IDs/acks/reconnect, and no backend-checkable pre-command
-safety sensor for the two deployed Picos.
+shape. The canonical quad-pump firmware (2026-07-26) adds device-side command
+IDs, acknowledgements, reconnect, and a unique MQTT client identity, but it has
+**not been flashed or bench-tested** — its logic is proven only by host tests.
+Known physical limitations remain: ambiguous legacy `status/16`, the fan Pico's
+lack of command IDs/acks/reconnect, no fuse sensing on the pump board, and no
+backend-checkable pre-command safety sensor for either Pico.
 
 ## Retention, backups, and operations (Phase 8)
 

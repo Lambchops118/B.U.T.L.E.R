@@ -1,9 +1,14 @@
 # Registered physical actions (C14, Phase 7). MQTT payloads come only from
-# these definitions. The deployed Pico firmware has no command acks (owner
-# decision ADR-014: no firmware changes), but it publishes status/{pin} after
-# acting — completion for legacy devices is state confirmation, not silence.
+# these definitions. The legacy Pico firmware has no command acks, but it
+# publishes status/{pin} after acting — completion for legacy devices is state
+# confirmation, not silence.
+#
+# v2 (2026-07-26): added canonical run_pump/stop_pump for the rewritten
+# quad-pump firmware. water_plants is deliberately left on the legacy topic
+# until the canonical path passes bench and physical acceptance on the board;
+# the new firmware answers both surfaces during that transition.
 
-version = 1
+version = 2
 
 # --- water a plant pot (legacy quad_pump Pico) --------------------------------
 
@@ -33,6 +38,78 @@ name = "pot_pin"
 type = "integer"
 allowed_values = [17, 19]      # pot 1 = 17, pot 2 = 19 (deployed wiring)
 description = "Pump channel pin: 17 (pot 1) or 19 (pot 2)"
+
+# --- canonical quad pump: bounded run (new firmware) ---------------------------
+#
+# Logical channels only. GPIO numbers never appear in a parameter, topic, or
+# payload — the firmware owns that mapping. Duration is strictly bounded here
+# and clamped again by the firmware's local 30 s hard maximum, which is the
+# real interlock (INV-09).
+
+[[actions]]
+name = "run_pump"
+description = "Run one pump channel for a bounded duration"
+target_entity_id = "quad_pump"
+permission_level = "standard"
+allowed_actors = ["llm", "operator"]
+confirmation_required = false
+safety_checks = []              # no trustworthy pre-command sensor exists
+cooldown_seconds = 60.0
+cooldown_scope = "parameter"    # per channel, so pot 1 does not lock out pot 2
+cooldown_parameter = "channel"
+timeout_seconds = 45.0          # must exceed the 30 s maximum run
+# at_most_once until device-side persistent dedup passes the power-loss bench
+# tests. The firmware already deduplicates command IDs across resets; adding
+# acks alone does not make a retry safe.
+idempotency_behavior = "at_most_once"
+command_topic = "home/irrigation/quad_pump/command"
+payload = "envelope"
+ack_mode = "command_ack"
+ack_semantics = "execution_result"
+ack_source_id = "quad_pump_canonical"
+allowed_prior_values = []
+rollback = "none"
+
+[[actions.parameters]]
+name = "channel"
+type = "integer"
+allowed_values = [1, 2, 3, 4]
+description = "Logical pump channel 1-4 (channel 1 = pot 1, channel 2 = pot 2)"
+
+[[actions.parameters]]
+name = "duration_seconds"
+type = "integer"
+required = false
+minimum = 1
+maximum = 30
+description = "Run time in seconds; firmware default is 8 and its hard cap is 30"
+
+# --- canonical quad pump: stop --------------------------------------------------
+
+[[actions]]
+name = "stop_pump"
+description = "Immediately stop one pump channel"
+target_entity_id = "quad_pump"
+permission_level = "standard"
+allowed_actors = ["llm", "operator"]
+confirmation_required = false
+safety_checks = []
+cooldown_seconds = 0.0          # stopping must never be rate-limited
+timeout_seconds = 20.0
+idempotency_behavior = "at_most_once"
+command_topic = "home/irrigation/quad_pump/command"
+payload = "envelope"
+ack_mode = "command_ack"
+ack_semantics = "execution_result"
+ack_source_id = "quad_pump_canonical"
+allowed_prior_values = []
+rollback = "none"
+
+[[actions.parameters]]
+name = "channel"
+type = "integer"
+allowed_values = [1, 2, 3, 4]
+description = "Logical pump channel 1-4"
 
 # --- toggle the fan (legacy fan Pico) ------------------------------------------
 

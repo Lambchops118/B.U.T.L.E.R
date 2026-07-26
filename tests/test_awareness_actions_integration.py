@@ -91,6 +91,239 @@ class ActionsIntegrationTest(unittest.TestCase):
     def test_action_lifecycle(self) -> None:
         asyncio.run(self._run_flow())
 
+    def test_canonical_pump_lifecycle(self) -> None:
+        asyncio.run(self._run_pump_flow())
+
+    async def _run_pump_flow(self) -> None:
+        """run_pump end to end against the canonical quad-pump contract.
+
+        Exercises the registered command envelope, per-channel cooldown scope,
+        source-bound acknowledgement handling, and truthful failure — all
+        through the real ingestion pipeline with an injected publisher. No
+        physical board is involved.
+        """
+        from talos.awareness.actions.registry import load_registry
+        from talos.awareness.actions.service import ActionService
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from talos.awareness.outbox.worker import OutboxWorker
+        from talos.awareness.registry.bootstrap import seed_registry
+        from talos.awareness.registry.sources import SourceRepository
+
+        engine = build_engine(self.settings)
+        published: list[tuple[str, bytes]] = []
+
+        async def fake_publish(topic: str, body: bytes) -> None:
+            published.append((topic, body))
+
+        def ack_body(command_id: str, ok: bool, result: str, **extra) -> bytes:
+            payload = {"command_id": command_id, "ok": ok, "result": result}
+            payload.update(extra)
+            return json.dumps(
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "event_type": "quad_pump.command_ack",
+                    "boot_id": "boot-test",
+                    "correlation_id": command_id,
+                    "payload": payload,
+                }
+            ).encode()
+
+        try:
+            await seed_registry(engine)
+            sources = SourceRepository(engine)
+            await sources.refresh(force=True)
+            service = ActionService(engine, self.settings, load_registry())
+            pipeline = IngestionPipeline(
+                engine, sources, self.settings, action_service=service
+            )
+            worker = OutboxWorker(
+                engine,
+                self.settings,
+                {
+                    "action_dispatch": service.dispatch_handler(fake_publish),
+                    "action_timeout": service.timeout_handler,
+                },
+            )
+
+            # --- schema bounds are enforced before anything is dispatched ----
+            for parameters, expected in (
+                ({"channel": 0}, "must be one of"),
+                ({"channel": 17}, "must be one of"),          # legacy pin
+                ({"channel": 6}, "must be one of"),           # GPIO number
+                ({"channel": 1, "duration_seconds": 31}, "must be <= 30"),
+                ({"channel": 1, "duration_seconds": 0}, "must be >= 1"),
+                ({"channel": 1, "pot_pin": 17}, "unsupported parameters"),
+            ):
+                rejected = await service.request(
+                    action_name="run_pump", parameters=parameters, actor="llm"
+                )
+                self.assertFalse(rejected["accepted"], parameters)
+                self.assertIn(expected, rejected["reason"])
+            self.assertEqual(published, [])
+
+            # --- dispatch: exact registered topic and envelope ---------------
+            accepted = await service.request(
+                action_name="run_pump",
+                parameters={"channel": 1, "duration_seconds": 5},
+                actor="llm",
+                correlation_id="turn-pump-1",
+            )
+            self.assertTrue(accepted["accepted"])
+            first_id = uuid.UUID(accepted["action_request_id"])
+            self.assertEqual(published, [])  # durable intent precedes network
+
+            self.assertEqual(await worker.run_once(), 1)
+            topic, body = published[-1]
+            self.assertEqual(topic, "home/irrigation/quad_pump/command")
+            envelope = json.loads(body)
+            self.assertEqual(envelope["action"], "run_pump")
+            self.assertEqual(envelope["target_entity_id"], "quad_pump")
+            self.assertEqual(envelope["parameters"], {"channel": 1, "duration_seconds": 5})
+            self.assertEqual(envelope["ack_mode"], "command_ack")
+            self.assertEqual(envelope["ack_semantics"], "execution_result")
+            self.assertEqual(envelope["timeout_seconds"], 45.0)
+            self.assertNotIn("pot_pin", body.decode())
+            command_id = envelope["command_id"]
+
+            # --- cooldown is scoped to the channel, not the whole action -----
+            same_channel = await service.request(
+                action_name="run_pump", parameters={"channel": 1}, actor="llm"
+            )
+            self.assertFalse(same_channel["accepted"])
+            self.assertIn("cooldown", same_channel["reason"])
+            self.assertIn("channel=1", same_channel["reason"])
+
+            other_channel = await service.request(
+                action_name="run_pump", parameters={"channel": 2}, actor="llm"
+            )
+            self.assertTrue(other_channel["accepted"])
+            second_id = uuid.UUID(other_channel["action_request_id"])
+            self.assertEqual(await worker.run_once(), 1)
+            second_command_id = json.loads(published[-1][1])["command_id"]
+
+            # --- an ack from another source cannot complete this command -----
+            spoofed = await pipeline.handle(
+                InboundMessage(
+                    topic="home/sim/greenhouse/event",
+                    payload=json.dumps(
+                        {
+                            "event_id": str(uuid.uuid4()),
+                            "event_type": "sim.command_ack",
+                            "payload": {"command_id": command_id, "ok": True},
+                        }
+                    ).encode(),
+                )
+            )
+            self.assertEqual(spoofed, "accepted")
+            detail = await service.get(first_id)
+            self.assertEqual(detail["status"], "dispatched")
+            self.assertIn("unauthorized source", detail["transitions"][-1]["detail"])
+
+            # --- the device's own execution result completes it --------------
+            result = await pipeline.handle(
+                InboundMessage(
+                    topic="home/irrigation/quad_pump/event",
+                    payload=ack_body(
+                        command_id,
+                        True,
+                        "completed",
+                        channel=1,
+                        relay_state="off",
+                        fuse_state="unknown",
+                    ),
+                )
+            )
+            self.assertEqual(result, "accepted")
+            detail = await service.get(first_id)
+            self.assertEqual(detail["status"], "completed")
+            self.assertIsNotNone(detail["acknowledged_at"])
+            self.assertIsNotNone(detail["completed_at"])
+
+            # --- a negative device result becomes failed, not completed ------
+            result = await pipeline.handle(
+                InboundMessage(
+                    topic="home/irrigation/quad_pump/event",
+                    payload=ack_body(
+                        second_command_id,
+                        False,
+                        "power_limit",
+                        channel=2,
+                        relay_state="off",
+                        error="concurrent pump limit reached",
+                    ),
+                )
+            )
+            self.assertEqual(result, "accepted")
+            detail = await service.get(second_id)
+            self.assertEqual(detail["status"], "failed")
+            self.assertIn("concurrent pump limit", detail["error"])
+
+            # --- stop_pump is never rate-limited -----------------------------
+            stop = await service.request(
+                action_name="stop_pump", parameters={"channel": 1}, actor="llm"
+            )
+            self.assertTrue(stop["accepted"])
+            self.assertEqual(await worker.run_once(), 1)
+            stop_envelope = json.loads(published[-1][1])
+            self.assertEqual(published[-1][0], "home/irrigation/quad_pump/command")
+            self.assertEqual(stop_envelope["action"], "stop_pump")
+            self.assertEqual(stop_envelope["parameters"], {"channel": 1})
+
+            # --- canonical device state lands as relay/fuse properties -------
+            state = await pipeline.handle(
+                InboundMessage(
+                    topic="home/irrigation/quad_pump/state",
+                    payload=json.dumps(
+                        {
+                            "event_id": str(uuid.uuid4()),
+                            "boot_id": "boot-test",
+                            "payload": {
+                                "relay_1": False,
+                                "fuse_1": "unknown",
+                                "relay_2": False,
+                                "fuse_2": "unknown",
+                                "relay_3": False,
+                                "fuse_3": "unknown",
+                                "relay_4": False,
+                                "fuse_4": "unknown",
+                            },
+                        }
+                    ).encode(),
+                )
+            )
+            self.assertEqual(state, "accepted")
+
+            heartbeat = await pipeline.handle(
+                InboundMessage(
+                    topic="home/irrigation/quad_pump/heartbeat",
+                    payload=json.dumps(
+                        {"boot_id": "boot-test", "payload": {"uptime_ms": 61000}}
+                    ).encode(),
+                )
+            )
+            self.assertEqual(heartbeat, "accepted")
+
+            health = await pipeline.handle(
+                InboundMessage(
+                    topic="home/irrigation/quad_pump/health",
+                    payload=json.dumps(
+                        {
+                            "boot_id": "boot-test",
+                            "payload": {
+                                "firmware_version": "quad_pump-2.0.0",
+                                "mqtt_connected": True,
+                                "fuse_sensing": "unavailable",
+                            },
+                        }
+                    ).encode(),
+                )
+            )
+            self.assertEqual(health, "accepted")
+            self.assertEqual(pipeline.metrics.dead_lettered, {})
+        finally:
+            await engine.dispose()
+
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 

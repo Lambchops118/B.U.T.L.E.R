@@ -1,9 +1,15 @@
 """Idempotent registry seeding for the known deployment (C18 startup step).
 
 Seeds the locations, entities, and sources this installation is known to
-have — the two Pico W boards publishing on the legacy ``status/{pin}`` topics
-and the simulator device used for development and tests. ``ON CONFLICT DO
-NOTHING`` preserves any operator edits made after the first boot.
+have — the two Pico W boards publishing on the legacy ``status/{pin}`` topics,
+the canonical quad-pump firmware, and the simulator device used for
+development and tests. ``ON CONFLICT DO NOTHING`` preserves any operator edits
+made after the first boot.
+
+Because inserts do nothing on conflict, editing a seed row above never reaches
+a database that has already booted. ``_SOURCE_MIGRATIONS`` is the explicit
+update path for that case: each entry names the exact previous value it
+expects to find, so a field an operator deliberately changed is left alone.
 
 Note on the legacy topics: both Picos publish ``status/16`` in firmware (a
 known collision documented in DISCOVERY.md). Ownership here assigns
@@ -16,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -57,6 +64,34 @@ _SOURCES: list[dict[str, Any]] = [
         "metadata": {"legacy": "pin_status"},
     },
     {
+        # Canonical quad-pump firmware (Peripherals/quad_pump). Separate from
+        # quad_pump_pico because that source is routed through the legacy
+        # pin_status normalizer, which cannot read canonical JSON envelopes.
+        #
+        # Topics are listed individually rather than as
+        # ``home/irrigation/quad_pump/#`` so the source owns only what the
+        # device publishes. The command topic is published *by* this backend
+        # and is deliberately not owned here — action requests are already
+        # durable in ``action_requests``.
+        "source_id": "quad_pump_canonical",
+        "source_type": "microcontroller",
+        "display_name": "Quad pump Pico W (canonical firmware)",
+        "transport": "mqtt",
+        "entity_id": "quad_pump",
+        "location_id": "home",
+        # The firmware implements no clock synchronization, so ordering uses
+        # the server receive time. Raise this only if NTP is added and proven.
+        "clock_quality": "server_received",
+        "allowed_topics": [
+            "home/irrigation/quad_pump/state",
+            "home/irrigation/quad_pump/event",
+            "home/irrigation/quad_pump/health",
+            "home/irrigation/quad_pump/heartbeat",
+            "home/irrigation/quad_pump/telemetry/+",
+        ],
+        "metadata": {"channels": [1, 2, 3, 4], "fuse_sensing": "unavailable"},
+    },
+    {
         "source_id": "sim_device",
         "source_type": "simulator",
         "display_name": "Awareness simulator device",
@@ -66,6 +101,19 @@ _SOURCES: list[dict[str, Any]] = [
         "clock_quality": "device_synced",
         "allowed_topics": ["home/sim/#"],
         "metadata": {"simulator": True},
+    },
+]
+
+
+# Explicit updates for rows that already exist. ``expected`` is the value this
+# file previously seeded; a row holding anything else was customized by an
+# operator and is left untouched.
+_SOURCE_MIGRATIONS: list[dict[str, Any]] = [
+    {
+        "source_id": "quad_pump_pico",
+        "column": "display_name",
+        "expected": "Quad pump Pico W (legacy status topics)",
+        "value": "Quad pump Pico W (legacy status topics; superseded by quad_pump_canonical)",
     },
 ]
 
@@ -86,3 +134,26 @@ async def seed_registry(engine: AsyncEngine) -> None:
             await connection.execute(
                 insert(Source).values(**values).on_conflict_do_nothing(index_elements=["source_id"])
             )
+        await apply_source_migrations(connection)
+
+
+async def apply_source_migrations(connection) -> int:
+    """Apply ``_SOURCE_MIGRATIONS`` to already-seeded rows.
+
+    Returns the number of rows changed. Each migration is conditional on the
+    previously seeded value, so it is idempotent and never overwrites an
+    intentional operator edit.
+    """
+    changed = 0
+    for migration in _SOURCE_MIGRATIONS:
+        column = getattr(Source, migration["column"])
+        result = await connection.execute(
+            sa.update(Source)
+            .where(
+                Source.source_id == migration["source_id"],
+                column == migration["expected"],
+            )
+            .values(**{migration["column"]: migration["value"]})
+        )
+        changed += result.rowcount or 0
+    return changed
