@@ -21,6 +21,24 @@ import sys
 from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
 
 
+def _configure_windows_event_loop_policy() -> None:
+    """Use the selector loop required by aiomqtt on Windows.
+
+    Python's default Windows proactor loop does not implement add_reader or
+    add_writer, which aiomqtt uses for socket readiness. Configure the policy
+    before Uvicorn creates the awareness server's event loop.
+    """
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def _uvicorn_loop_factory():
+    """Return an aiomqtt-compatible loop factory for Uvicorn on Windows."""
+    if sys.platform == "win32":
+        return asyncio.SelectorEventLoop
+    return "auto"
+
+
 def _cmd_serve(settings: AwarenessSettings) -> int:
     import uvicorn
 
@@ -30,6 +48,7 @@ def _cmd_serve(settings: AwarenessSettings) -> int:
         create_app(settings),
         host=settings.api_host,
         port=settings.api_port,
+        loop=_uvicorn_loop_factory(),
         log_config=None,
     )
     return 0
@@ -110,6 +129,8 @@ def _cmd_backup(settings: AwarenessSettings, verify: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_windows_event_loop_policy()
+
     parser = argparse.ArgumentParser(prog="talos.awareness", description=__doc__)
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("serve", help="run the internal API (default)")

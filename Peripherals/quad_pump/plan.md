@@ -98,6 +98,14 @@ The owner supplied this tentative mapping:
 | 3 | 11 | 4 |
 | 4 | 12 | 5 |
 
+Post-deployment bench evidence resolved the numbering convention on
+2026-07-26. The table contains MicroPython GPIO identifiers, not physical Pico
+header pin numbers. The owner's earlier direct script using `Pin(9)` through
+`Pin(12)` activated all four relays, with `1` meaning on. The implemented map
+is therefore channel 1-4 → GP9-GP12, active-high. The corresponding fuse table
+entries are GP1, GP2, GP4, and GP5; they remain unusable for the analog divider
+signals because those pins are not ADC inputs, so fuse sensing stays disabled.
+
 Do not assume whether these numbers are GPIO numbers, physical header pin
 numbers, ADC channel numbers, or carrier-board labels. Record the confirmed
 numbering in a named mapping table in code.

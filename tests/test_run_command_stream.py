@@ -181,6 +181,200 @@ class RunCommandStreamTests(unittest.TestCase):
         # The second stream call carried the tool result back to the model.
         self.assertIn("tool", [m.get("role") for m in backend.stream_calls[1]])
 
+    def test_explicit_pump_command_routes_through_registered_action_tool(self):
+        mcp = _FakeMCP()
+        def accepted_action(name, arguments):
+            mcp.calls.append((name, arguments))
+            return (
+                '{"accepted":true,"action_request_id":"req-2",'
+                '"status":"approved"}'
+            )
+
+        mcp.call_tool = mock.Mock(side_effect=accepted_action)
+        backend = _FakeBackend(
+            []
+        )
+        tool_defs = [
+            {
+                "name": "request_device_action",
+                "description": "Request a registered physical action.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+        patches = self._patches(backend, mcp)
+        patches[1] = mock.patch.object(
+            agent_runtime,
+            "_build_tool_definitions",
+            return_value=tool_defs,
+        )
+        for patcher in patches:
+            patcher.start()
+        try:
+            output = list(
+                agent_runtime.run_command_stream(
+                    "turn on the pump for pot two",
+                    session_id="voice-worker",
+                    interaction_mode="voice",
+                    request_id="pump-2",
+                )
+            )
+        finally:
+            for patcher in patches:
+                patcher.stop()
+
+        self.assertEqual(
+            output,
+            [
+                "Pump 2 request is approved; physical activation "
+                "has not yet been confirmed."
+            ],
+        )
+        self.assertEqual(len(mcp.calls), 1)
+        name, raw_arguments = mcp.calls[0]
+        self.assertEqual(name, "request_device_action")
+        arguments = agent_runtime.parse_tool_arguments(raw_arguments)
+        self.assertEqual(arguments["action"], "run_pump")
+        self.assertEqual(arguments["parameters"], '{"channel":2}')
+        self.assertEqual(arguments["idempotency_key"], "voice-pump-2")
+        self.assertEqual(backend.stream_calls, [])
+
+    def test_physical_action_without_tool_is_not_falsely_confirmed(self):
+        mcp = _FakeMCP()
+        false_reply = [
+            LLMTextDelta("I've initiated the watering process."),
+            LLMCompletion(text="I've initiated the watering process."),
+        ]
+        backend = _FakeBackend([list(false_reply), list(false_reply)])
+        tool_defs = [
+            {
+                "name": "request_device_action",
+                "description": "Request a registered physical action.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+        patches = self._patches(backend, mcp)
+        patches[1] = mock.patch.object(
+            agent_runtime,
+            "_build_tool_definitions",
+            return_value=tool_defs,
+        )
+        for patcher in patches:
+            patcher.start()
+        try:
+            output = list(
+                agent_runtime.run_command_stream(
+                    "water the monstera",
+                    session_id="voice-worker",
+                    interaction_mode="voice",
+                )
+            )
+        finally:
+            for patcher in patches:
+                patcher.stop()
+
+        self.assertEqual(
+            output,
+            ["I did not send a device command, so no pump or relay was activated."],
+        )
+        self.assertEqual(mcp.calls, [])
+        self.assertEqual(len(backend.stream_calls), 2)
+        self.assertIn(
+            "called no action tool",
+            backend.stream_calls[1][-1]["content"],
+        )
+
+    def test_explicit_pump_action_service_error_is_reported_without_llm_claim(self):
+        class _FailingMCP(_FakeMCP):
+            def call_tool(self, name, arguments):
+                self.calls.append((name, arguments))
+                return '{"error":"awareness API unavailable"}'
+
+        mcp = _FailingMCP()
+        backend = _FakeBackend([])
+        tool_defs = [
+            {
+                "name": "request_device_action",
+                "description": "Request a registered physical action.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+        patches = self._patches(backend, mcp)
+        patches[1] = mock.patch.object(
+            agent_runtime,
+            "_build_tool_definitions",
+            return_value=tool_defs,
+        )
+        for patcher in patches:
+            patcher.start()
+        try:
+            output = list(
+                agent_runtime.run_command_stream(
+                    "activate pump three",
+                    session_id="voice-worker",
+                    interaction_mode="voice",
+                    request_id="pump-3",
+                )
+            )
+        finally:
+            for patcher in patches:
+                patcher.stop()
+
+        self.assertEqual(
+            output,
+            [
+                "Pump 3 command could not be sent because the registered "
+                "action service returned an error."
+            ],
+        )
+        self.assertEqual(len(mcp.calls), 1)
+        self.assertEqual(backend.stream_calls, [])
+
+    def test_explicit_pump_rejection_reports_reason_without_claiming_activation(self):
+        class _RejectedMCP(_FakeMCP):
+            def call_tool(self, name, arguments):
+                self.calls.append((name, arguments))
+                return (
+                    '{"accepted":false,"status":"rejected",'
+                    '"reason":"cooldown: channel 4 ran recently"}'
+                )
+
+        mcp = _RejectedMCP()
+        backend = _FakeBackend([])
+        tool_defs = [
+            {
+                "name": "request_device_action",
+                "description": "Request a registered physical action.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+        patches = self._patches(backend, mcp)
+        patches[1] = mock.patch.object(
+            agent_runtime,
+            "_build_tool_definitions",
+            return_value=tool_defs,
+        )
+        for patcher in patches:
+            patcher.start()
+        try:
+            output = list(
+                agent_runtime.run_command_stream(
+                    "activate pump four",
+                    session_id="voice-worker",
+                    interaction_mode="voice",
+                    request_id="pump-4",
+                )
+            )
+        finally:
+            for patcher in patches:
+                patcher.stop()
+
+        self.assertEqual(
+            output,
+            ["Pump 4 command was not sent: cooldown: channel 4 ran recently"],
+        )
+        self.assertEqual(len(mcp.calls), 1)
+        self.assertEqual(backend.stream_calls, [])
+
     def test_voice_followup_receives_prior_user_and_assistant_turns(self):
         backend = _FakeBackend(
             [

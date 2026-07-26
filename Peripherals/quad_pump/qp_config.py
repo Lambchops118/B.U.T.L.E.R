@@ -33,25 +33,20 @@ EVENT_TYPE_COMMAND_RECEIPT = ENTITY_ID + ".command_received"
 EVENT_TYPE_FUSE_TRANSITION = ENTITY_ID + ".fuse_transition"
 EVENT_TYPE_RUN_STOPPED = ENTITY_ID + ".run_stopped"
 
-# --- confirmed hardware mapping (owner-confirmed 2026-07-26) ------------------
+# --- confirmed hardware mapping (bench-confirmed 2026-07-26) ------------------
 #
-# The owner's original table listed board *physical* pin numbers. Translation
-# to GPIO for a Raspberry Pi Pico W:
-#
-#     physical 1 -> GP0   physical 2 -> GP1   physical 4 -> GP2   physical 5 -> GP3
-#     physical 9 -> GP6   physical 10 -> GP7  physical 11 -> GP8  physical 12 -> GP9
-#
-# The owner then confirmed the *direction* explicitly, which is the reverse of
-# the column order in the original plan table:
-#
-#     relays are driven from GP0-GP3, fuse sense arrives on GP6-GP9.
+# The owner's original table used MicroPython GPIO numbers, not Pico physical
+# header positions. This was proven after deployment with a direct script using
+# Pin(9), Pin(10), Pin(11), and Pin(12): each output activated its relay when
+# driven high. The fuse inputs from that same table are GP1, GP2, GP4, and GP5,
+# but fuse sensing remains deliberately unavailable (see below).
 #
 # Logical channel numbers 1-4 are the only identifiers used off-device. GPIO
 # numbers never appear in an MQTT topic, payload, or action parameter.
 CHANNELS = (1, 2, 3, 4)
 
-CHANNEL_RELAY_GPIO = {1: 0, 2: 1, 3: 2, 4: 3}
-CHANNEL_FUSE_GPIO = {1: 6, 2: 7, 3: 8, 4: 9}
+CHANNEL_RELAY_GPIO = {1: 9, 2: 10, 3: 11, 4: 12}
+CHANNEL_FUSE_GPIO = {1: 1, 2: 2, 3: 4, 4: 5}
 
 # Owner-confirmed: driving the GPIO high energizes the relay and runs the pump;
 # driving it low is the safe state. Boot/reset leaves the pins as inputs
@@ -73,7 +68,7 @@ DEFAULT_RUN_SECONDS = 8
 # fault and never inhibits anything.
 #
 # NOTE (revisit): fuse sensing is NOT IMPLEMENTED on this hardware revision.
-# The fuse signal is an analog divider, but GP6-GP9 have no ADC — the Pico W
+# The fuse signal is an analog divider, but GP1/GP2/GP4/GP5 have no ADC — the Pico W
 # exposes only GP26-GP28. Every channel therefore reports "unknown" forever and
 # this policy currently has nothing to act on. See FUSE_SENSING_AVAILABLE below
 # and docs/awareness-memory/OPEN_QUESTIONS.md (OQ-D).

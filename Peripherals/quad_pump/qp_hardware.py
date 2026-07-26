@@ -71,7 +71,7 @@ class FuseBank(object):
     NOT IMPLEMENTED on this hardware revision, on purpose.
 
     The owner confirmed the fuse signal is an analog voltage from a resistor
-    divider, and that it arrives on GP6-GP9. Those pins are digital-only: the
+    divider, and that it arrives on GP1/GP2/GP4/GP5. Those pins are digital-only: the
     Pico W exposes ADC on GP26-GP28 only, and only three of them. There is no
     way to measure four analog fuse voltages on this wiring, and reading the
     divider as a digital level would silently report "ok" or "blown" from a

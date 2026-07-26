@@ -67,6 +67,27 @@ INJECT_CURRENT_TIME = env_bool("TALOS_INJECT_CURRENT_TIME", True)
 # structured tool call (the hosted Responses API could not). Recover it: parse
 # and execute the call, and keep the raw markup out of speech and stored history.
 RECOVER_LEAKED_TOOL_CALLS = env_bool("TALOS_RECOVER_LEAKED_TOOL_CALLS", True)
+PHYSICAL_ACTION_TOOL_NAMES = frozenset(
+    {"request_device_action", "water_plants", "toggle_fan"}
+)
+_PUMP_CHANNEL_WORDS = {
+    "1": 1,
+    "one": 1,
+    "2": 2,
+    "two": 2,
+    "too": 2,
+    "to": 2,
+    "3": 3,
+    "three": 3,
+    "tree": 3,
+    "4": 4,
+    "four": 4,
+}
+_PUMP_CHANNEL_RE = re.compile(
+    r"\b(?:pump|pot|channel)\s*(?:number\s*)?"
+    r"(1|2|3|4|one|two|too|to|three|tree|four)\b",
+    re.IGNORECASE,
+)
 KICAD_TOOL_PREFIX = os.getenv("KICAD_MCP_TOOL_PREFIX", "kicad_").strip() or "kicad_"
 TOOL_OUTPUT_CHAR_LIMIT = max(256, env_int("TALOS_TOOL_OUTPUT_CHAR_LIMIT", 4000))
 TOOL_OUTPUT_SUMMARY_ENABLED = env_bool("TALOS_SUMMARIZE_TOOL_OUTPUTS", True)
@@ -1420,6 +1441,8 @@ def _tool_result_indicates_failure(raw_result: str) -> bool:
         return False
 
     if isinstance(parsed, dict):
+        if parsed.get("accepted") is False or parsed.get("ok") is False:
+            return True
         success = parsed.get("success")
         if success is False:
             return True
@@ -1909,6 +1932,115 @@ def _get_stream_backend():
     return get_llm_backend()
 
 
+def _tool_definition_names(tool_defs: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(tool.get("name") or "").strip()
+        for tool in tool_defs
+        if str(tool.get("name") or "").strip()
+    }
+
+
+def _explicit_pump_action_tool_call(
+    command: str,
+    tool_defs: list[dict[str, Any]],
+    *,
+    request_id: str,
+) -> LLMToolCall | None:
+    """Deterministically route an unambiguous pump/channel command.
+
+    The model remains responsible for conversational interpretation, but a
+    direct imperative such as "turn on pump for pot two" must not depend on the
+    model deciding whether to use the registered action boundary. Ambiguous
+    requests (for example, a plant name with no known channel) deliberately
+    return ``None`` and remain in the normal tool loop.
+    """
+    if "request_device_action" not in _tool_definition_names(tool_defs):
+        return None
+
+    normalized = " ".join(str(command or "").strip().lower().split())
+    if not normalized or re.search(r"\b(?:how|why|what|when|where)\b", normalized[:12]):
+        return None
+    channel_match = _PUMP_CHANNEL_RE.search(normalized)
+    if channel_match is None:
+        return None
+    channel = _PUMP_CHANNEL_WORDS[channel_match.group(1).lower()]
+
+    if re.search(r"\b(?:stop|turn off|switch off|deactivate|disable)\b", normalized):
+        action = "stop_pump"
+    elif re.search(
+        r"\b(?:water|run|start|activate|turn on|switch on|enable)\b",
+        normalized,
+    ):
+        action = "run_pump"
+    else:
+        return None
+
+    arguments = {
+        "action": action,
+        "parameters": json.dumps({"channel": channel}, separators=(",", ":")),
+        "idempotency_key": f"voice-{request_id}",
+    }
+    return LLMToolCall(
+        call_id=f"deterministic-pump-{request_id}",
+        name="request_device_action",
+        arguments=json.dumps(arguments, separators=(",", ":")),
+    )
+
+
+def _looks_like_physical_action_request(command: str) -> bool:
+    """Conservatively identify imperative home-device action requests."""
+    normalized = " ".join(str(command or "").strip().lower().split())
+    if not normalized:
+        return False
+    if re.match(r"^(?:how|why|what|when|where|which)\b", normalized):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:water|run|start|stop|activate|deactivate|turn on|turn off|"
+            r"switch on|switch off|enable|disable)\b",
+            normalized,
+        )
+        and re.search(r"\b(?:pump|pot|plant|monstera|fan|relay)\b", normalized)
+    )
+
+
+def _action_result_payload(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not events:
+        return None
+    try:
+        payload = json.loads(str(events[0].get("raw_result") or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _deterministic_pump_result_message(
+    *,
+    channel: int,
+    events: list[dict[str, Any]],
+) -> str:
+    payload = _action_result_payload(events)
+    if payload is None:
+        return (
+            f"Pump {channel} was requested, but physical activation has not "
+            "been confirmed."
+        )
+    if payload.get("error"):
+        return (
+            f"Pump {channel} command could not be sent because the registered "
+            "action service returned an error."
+        )
+    if payload.get("accepted") is False:
+        reason = " ".join(str(payload.get("reason") or "request rejected").split())
+        return f"Pump {channel} command was not sent: {reason}"
+
+    status = str(payload.get("status") or "accepted").strip()
+    return (
+        f"Pump {channel} request is {status}; physical "
+        "activation has not yet been confirmed."
+    )
+
+
 def _execute_chat_tool_calls(
     tool_calls: tuple[LLMToolCall, ...],
     mcp_client: Any,
@@ -2068,10 +2200,78 @@ def run_command_stream(
         full_text_parts: list[str] = []
         rounds = 0
         tool_execution_total_ms = 0.0
+        physical_action_request = _looks_like_physical_action_request(command)
+        physical_action_tool_attempted = False
+        physical_action_tool_succeeded = False
+        physical_action_retry_used = False
+
+        pre_routed_call = _explicit_pump_action_tool_call(
+            command,
+            tool_defs,
+            request_id=telemetry_id,
+        )
+        if pre_routed_call is not None:
+            pre_routed_calls = (pre_routed_call,)
+            messages.append(tool_calls_to_assistant_message("", pre_routed_calls))
+            tool_execution_started = time.perf_counter()
+            tool_messages, _events = _execute_chat_tool_calls(
+                pre_routed_calls,
+                mcp_client,
+                session_id=session_id,
+                runtime_lane=runtime_lane,
+            )
+            tool_execution_ms = round(
+                (time.perf_counter() - tool_execution_started) * 1000.0, 1
+            )
+            tool_execution_total_ms += tool_execution_ms
+            physical_action_tool_attempted = True
+            physical_action_tool_succeeded = not any(
+                event.get("failed") for event in _events
+            )
+            _emit_runtime_telemetry(
+                telemetry_callback,
+                request_id=telemetry_id,
+                event="tools_completed",
+                round=0,
+                route="deterministic_pump",
+                tool_call_count=1,
+                tool_execution_ms=tool_execution_ms,
+            )
+            messages.extend(tool_messages)
+            result_note = _deterministic_pump_result_message(
+                channel=_PUMP_CHANNEL_WORDS[
+                    _PUMP_CHANNEL_RE.search(command).group(1).lower()
+                ],
+                events=_events,
+            )
+            full_text_parts.append(result_note)
+            yield result_note
+            _record_memory_turn(
+                memory_store,
+                session_id,
+                command,
+                result_note,
+                interaction_mode=mode,
+            )
+            _emit_runtime_telemetry(
+                telemetry_callback,
+                request_id=telemetry_id,
+                event="agent_stream_completed",
+                llm_round_count=0,
+                tool_execution_total_ms=round(tool_execution_total_ms, 1),
+                agent_stream_total_ms=round(
+                    (time.perf_counter() - pipeline_started) * 1000.0, 1
+                ),
+            )
+            return
+
         while True:
             turn_text_parts: list[str] = []
             spoken_parts: list[str] = []
             pending: list[str] = []
+            defer_spoken_output = (
+                physical_action_request and not physical_action_tool_succeeded
+            )
             # None = undecided, "speak" = natural text, "suppress" = leaked markup.
             decision: str | None = None
             completion: LLMCompletion | None = None
@@ -2111,11 +2311,20 @@ def run_command_stream(
                             else:
                                 decision = "speak"
                                 for part in pending:
-                                    yield _speak(part)
+                                    if defer_spoken_output:
+                                        spoken_parts.append(part)
+                                    else:
+                                        yield _speak(part)
                                 pending.clear()
-                                yield _speak(event.text)
+                                if defer_spoken_output:
+                                    spoken_parts.append(event.text)
+                                else:
+                                    yield _speak(event.text)
                         elif decision == "speak":
-                            yield _speak(event.text)
+                            if defer_spoken_output:
+                                spoken_parts.append(event.text)
+                            else:
+                                yield _speak(event.text)
                         # decision == "suppress": drop, neither spoken nor stored
                     elif isinstance(event, LLMCompletion):
                         completion = event
@@ -2158,6 +2367,33 @@ def run_command_stream(
 
             effective_tool_calls = completion.tool_calls or recovered_tool_calls
             if not effective_tool_calls:
+                if (
+                    physical_action_request
+                    and not physical_action_tool_attempted
+                    and not physical_action_retry_used
+                    and PHYSICAL_ACTION_TOOL_NAMES
+                    & _tool_definition_names(tool_defs)
+                ):
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "The user's request requires a physical action, but your "
+                                "previous reply called no action tool and therefore did "
+                                "nothing. Call the appropriate registered action tool now, "
+                                "or state truthfully that no command was sent. Never claim "
+                                "the action was initiated or completed without the tool result."
+                            ),
+                        }
+                    )
+                    physical_action_retry_used = True
+                    rounds += 1
+                    continue
+                if physical_action_request and not physical_action_tool_succeeded:
+                    failure_note = (
+                        "I did not send a device command, so no pump or relay was activated."
+                    )
+                    yield _speak(failure_note)
                 break
 
             if rounds >= MAX_TOOL_CALL_ROUNDS:
@@ -2175,6 +2411,16 @@ def run_command_stream(
                 session_id=session_id,
                 runtime_lane=runtime_lane,
             )
+            action_results = [
+                event
+                for call, event in zip(effective_tool_calls, _events)
+                if call.name in PHYSICAL_ACTION_TOOL_NAMES
+            ]
+            if action_results:
+                physical_action_tool_attempted = True
+                physical_action_tool_succeeded = any(
+                    not event.get("failed") for event in action_results
+                )
             tool_execution_ms = round(
                 (time.perf_counter() - tool_execution_started) * 1000.0, 1
             )

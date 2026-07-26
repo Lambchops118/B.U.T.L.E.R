@@ -163,8 +163,8 @@ def _states(messages):
 
 class HardwareMappingTest(unittest.TestCase):
     def test_confirmed_channel_map_is_explicit_and_disjoint(self):
-        self.assertEqual(config.CHANNEL_RELAY_GPIO, {1: 0, 2: 1, 3: 2, 4: 3})
-        self.assertEqual(config.CHANNEL_FUSE_GPIO, {1: 6, 2: 7, 3: 8, 4: 9})
+        self.assertEqual(config.CHANNEL_RELAY_GPIO, {1: 9, 2: 10, 3: 11, 4: 12})
+        self.assertEqual(config.CHANNEL_FUSE_GPIO, {1: 1, 2: 2, 3: 4, 4: 5})
         relay_pins = set(config.CHANNEL_RELAY_GPIO.values())
         fuse_pins = set(config.CHANNEL_FUSE_GPIO.values())
         self.assertEqual(len(relay_pins), 4)
@@ -191,9 +191,10 @@ class HardwareMappingTest(unittest.TestCase):
         factory = FakePinFactory()
         relays = hardware.RelayBank(pin_factory=factory, active_high=False)
         relays.initialize_safe()
-        self.assertEqual(factory.pins[0].level, 1)
+        relay_gpio = config.CHANNEL_RELAY_GPIO[1]
+        self.assertEqual(factory.pins[relay_gpio].level, 1)
         relays.set(1, True)
-        self.assertEqual(factory.pins[0].level, 0)
+        self.assertEqual(factory.pins[relay_gpio].level, 0)
 
     def test_fuse_bank_reports_unknown_because_sensing_is_unavailable(self):
         fuses = hardware.FuseBank()
