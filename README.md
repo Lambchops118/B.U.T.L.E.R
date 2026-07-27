@@ -483,44 +483,42 @@ The voice worker sends recognized commands to the main agent over the text-agent
 
 ### Barge-In (Interrupting TALOS While It Speaks)
 
-> **Experimental / known unreliable:** the first-pass implementation uses an
-> RMS energy heuristic instead of acoustic echo cancellation. Live use has shown
-> missed interruptions, false ducking, and false transcripts. Do not treat it as
-> production-ready. The root-cause review and AEC-first replacement are in
-> [the barge-in redesign plan](docs/voice/BARGE_IN_REDESIGN_PLAN.md). Until that
-> work is authorized and accepted, use `TALOS_BARGE_IN=0`; wake-word-required
-> mode reduces false command acceptance but does not fix the underlying problem.
+The room path now uses pinned Windows communications-mode AEC, continuously
+drained bounded capture, Silero speech-probability VAD, and local faster-whisper
+confirmation. The deployed-host Phase B probe measured 45.7 dB echo return loss
+enhancement with no callback errors. Rollout remains fail-closed with
+`TALOS_BARGE_IN=0` until the owner-run room corpus and soak meet the targets in
+[the barge-in redesign plan](docs/voice/BARGE_IN_REDESIGN_PLAN.md).
 
-You can talk over a spoken reply or a proactive alert. Interrupting stops the
-answer, tells the agent how much of it you actually heard, and — unless you only
-asked it to stop — sends what you said as the next command. That covers
-correcting a wrong answer mid-sentence, adding information it was missing, and
-cutting off a reply that has gone on too long.
+When explicitly enabled, the AEC path lets a user talk over a spoken reply or
+proactive alert. A confirmed interruption stops
+the answer, tells the agent how much was heard, and — unless the utterance only
+asked it to stop — sends the utterance as the next command.
 
-The constraint that shapes the design is that the microphone and the speakers are
-open in the same room and nothing in this stack cancels the echo. A plain
-voice-activity trigger would cut TALOS off with its own voice, so the decision is
-made in two stages:
+`TALOS_BARGE_IN_BACKEND=aec` is the production selection. The old RMS detector
+is available only as the explicit `heuristic_diagnostic` backend and is never a
+silent fallback. If AEC, endpoint identity, or the VAD stack fails, barge-in is
+disabled while ordinary wake-word capture stays available.
 
-1. Every microphone frame is compared against the level TALOS is currently
-   hearing back from its own speakers, which it learns per room rather than
-   taking from configuration. A sustained rise above that level **ducks** the
-   reply to ~12% and starts recording you. Ducking drops the echo by about 18 dB,
-   so the recording is nearly clean.
-2. That recording is transcribed locally and checked against what TALOS just
-   said. Only a confirmed utterance stops the reply. A rejected one un-ducks and
-   speech continues — so a false alarm costs a moment of quieter audio, not a
-   truncated answer.
+Telemetry includes privacy-safe aggregate counters for candidates started, rejected,
+and accepted; bounded numeric summaries for mixed-capture/render RMS, capture and
+heuristic-speech duration, ASR latency/confidence when available, and pause
+latency, AEC residual RMS, and VAD probabilities. It never includes PCM or
+transcript content.
 
-While TALOS is speaking, the background recognizer is fed silence and the
-detector owns the microphone. Otherwise unbroken echo would keep the recognizer
-mid-phrase for the whole reply, and the interruption would surface seconds late.
-When nothing is playing the path is untouched, so the wake-word flow and its
-latency are exactly as before.
+An opt-in fixture recorder is available for operator-run corpus collection:
 
-Stopping is local and immediate: audio is written in 20 ms slices and stops at
-the next one. Everything after that — cancelling generation on the agent,
-correcting the record — happens off the audio path.
+- Set `TALOS_BARGE_IN_FIXTURE_RECORDING=1` only for a visible recording session.
+- The voice worker prints a warning with the exact local directory and limits.
+- `capture.wav`, `render.wav`, and `events.jsonl` preserve block timestamps and
+  sample offsets for synchronization; `manifest.json` records bounds, dropped
+  frames, termination reason, and errors.
+- Audio callbacks enqueue without blocking. The default session is limited to
+  120 seconds and 32 MiB of PCM, with at most five owned fixture directories.
+- The recorder is independent of `TALOS_BARGE_IN`, so unsafe interruption can
+  remain disabled while fixtures are collected. Raw audio is never recorded by
+  default, and fixture files are never uploaded; the existing explicit remote
+  STT opt-in remains a separate policy.
 
 Because synthesis runs ahead of playback, the text the agent generated is longer
 than the text you heard. The voice worker is authoritative about the difference:
@@ -528,19 +526,17 @@ it reports the audible prefix to `POST /interrupt`, which cancels the in-flight
 turn and rewrites the stored assistant turn to what was heard, marked as cut off.
 Without that, TALOS would believe it finished a thought you never heard, and a
 follow-up like "no, not that one" would have nothing to attach to.
+Only fully emitted sentence chunks are recorded as heard. If interruption lands
+inside a chunk without word alignment, the chunk is marked partially heard and
+none of its scheduled words are claimed.
 
 Bare stop phrases ("stop", "never mind", "that's enough") end the reply without
 spending a turn on an answer you did not ask for.
 
-Tuning lives in `settings.env` under `TALOS_BARGE_IN_*`. The two that matter:
-
-- `TALOS_BARGE_IN_ECHO_MARGIN` — lower it if interruptions are missed, raise it
-  if TALOS cuts itself off mid-sentence.
-- `TALOS_BARGE_IN_REQUIRE_WAKE_WORD=1` — fallback for a room where the speakers
-  overwhelm the microphone; only an interruption naming the wake word (or a bare
-  "stop") is accepted.
-
-`TALOS_BARGE_IN=0` disables the feature entirely.
+The synchronized fixture corpus can be evaluated with
+`python -m talos.voice.diagnostics.barge_in_acceptance <manifest.json>`; start
+from `docs/voice/barge_in_fixture_manifest.example.json`. Room PCM remains local
+and should not be committed.
 
 Barge-in covers the streaming reply path and proactive speech. The opt-in
 non-streaming fallback (`TALOS_REMOTE_LLM_FALLBACK=1`) is not interruptible: its

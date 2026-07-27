@@ -10,9 +10,11 @@ import boto3
 import openai
 import whisper
 import pyaudio
+import queue
 import threading
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 import speech_recognition as sr
@@ -23,6 +25,10 @@ from talos.text.service_client import send_interrupt, send_message, stream_messa
 from talos.voice.benchmarking import VoiceBenchmarkSession
 from talos.voice.streaming import barge_in as barge_in_module
 from talos.voice.streaming.barge_in import BargeInConfig, BargeInDetector, SpeechSession
+from talos.voice.streaming.barge_in_observability import (
+    FixtureRecorderConfig,
+    SynchronizedFixtureRecorder,
+)
 from talos.voice.streaming.speaker import StreamingSpeaker
 
 
@@ -70,13 +76,14 @@ _command_executor = ThreadPoolExecutor(max_workers=2)
 # --------------------------------------------------------------------------- #
 # Barge-in
 # --------------------------------------------------------------------------- #
-# Letting the user talk over TALOS while it is speaking. See
-# talos/voice/streaming/barge_in.py for why this is a two-stage decision rather
-# than a plain voice-activity trigger: the microphone hears the speakers and
-# nothing in this stack cancels that echo.
-BARGE_IN_ENABLED = env_bool("TALOS_BARGE_IN", True)
+# The RMS-plus-ASR detector is experimental and known to accept false commands.
+# Fail closed until the AEC/VAD replacement has passed the recorded-fixture and
+# live-room acceptance gates in docs/voice/BARGE_IN_REDESIGN_PLAN.md.
+BARGE_IN_ENABLED = env_bool("TALOS_BARGE_IN", False)
+BARGE_IN_BACKEND = os.getenv("TALOS_BARGE_IN_BACKEND", "aec").strip().lower()
 # Strict mode only accepts an interruption that names the wake word or is a bare
-# "stop". Worth turning on in a room where the speakers overwhelm the mic.
+# "stop". This is partial containment for an explicitly accepted diagnostic
+# run; it does not prevent false ducking.
 BARGE_IN_REQUIRE_WAKE_WORD = env_bool("TALOS_BARGE_IN_REQUIRE_WAKE_WORD", False)
 # Session the proactive lane records its turns under (see talos/router.py); an
 # interrupted alert has to be corrected where it was written.
@@ -98,6 +105,49 @@ _BARGE_IN_CONFIG = BargeInConfig(
     duck_gain=env_float("TALOS_BARGE_IN_DUCK_GAIN", 0.12),
 )
 _barge_in = BargeInDetector(_BARGE_IN_CONFIG)
+_duplex = None
+_vad_gate = None
+_barge_in_runtime_ready = False
+_barge_asr_queue: "queue.Queue[tuple[SpeechSession, bytes, dict[str, float]]]" = (
+    queue.Queue(maxsize=4)
+)
+_barge_asr_worker_started = False
+_barge_asr_worker_lock = threading.Lock()
+
+_FIXTURE_RECORDING_ENABLED = env_bool(
+    "TALOS_BARGE_IN_FIXTURE_RECORDING", False
+)
+_FIXTURE_DIRECTORY = Path(
+    os.getenv(
+        "TALOS_BARGE_IN_FIXTURE_DIR",
+        str(Path(__file__).resolve().parents[2] / "logs" / "barge_in_fixtures"),
+    )
+)
+
+
+def _build_fixture_recorder() -> SynchronizedFixtureRecorder:
+    config = FixtureRecorderConfig(
+        enabled=_FIXTURE_RECORDING_ENABLED,
+        directory=_FIXTURE_DIRECTORY,
+        max_duration_seconds=env_float(
+            "TALOS_BARGE_IN_FIXTURE_MAX_SECONDS", 120.0
+        ),
+        max_pcm_bytes=env_int(
+            "TALOS_BARGE_IN_FIXTURE_MAX_PCM_BYTES", 32 * 1024 * 1024
+        ),
+        max_sessions=env_int("TALOS_BARGE_IN_FIXTURE_MAX_SESSIONS", 5),
+        queue_frames=env_int("TALOS_BARGE_IN_FIXTURE_QUEUE_FRAMES", 512),
+    )
+    try:
+        return SynchronizedFixtureRecorder(config)
+    except Exception as exc:
+        # Recording is diagnostic-only. A bad directory or bound must not take
+        # down ordinary wake-word operation, but the failed opt-in is visible.
+        print(f"Barge-in fixture recording could not start: {exc}")
+        return SynchronizedFixtureRecorder(FixtureRecorderConfig(enabled=False))
+
+
+_fixture_recorder = _build_fixture_recorder()
 # Only one utterance may hold the output device at a time. Also guarantees a
 # cancelled reply has fully torn down before the reply that interrupted it opens
 # its own stream.
@@ -176,20 +226,57 @@ def _barge_in_available() -> bool:
     is mostly TALOS's own voice -- it would cut itself off constantly. If local
     STT is off or has failed, stay uninterruptible rather than unusable.
     """
-    return BARGE_IN_ENABLED and LOCAL_STT_ENABLED and not _stt_unavailable
+    backend_ready = (
+        BARGE_IN_BACKEND == "heuristic_diagnostic"
+        or (
+            BARGE_IN_BACKEND == "aec"
+            and _barge_in_runtime_ready
+            and _duplex is not None
+            and _duplex.healthy
+        )
+    )
+    return (
+        BARGE_IN_ENABLED
+        and backend_ready
+        and LOCAL_STT_ENABLED
+        and not _stt_unavailable
+    )
 
 
 def _arm_playback(session: SpeechSession) -> None:
-    if _barge_in_available():
+    if _barge_in_available() and BARGE_IN_BACKEND == "heuristic_diagnostic":
         _barge_in.arm(session)
 
 
 def _disarm_playback(session: SpeechSession) -> None:
     if BARGE_IN_ENABLED:
         _barge_in.disarm(session)
+        if _duplex is not None:
+            _duplex.finish_speaking()
+        if _vad_gate is not None:
+            _vad_gate.reset()
+        _emit_barge_in_metrics(session)
 
 
-def _write_pcm(stream, session: SpeechSession, pcm: bytes) -> None:
+def _emit_barge_in_metrics(session: SpeechSession) -> None:
+    snapshot = _barge_in.metrics_snapshot()
+    measurements = {}
+    for name, summary in (snapshot.get("measurements") or {}).items():
+        if not isinstance(summary, dict):
+            continue
+        for statistic in ("count", "min", "max", "average", "last"):
+            measurements[f"{name}_{statistic}"] = summary.get(statistic)
+    emit_pipeline_event(
+        request_id=session.request_id or session.session_id or "voice",
+        component="voice_worker",
+        event="barge_in_metrics_snapshot",
+        counters=snapshot.get("counters") or {},
+        measurements=measurements,
+        capabilities=snapshot.get("capabilities") or {},
+    )
+
+
+def _write_pcm(stream, session: SpeechSession, pcm: bytes) -> bool:
     """Play PCM in short slices, applying the current duck gain.
 
     A synthesized sentence is seconds of audio; handing it to ``stream.write``
@@ -199,13 +286,23 @@ def _write_pcm(stream, session: SpeechSession, pcm: bytes) -> None:
     """
     for start in range(0, len(pcm), PLAYBACK_SLICE_BYTES):
         if session.is_cancelled:
-            return
+            return False
         chunk = pcm[start : start + PLAYBACK_SLICE_BYTES]
         gain = session.gain
         if gain < 1.0:
             chunk = audioop.mul(chunk, 2, gain)
         stream.write(chunk)
-        _barge_in.observe_output(chunk)
+        _fixture_recorder.record_render(chunk)
+        if (
+            _duplex is not None
+            and _barge_in_available()
+            and BARGE_IN_BACKEND == "aec"
+        ):
+            if _duplex.note_render_submitted(chunk):
+                _barge_in.arm(session)
+        elif BARGE_IN_BACKEND == "heuristic_diagnostic":
+            _barge_in.observe_output(chunk)
+    return not session.is_cancelled
 
 
 def _silence_like(frame: bytes) -> bytes:
@@ -236,6 +333,7 @@ class _MicrophoneTap:
 
     def read(self, size):
         frame = self._inner.read(size)
+        _fixture_recorder.record_capture(frame)
         if not _barge_in.should_mute_recognizer():
             return frame
         try:
@@ -262,7 +360,11 @@ class _TappedMicrophone(sr.Microphone):
         return self
 
 
-def _confirm_barge_in(captured_pcm: bytes) -> None:
+def _confirm_barge_in(
+    captured_pcm: bytes,
+    expected_session: SpeechSession | None = None,
+    vad_evidence: dict[str, float] | None = None,
+) -> None:
     """Decide whether a captured burst was really the user talking over us.
 
     Runs inline on the listener thread so speech-to-text stays single-threaded,
@@ -273,44 +375,117 @@ def _confirm_barge_in(captured_pcm: bytes) -> None:
     from talos.voice.backends.base import AudioChunk
 
     session = _barge_in.session
-    if session is None or session.is_cancelled:
+    if (
+        session is None
+        or session.is_cancelled
+        or (expected_session is not None and session is not expected_session)
+    ):
+        _barge_in.record_rejection("stale_session")
         return
 
     started = time.perf_counter()
     try:
-        result = _get_stt_backend().transcribe(
-            AudioChunk(pcm=captured_pcm, sample_rate=16000)
+        backend = _get_stt_backend()
+        transcribe = (
+            getattr(backend, "transcribe_barge_in")
+            if BARGE_IN_BACKEND == "aec"
+            and hasattr(backend, "transcribe_barge_in")
+            else backend.transcribe
         )
+        result = transcribe(AudioChunk(pcm=captured_pcm, sample_rate=16000))
         transcript = (result.text or "").strip()
     except Exception as exc:
         # Cannot confirm, so do not stop: an unverified cut is worse than a
         # missed one. Playback resumes at full volume.
         print(f"Barge-in transcription failed: {exc}")
+        _barge_in.record_rejection(
+            "asr_error",
+            asr_latency_ms=round((time.perf_counter() - started) * 1000.0, 1),
+        )
         _barge_in.resume_after_rejection()
         return
 
     decision_ms = round((time.perf_counter() - started) * 1000.0, 1)
+    asr_confidence = (
+        float(result.confidence) if result.confidence is not None else None
+    )
+    if (
+        result.duration_seconds is not None
+        and result.duration_seconds
+        < env_float("TALOS_BARGE_IN_ASR_MIN_DURATION_SECONDS", 0.16)
+    ):
+        _barge_in.record_rejection("insufficient_speech", asr_latency_ms=decision_ms)
+        _barge_in.resume_after_rejection()
+        return
+    if (
+        result.average_log_probability is not None
+        and result.average_log_probability
+        < env_float("TALOS_BARGE_IN_ASR_MIN_AVG_LOGPROB", -1.2)
+    ):
+        _barge_in.record_rejection("low_asr_quality", asr_latency_ms=decision_ms)
+        _barge_in.resume_after_rejection()
+        return
+    if (
+        result.no_speech_probability is not None
+        and result.no_speech_probability
+        > env_float("TALOS_BARGE_IN_ASR_MAX_NO_SPEECH_PROBABILITY", 0.6)
+    ):
+        _barge_in.record_rejection("no_speech", asr_latency_ms=decision_ms)
+        _barge_in.resume_after_rejection()
+        return
     decision = barge_in_module.classify_barge_in(
         transcript,
         session.spoken_text,
         wake_word=WAKE_WORD,
         require_wake_word=BARGE_IN_REQUIRE_WAKE_WORD,
+        reject_echo=BARGE_IN_BACKEND == "heuristic_diagnostic",
     )
     if not decision.accepted:
+        _barge_in.record_rejection(
+            decision.reason,
+            asr_latency_ms=decision_ms,
+            asr_confidence=asr_confidence,
+        )
         print(
             f"Barge-in rejected ({decision.reason}) after {decision_ms} ms: "
             f"'{transcript}'"
         )
+        emit_pipeline_event(
+            request_id=session.request_id or session.session_id or "voice",
+            component="voice_worker",
+            event="barge_in_candidate_rejected",
+            reason=decision.reason,
+            asr_latency_ms=decision_ms,
+            asr_confidence=asr_confidence,
+            transcript_chars=len(transcript),
+        )
         _barge_in.resume_after_rejection()
         return
 
-    _accept_barge_in(session, transcript, decision, decision_ms)
+    _accept_barge_in(
+        session,
+        transcript,
+        decision,
+        decision_ms,
+        asr_confidence=asr_confidence,
+    )
 
 
-def _accept_barge_in(session, transcript, decision, decision_ms: float) -> None:
+def _accept_barge_in(
+    session,
+    transcript,
+    decision,
+    decision_ms: float,
+    *,
+    asr_confidence: float | None = None,
+) -> None:
     spoken = session.spoken_text
     # Stops audio within one 20 ms slice; everything after this is bookkeeping.
     session.cancel("barge_in")
+    _barge_in.record_acceptance(
+        asr_latency_ms=decision_ms,
+        asr_confidence=asr_confidence,
+    )
     _barge_in.disarm(session)
     print(f"Barge-in accepted after {decision_ms} ms: '{transcript}'")
     emit_pipeline_event(
@@ -318,6 +493,7 @@ def _accept_barge_in(session, transcript, decision, decision_ms: float) -> None:
         component="voice_worker",
         event="barge_in_accepted",
         barge_in_decision_ms=decision_ms,
+        asr_confidence=asr_confidence,
         spoken_chars=len(spoken),
         transcript_chars=len(transcript),
     )
@@ -690,7 +866,7 @@ def speak_text(text: str) -> None:
                 return [audio_stream.read()]
 
         def sink(pcm):
-            _write_pcm(stream, session, pcm)
+            return _write_pcm(stream, session, pcm)
 
         _arm_playback(session)
         try:
@@ -698,6 +874,7 @@ def speak_text(text: str) -> None:
                 synth,
                 sink,
                 on_chunk_playing=session.note_playing,
+                on_chunk_partial=session.note_partial,
                 should_stop=lambda: session.is_cancelled,
             ).speak_stream([text])
         finally:
@@ -756,8 +933,133 @@ def run_speak_server(port: int | None = None):
     return server
 
 
+def _barge_asr_loop() -> None:
+    while True:
+        session, pcm, evidence = _barge_asr_queue.get()
+        try:
+            _confirm_barge_in(pcm, session, evidence)
+        except Exception as exc:
+            print(f"Barge-in confirmation error: {exc}")
+            _barge_in.record_rejection("asr_error")
+            _barge_in.resume_after_rejection()
+
+
+def _ensure_barge_asr_worker() -> None:
+    global _barge_asr_worker_started
+    with _barge_asr_worker_lock:
+        if _barge_asr_worker_started:
+            return
+        threading.Thread(
+            target=_barge_asr_loop,
+            name="talos-barge-in-asr",
+            daemon=True,
+        ).start()
+        _barge_asr_worker_started = True
+
+
+def _on_vad_candidate(probability: float) -> None:
+    session = _barge_in.session
+    if session is None or session.is_cancelled:
+        return
+    session.duck()
+    _barge_in.record_vad_candidate(probability)
+
+
+def _on_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
+    session = _barge_in.session
+    if session is None or session.is_cancelled:
+        _barge_in.record_rejection("stale_session")
+        return
+    _barge_in.record_vad_capture(evidence)
+    try:
+        _barge_asr_queue.put_nowait((session, pcm, evidence))
+    except queue.Full:
+        _barge_in.record_rejection("asr_queue_overflow")
+        session.unduck()
+
+
+def _on_clean_aec_frame(frame: bytes) -> None:
+    _fixture_recorder.record_capture(frame)
+    if not frame:
+        return
+    _barge_in.record_aec_residual(float(audioop.rms(frame, 2)))
+    if _duplex is not None and _duplex.speaking and _vad_gate is not None:
+        _vad_gate.observe(frame)
+
+
+def _start_aec_duplex():
+    global _duplex, _vad_gate, _barge_in_runtime_ready
+    from talos.voice.streaming.duplex import build_windows_duplex_pipeline
+    from talos.voice.streaming.vad import (
+        BargeInVadGate,
+        SileroProbabilityVAD,
+        VadGateConfig,
+    )
+    from talos.voice.streaming.windows_audio import (
+        WindowsAudioEndpoints,
+        get_default_windows_audio_endpoints,
+    )
+
+    defaults = get_default_windows_audio_endpoints()
+    capture_id = os.getenv("TALOS_AUDIO_CAPTURE_ENDPOINT_ID", "").strip()
+    render_id = os.getenv("TALOS_AUDIO_RENDER_ENDPOINT_ID", "").strip()
+    if not capture_id or not render_id:
+        raise RuntimeError(
+            "AEC barge-in requires pinned TALOS_AUDIO_CAPTURE_ENDPOINT_ID and "
+            "TALOS_AUDIO_RENDER_ENDPOINT_ID values."
+        )
+    endpoints = WindowsAudioEndpoints(capture_id=capture_id, render_id=render_id)
+    if endpoints != defaults:
+        raise RuntimeError(
+            "Pinned Windows audio endpoint identity does not match the current "
+            "default capture/render pair."
+        )
+    vad = SileroProbabilityVAD()
+    _vad_gate = BargeInVadGate(
+        vad.probability,
+        _on_vad_utterance,
+        on_candidate=_on_vad_candidate,
+        config=VadGateConfig(
+            start_probability=env_float("TALOS_BARGE_IN_VAD_START", 0.65),
+            end_probability=env_float("TALOS_BARGE_IN_VAD_END", 0.35),
+            start_frames=env_int("TALOS_BARGE_IN_VAD_START_FRAMES", 3),
+            end_silence_ms=env_float("TALOS_BARGE_IN_ENDPOINT_SILENCE_MS", 480.0),
+            min_speech_ms=env_float("TALOS_BARGE_IN_MIN_SPEECH_MS", 160.0),
+            preroll_ms=env_float("TALOS_BARGE_IN_PREROLL_MS", 320.0),
+        ),
+    )
+    _duplex = build_windows_duplex_pipeline(
+        endpoints,
+        on_clean_frame=_on_clean_aec_frame,
+    )
+    _ensure_barge_asr_worker()
+    _duplex.start()
+    _barge_in_runtime_ready = True
+    print("AEC duplex capture started on the pinned Windows endpoints.")
+    return _duplex
+
+
 def run_voice_recognition():
-    mic = _TappedMicrophone() if BARGE_IN_ENABLED else sr.Microphone()
+    global _barge_in_runtime_ready
+    if BARGE_IN_ENABLED and BARGE_IN_BACKEND == "aec":
+        try:
+            pipeline = _start_aec_duplex()
+            from talos.voice.streaming.duplex import DuplexRecognizerAudioSource
+
+            mic = DuplexRecognizerAudioSource(pipeline)
+        except Exception as exc:
+            _barge_in_runtime_ready = False
+            print(
+                "AEC barge-in is unavailable and has been disabled; ordinary "
+                f"wake-word capture remains active: {exc}"
+            )
+            mic = sr.Microphone()
+    elif (
+        BARGE_IN_ENABLED and BARGE_IN_BACKEND == "heuristic_diagnostic"
+    ) or _FIXTURE_RECORDING_ENABLED:
+        mic = _TappedMicrophone()
+    else:
+        mic = sr.Microphone()
     print("Microphone initialized.")
     with mic as source:
         r.adjust_for_ambient_noise(source, duration=1.0)
@@ -866,12 +1168,13 @@ def _speak_streamed_response(command, benchmark, progress, session):
 
     def sink(pcm):
         write_started = time.perf_counter()
-        _write_pcm(stream, session, pcm)
+        completed = _write_pcm(stream, session, pcm)
         if benchmark:
             benchmark.add_metric(
                 "audio_write_total_ms",
                 round((time.perf_counter() - write_started) * 1000.0, 1),
             )
+        return completed
 
     def on_first_audio():
         progress["spoke"] = True
@@ -911,6 +1214,7 @@ def _speak_streamed_response(command, benchmark, progress, session):
         on_first_audio=on_first_audio,
         # What the user actually heard, which lags what the model has produced.
         on_chunk_playing=session.note_playing,
+        on_chunk_partial=session.note_partial,
         should_stop=lambda: session.is_cancelled,
     )
     _arm_playback(session)
@@ -1023,5 +1327,6 @@ def _handle_command_legacy(command, benchmark=None):
 
 
 def shutdown() -> None:
+    _fixture_recorder.close()
     _command_executor.shutdown(wait=False, cancel_futures=True)
     audio_interface.terminate()

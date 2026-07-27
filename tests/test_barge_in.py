@@ -64,6 +64,14 @@ class SpeechSessionTests(unittest.TestCase):
             session.spoken_text, "The pump is running. Channel two is idle."
         )
 
+    def test_partial_chunk_never_claims_unheard_words(self):
+        session = SpeechSession()
+        session.note_playing("The first sentence finished.")
+        session.note_partial("Future words must not appear.")
+        self.assertIn("The first sentence finished.", session.spoken_text)
+        self.assertIn("partially heard", session.spoken_text)
+        self.assertNotIn("Future words", session.spoken_text)
+
     def test_cancel_keeps_the_first_reason(self):
         session = SpeechSession()
         self.assertFalse(session.is_cancelled)
@@ -123,6 +131,20 @@ class BargeInDetectorTests(unittest.TestCase):
         for _ in range(self.config.trigger_frames):
             self.assertIsNone(self.feed(tone(12000), output=tone(9000)))
         self.assertTrue(self.session.is_ducked)
+        candidate_metrics = self.detector.metrics_snapshot()
+        self.assertEqual(candidate_metrics["counters"]["candidate_started"], 1)
+        self.assertAlmostEqual(
+            candidate_metrics["measurements"]["pause_latency_ms"]["last"],
+            self.config.trigger_frames * 64.0,
+        )
+        self.assertGreater(
+            candidate_metrics["measurements"]["candidate_capture_rms"]["last"],
+            candidate_metrics["measurements"]["trigger_threshold_rms"]["last"],
+        )
+        self.assertGreater(
+            candidate_metrics["measurements"]["render_rms"]["count"],
+            self.config.trigger_frames,
+        )
 
         # Ducking drops the echo, so the room goes quiet once they stop.
         for _ in range(3):
@@ -170,6 +192,16 @@ class BargeInDetectorTests(unittest.TestCase):
                 break
         self.assertIsNone(captured)
         self.assertFalse(self.session.is_ducked)
+        snapshot = self.detector.metrics_snapshot()
+        self.assertEqual(snapshot["counters"]["candidate_started"], 1)
+        self.assertEqual(snapshot["counters"]["candidate_rejected"], 1)
+        self.assertEqual(
+            snapshot["counters"]["candidate_rejected_insufficient_speech"], 1
+        )
+        self.assertIn("capture_duration_ms", snapshot["measurements"])
+        self.assertFalse(
+            snapshot["capabilities"]["vad_probability_available"]
+        )
 
     def test_quiet_speech_during_an_output_gap_still_triggers(self):
         """Between sentences we make no sound, so the bar drops to ambient.

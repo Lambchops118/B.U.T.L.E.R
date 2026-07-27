@@ -32,16 +32,19 @@ class FasterWhisperSTT(STTBackend):
         language: str | None = "en",
         beam_size: int = 1,
         vad_filter: bool = False,
+        vad_parameters: dict[str, Any] | None = None,
         model: Any | None = None,
     ) -> None:
         self.model_size = model_size
         self.language = (language or "").strip() or None
         self.beam_size = max(1, int(beam_size))
         self.vad_filter = vad_filter
+        self.vad_parameters = dict(vad_parameters or {})
         self._device = device
         self._compute_type = compute_type
         self._model = model
         self._lock = threading.Lock()
+        self._transcribe_lock = threading.Lock()
         self.last_model_preloaded: bool | None = None
         self.last_model_load_ms: float | None = None
 
@@ -67,6 +70,18 @@ class FasterWhisperSTT(STTBackend):
         return self._model
 
     def transcribe(self, audio: AudioChunk) -> TranscriptResult:
+        return self._transcribe(audio, vad_filter=self.vad_filter)
+
+    def transcribe_barge_in(self, audio: AudioChunk) -> TranscriptResult:
+        """Use Silero prefiltering for the independently VAD-gated room burst."""
+        return self._transcribe(audio, vad_filter=True)
+
+    def _transcribe(
+        self,
+        audio: AudioChunk,
+        *,
+        vad_filter: bool,
+    ) -> TranscriptResult:
         import numpy as np
 
         model_preloaded = self._model is not None
@@ -82,17 +97,50 @@ class FasterWhisperSTT(STTBackend):
         if samples.size == 0:
             return TranscriptResult(text="")
 
-        segments, info = model.transcribe(
-            samples,
-            language=self.language,
-            beam_size=self.beam_size,
-            vad_filter=self.vad_filter,
-            condition_on_previous_text=False,
-        )
-        text = " ".join(segment.text for segment in segments).strip()
+        with self._transcribe_lock:
+            segments, info = model.transcribe(
+                samples,
+                language=self.language,
+                beam_size=self.beam_size,
+                vad_filter=vad_filter,
+                vad_parameters=self.vad_parameters or {
+                    "threshold": 0.5,
+                    "min_speech_duration_ms": 120,
+                    "min_silence_duration_ms": 250,
+                    "speech_pad_ms": 120,
+                },
+                condition_on_previous_text=False,
+            )
+            materialized = list(segments)
+        text = " ".join(segment.text for segment in materialized).strip()
+        durations = [
+            max(0.0, float(segment.end) - float(segment.start))
+            for segment in materialized
+            if getattr(segment, "start", None) is not None
+            and getattr(segment, "end", None) is not None
+        ]
+        log_probabilities = [
+            float(segment.avg_logprob)
+            for segment in materialized
+            if getattr(segment, "avg_logprob", None) is not None
+        ]
+        no_speech_probabilities = [
+            float(segment.no_speech_prob)
+            for segment in materialized
+            if getattr(segment, "no_speech_prob", None) is not None
+        ]
         return TranscriptResult(
             text=text,
             language=getattr(info, "language", None),
+            duration_seconds=sum(durations) if durations else audio.duration_seconds,
+            average_log_probability=(
+                sum(log_probabilities) / len(log_probabilities)
+                if log_probabilities
+                else None
+            ),
+            no_speech_probability=(
+                max(no_speech_probabilities) if no_speech_probabilities else None
+            ),
             raw=info,
         )
 

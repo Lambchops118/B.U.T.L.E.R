@@ -1,30 +1,28 @@
-"""Barge-in: let the user interrupt TALOS while it is speaking.
+"""Experimental first-pass barge-in detector and downstream decision helpers.
 
-The room microphone and the speakers are open at the same time and there is no
-acoustic echo canceller anywhere in this stack. A naive "microphone energy means
-the user is talking" detector would therefore cut the assistant off with its own
-voice on the first syllable. Everything here exists to work around that.
+The room microphone and speakers are open at the same time, and this stack has
+no acoustic echo canceller.  The energy heuristic below cannot reliably
+distinguish a person from loudspeaker echo and is disabled by default.  It is
+retained only for bounded diagnostic comparison while the AEC/VAD redesign in
+``docs/voice/BARGE_IN_REDESIGN_PLAN.md`` is implemented.
 
-Two stages, deliberately split by cost and by confidence:
+The legacy path has two stages:
 
 1. :class:`BargeInDetector` runs on every captured microphone frame (~64 ms) and
-   only while TALOS is speaking. It is cheap (one RMS per frame) and it decides
-   *maybe*: on a sustained rise above the expected echo level it **ducks** the
-   output instead of stopping it, and starts recording the user. Ducking drops
-   the echo roughly 18 dB, so the recording it hands over is nearly clean, and a
-   false positive costs the user "the assistant briefly got quieter" rather than
-   "the assistant got cut off".
+   only while TALOS is speaking. On a sustained rise above the expected echo
+   level it ducks the output and starts capturing. This is a candidate signal,
+   not evidence that speech occurred.
 
 2. The caller transcribes that recording with the local STT backend and confirms
-   with :func:`looks_like_echo` / :func:`is_stop_command`. Only a confirmed
-   utterance hard-stops playback; anything else un-ducks and speech continues.
+   with :func:`looks_like_echo` / :func:`is_stop_command`. This text policy can
+   reject obvious echo but is not a reliable speech detector; Whisper may
+   generate plausible text for non-speech.
 
 The expected echo level is learned rather than configured: ``echo_peak`` is a
 decaying maximum of the microphone RMS seen while speaking and not capturing,
 which makes it a per-room, per-volume constant that survives across utterances.
-When the aligned output frame was silent (between sentences, or while ducked)
-the threshold drops to the plain ambient floor, so interruptions land fastest
-exactly where there is a natural gap to land in.
+When the aligned output frame was silent (between sentences, or while ducked),
+the threshold drops to the plain ambient floor.
 
 This module is intentionally free of PyAudio / SpeechRecognition / model
 imports so the state machine can be unit-tested on any platform, matching the
@@ -39,6 +37,8 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable
+
+from talos.voice.streaming.barge_in_observability import BargeInMetrics
 
 
 # Phrases that mean "stop talking" and nothing else. These end the current
@@ -77,6 +77,7 @@ INTERRUPTION_MARKER = (
     "... [The user interrupted here. Nothing after this point was heard.]"
 )
 NOTHING_HEARD_MARKER = "[The user interrupted before anything was heard.]"
+PARTIALLY_HEARD_MARKER = "[The current sentence was only partially heard.]"
 
 
 @dataclass(frozen=True)
@@ -148,19 +149,29 @@ class SpeechSession:
         self._cancel_reason: str | None = None
         self._ducked = False
         self._spoken_parts: list[str] = []
+        self._partial = False
 
     # -- what the user heard ------------------------------------------------ #
     def note_playing(self, text: str) -> None:
-        """Record that ``text`` has begun leaving the speakers."""
+        """Record a text chunk only after all of its PCM was emitted."""
         if not text:
             return
         with self._lock:
             self._spoken_parts.append(text)
+            self._partial = False
+
+    def note_partial(self, text: str = "") -> None:
+        """Mark an interrupted in-flight chunk without claiming future words."""
+        with self._lock:
+            self._partial = True
 
     @property
     def spoken_text(self) -> str:
         with self._lock:
-            return " ".join(part.strip() for part in self._spoken_parts if part.strip())
+            parts = [part.strip() for part in self._spoken_parts if part.strip()]
+            if self._partial:
+                parts.append(PARTIALLY_HEARD_MARKER)
+            return " ".join(parts)
 
     # -- ducking ------------------------------------------------------------ #
     def duck(self) -> None:
@@ -215,9 +226,11 @@ class BargeInDetector:
         config: BargeInConfig | None = None,
         *,
         clock: Callable[[], float] = time.monotonic,
+        metrics: BargeInMetrics | None = None,
     ) -> None:
         self.config = config or BargeInConfig()
         self._clock = clock
+        self._metrics = metrics or BargeInMetrics()
         self._lock = threading.Lock()
         self._session: SpeechSession | None = None
         self._state = self._IDLE
@@ -230,6 +243,7 @@ class BargeInDetector:
         self._speech_ms = 0.0
         self._silence_ms = 0.0
         self._hot_frames = 0
+        self._hot_started_at: float | None = None
         self._refractory_until = 0.0
         self._calibration_frames = 0
         # Learned per-room echo level; deliberately NOT reset between utterances.
@@ -270,6 +284,49 @@ class BargeInDetector:
     def echo_peak(self) -> float:
         with self._lock:
             return self._echo_peak
+
+    def metrics_snapshot(self) -> dict[str, object]:
+        """Return aggregate numeric evidence without transcripts or room audio."""
+        return self._metrics.snapshot()
+
+    def record_rejection(
+        self,
+        reason: str,
+        *,
+        asr_latency_ms: float | None = None,
+        asr_confidence: float | None = None,
+    ) -> None:
+        """Record a confirmation-stage rejection using bounded reason labels."""
+        self._metrics.candidate_rejected(
+            reason,
+            asr_latency_ms=asr_latency_ms,
+            asr_confidence=asr_confidence,
+        )
+
+    def record_acceptance(
+        self,
+        *,
+        asr_latency_ms: float,
+        asr_confidence: float | None = None,
+    ) -> None:
+        self._metrics.accepted(
+            asr_latency_ms=asr_latency_ms,
+            asr_confidence=asr_confidence,
+        )
+
+    def record_vad_candidate(self, probability: float) -> None:
+        self._metrics.vad_candidate_started(probability=probability)
+
+    def record_vad_capture(self, evidence: dict[str, float]) -> None:
+        self._metrics.vad_capture_completed(
+            duration_ms=evidence["duration_ms"],
+            speech_ms=evidence["speech_ms"],
+            average_probability=evidence["average_probability"],
+            max_probability=evidence["max_probability"],
+        )
+
+    def record_aec_residual(self, rms: float) -> None:
+        self._metrics.observe_aec_residual_rms(rms)
 
     def should_mute_recognizer(self) -> bool:
         """True while barge-in owns the microphone.
@@ -313,6 +370,7 @@ class BargeInDetector:
                 return None
 
             output_rms = self._aligned_output_rms_locked(now)
+            self._metrics.observe_levels(capture_rms=rms, render_rms=output_rms)
             speaking = output_rms >= config.output_silence_rms
             if speaking:
                 threshold = max(
@@ -332,6 +390,7 @@ class BargeInDetector:
                     self._echo_peak = max(rms, self._echo_peak)
                     self._calibration_frames += 1
                     self._hot_frames = 0
+                    self._hot_started_at = None
                     return None
 
                 # Learn the echo level only from frames that look like echo, so
@@ -341,11 +400,30 @@ class BargeInDetector:
 
                 if now < self._refractory_until:
                     self._hot_frames = 0
+                    self._hot_started_at = None
                     return None
 
-                self._hot_frames = self._hot_frames + 1 if hot else 0
+                if hot:
+                    if self._hot_frames == 0:
+                        self._hot_started_at = now
+                    self._hot_frames += 1
+                else:
+                    self._hot_frames = 0
+                    self._hot_started_at = None
                 if self._hot_frames >= config.trigger_frames:
-                    self._begin_capture_locked()
+                    hot_started_at = (
+                        now if self._hot_started_at is None else self._hot_started_at
+                    )
+                    pause_latency_ms = (
+                        max(0.0, now - hot_started_at) * 1000.0
+                        + frame_ms
+                    )
+                    self._begin_capture_locked(
+                        capture_rms=rms,
+                        render_rms=output_rms,
+                        threshold_rms=threshold,
+                        pause_latency_ms=pause_latency_ms,
+                    )
                 return None
 
             # _CAPTURING
@@ -365,11 +443,18 @@ class BargeInDetector:
                 return None
 
             captured = b"".join(self._capture)
+            capture_duration_ms = self._capture_ms
+            heuristic_speech_ms = self._speech_ms
             enough_speech = self._speech_ms >= config.min_speech_ms
             self._state = self._LISTENING
             self._reset_capture_locked()
+            self._metrics.capture_completed(
+                capture_duration_ms=capture_duration_ms,
+                heuristic_speech_ms=heuristic_speech_ms,
+            )
             if not enough_speech:
                 # A door slam or a cough. Hand nothing to STT and settle.
+                self._metrics.candidate_rejected("insufficient_speech")
                 self._refractory_until = now + config.refractory_ms / 1000.0
                 session = self._session
                 if session is not None:
@@ -385,6 +470,7 @@ class BargeInDetector:
         with self._lock:
             self._refractory_until = self._clock() + self.config.refractory_ms / 1000.0
             self._hot_frames = 0
+            self._hot_started_at = None
 
     # -- internals ---------------------------------------------------------- #
     def _reset_capture_locked(self) -> None:
@@ -395,6 +481,7 @@ class BargeInDetector:
         self._speech_ms = 0.0
         self._silence_ms = 0.0
         self._hot_frames = 0
+        self._hot_started_at = None
 
     def _push_preroll_locked(self, frame: bytes, frame_ms: float) -> None:
         self._preroll.append(frame)
@@ -407,7 +494,14 @@ class BargeInDetector:
                 * 1000.0
             )
 
-    def _begin_capture_locked(self) -> None:
+    def _begin_capture_locked(
+        self,
+        *,
+        capture_rms: float,
+        render_rms: float,
+        threshold_rms: float,
+        pause_latency_ms: float,
+    ) -> None:
         self._state = self._CAPTURING
         self._capture = list(self._preroll)
         self._capture_ms = self._preroll_ms
@@ -416,6 +510,12 @@ class BargeInDetector:
         self._hot_frames = 0
         self._preroll.clear()
         self._preroll_ms = 0.0
+        self._metrics.candidate_started(
+            capture_rms=capture_rms,
+            render_rms=render_rms,
+            threshold_rms=threshold_rms,
+            pause_latency_ms=pause_latency_ms,
+        )
         session = self._session
         if session is not None:
             session.duck()
@@ -498,6 +598,7 @@ def classify_barge_in(
     *,
     wake_word: str,
     require_wake_word: bool = False,
+    reject_echo: bool = True,
 ) -> BargeInDecision:
     """Decide what a burst captured over our own speech actually was.
 
@@ -513,7 +614,7 @@ def classify_barge_in(
     if not transcript:
         return BargeInDecision(False, "empty_transcript")
 
-    if looks_like_echo(transcript, spoken_text):
+    if reject_echo and looks_like_echo(transcript, spoken_text):
         return BargeInDecision(False, "echo")
 
     stop_request = is_stop_command(transcript)

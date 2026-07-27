@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "description": "Copy beside opt-in synchronized fixture directories and replace paths with real local corpus files. Do not commit room PCM.",
+  "cases": [
+    {
+      "name": "far-end-polly-normal",
+      "category": "far_end_only",
+      "capture_wav": "barge-in-fixture-example/capture.wav",
+      "render_wav": "barge-in-fixture-example/render.wav",
+      "events_jsonl": "barge-in-fixture-example/events.jsonl",
+      "expected_candidate": false
+    },
+    {
+      "name": "near-end-stop",
+      "category": "near_end_only",
+      "capture_wav": "barge-in-fixture-example-2/capture.wav",
+      "render_wav": "barge-in-fixture-example-2/render.wav",
+      "events_jsonl": "barge-in-fixture-example-2/events.jsonl",
+      "expected_candidate": true
+    }
+  ]
+}

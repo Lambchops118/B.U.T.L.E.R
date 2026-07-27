@@ -118,6 +118,27 @@ class StreamingSpeakerInterruptionTests(unittest.TestCase):
         speaker.speak_stream(iter(["One. ", "Two."]))
         self.assertEqual(playing, ["One.", "Two."])
 
+    def test_interrupted_chunk_is_partial_not_complete(self):
+        stop = threading.Event()
+        complete: list[str] = []
+        partial: list[str] = []
+
+        def sink(pcm):
+            stop.set()
+            return False
+
+        speaker = StreamingSpeaker(
+            lambda text: [b"a", b"b", b"c"],
+            sink,
+            chunker=SentenceChunker(min_chars=1),
+            on_chunk_playing=complete.append,
+            on_chunk_partial=partial.append,
+            should_stop=stop.is_set,
+        )
+        speaker.speak_stream(iter(["Words scheduled after cut."]))
+        self.assertEqual(complete, [])
+        self.assertEqual(partial, ["Words scheduled after cut."])
+
     def test_stopping_halts_synthesis_and_playback(self):
         stop = threading.Event()
         synthesized: list[str] = []

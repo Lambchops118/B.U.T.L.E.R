@@ -1,6 +1,6 @@
 # Barge-In Voice Interruption: Investigation and Redesign Plan
 
-Status: **design review complete; runtime redesign not yet implemented**
+Status: **Phases A-F implemented; owner-run room corpus and soak pending**
 
 Date: 2026-07-26
 
@@ -251,6 +251,28 @@ Each phase is separately reviewable. Do not begin the next automatically.
 Exit: the operator can disable unsafe behavior, and test data can be collected
 without silently recording the room.
 
+Implementation record (2026-07-26):
+
+- `TALOS_BARGE_IN=0` is now the tracked setting and the code default. The
+  heuristic remains available only through an explicit diagnostic opt-in.
+- `BargeInMetrics` records bounded counters for candidates started, rejected,
+  and accepted, plus numeric summaries for render/mixed-capture RMS, capture and
+  heuristic-speech duration, ASR latency/confidence when available, and pause
+  latency. Capability flags explicitly report VAD probability and AEC residual
+  RMS as unavailable; no transcript or PCM enters these metrics.
+- `SynchronizedFixtureRecorder` is disabled by default and independent of the
+  unsafe interruption toggle. Explicit opt-in prints the recording location and
+  limits, writes capture/render WAV files plus monotonic block/sample alignment,
+  uses a non-blocking bounded queue, caps duration and PCM bytes, and retains
+  only a bounded number of owned fixture directories.
+- Unit coverage verifies disabled behavior, timestamp/sample alignment, PCM
+  bounds, retention scope, truthful metric capabilities, and legacy detector
+  integration. No room audio was recorded and no live microphone/speaker test
+  was run during implementation.
+
+Phase A exit was met on 2026-07-26. The owner explicitly authorized all
+remaining phases on 2026-07-27.
+
 ### Phase B — AEC feasibility spike
 
 - Enumerate and pin the actual Windows input/output endpoints.
@@ -268,6 +290,21 @@ without silently recording the room.
 Exit: one approach is proven on the deployed Windows host and selected
 explicitly. No fallback may silently use the RMS heuristic.
 
+Implementation record (2026-07-27):
+
+- Selected Windows communications-mode AudioGraph capture behind the
+  `DuplexAudioProcessor` contract. PyWinRT dependencies are pinned.
+- Pinned the full Yeti capture and BenQ render MMDevice identities. Startup and
+  periodic endpoint checks fail closed on identity/default-render changes.
+- Windows reported active AEC, noise suppression, automatic gain control, and
+  deep noise suppression. The render reference is the verified system default
+  because this driver exposes no explicit reference configuration.
+- A bounded live probe retained PCM only in memory. At amplitude 0.03 it reduced
+  far-end signal RMS from 230.426 to 1.196: 45.696 dB ERLE, correlation reduction
+  0.053797, 0 callback errors, and 0.1875 CPU-seconds over 4.46 seconds.
+- The old RMS detector is available only as
+  `TALOS_BARGE_IN_BACKEND=heuristic_diagnostic`, never as fallback.
+
 ### Phase C — Real-time audio pipeline
 
 - Replace the `SpeechRecognition` stream tap with a continuously drained,
@@ -282,6 +319,18 @@ explicitly. No fallback may silently use the RMS heuristic.
 
 Exit: recorded fixtures and a live loopback prove continuous capture, no
 overflow under STT load, and stable AEC alignment.
+
+Implementation record (2026-07-27):
+
+- `DuplexAudioPipeline` continuously drains fixed 10 ms AEC frames, copies only
+  into a bounded drop-oldest callback queue, and fans clean capture out on a
+  dispatcher thread.
+- Clean capture, render history, and recognizer queues are bounded and expose
+  depth/drop/reset counters. Idle recognition consumes the same clean stream;
+  it receives silence only while render is actually active.
+- Speaking begins only after the first `stream.write` submission. A live
+  sub-second startup run captured 71 frames with no queue drops or processor
+  error.
 
 ### Phase D — VAD and decision policy
 
@@ -302,6 +351,20 @@ overflow under STT load, and stable AEC alignment.
 Exit: far-end-only and noise fixtures never become user commands, while
 double-talk fixtures reliably pause and transcribe.
 
+Implementation record (2026-07-27):
+
+- A stateful local Silero VAD v6 wrapper produces independent probabilities from
+  AEC output. Start/end hysteresis, pre-roll, endpoint silence, minimum speech,
+  and maximum utterance bounds are configurable; trigger frames count toward
+  minimum duration.
+- Endpointed utterances enter a bounded ASR worker queue. No ASR, network call,
+  or file write runs on the audio callback or dispatcher.
+- `TranscriptResult` now carries duration, average log probability, and
+  no-speech probability. Barge-in transcription enables faster-whisper's Silero
+  filter and rejects low-duration/low-logprob/high-no-speech evidence.
+- Text overlap is disabled as an acceptance defense for the AEC backend; it
+  remains only in the diagnostic heuristic path.
+
 ### Phase E — Accurate interruption bookkeeping
 
 - Track PCM frame progress per TTS chunk.
@@ -315,6 +378,16 @@ double-talk fixtures reliably pause and transcribe.
 
 Exit: tests interrupt at multiple points inside one sentence and memory never
 contains words scheduled strictly after the cut.
+
+Implementation record (2026-07-27):
+
+- `StreamingSpeaker` reports a chunk complete only after every PCM buffer
+  returns successfully from the sink.
+- If cancellation lands inside a chunk, `SpeechSession` records only prior
+  completed chunks plus a partial-hearing marker. It never claims any word from
+  the interrupted chunk without alignment evidence.
+- Existing local stop, agent cancellation, record repair, and ordered optional
+  redispatch remain unchanged.
 
 ### Phase F — Corpus, acceptance, and rollout
 
@@ -346,6 +419,19 @@ operation working.
 
 Exit: offline corpus tests, live room scenarios, and an unattended soak meet
 the accepted thresholds.
+
+Implementation record (2026-07-27):
+
+- Added an offline synchronized-fixture manifest schema and acceptance runner.
+  It verifies capture/render/alignment presence, runs the production VAD, and
+  reports recall and false-candidate counts without retaining additional PCM.
+- Added synthetic state-machine/corpus tests for far-end/noise rejection
+  mechanics, trigger-duration accounting, bounded overflow behavior, clean idle
+  wake capture, and partial-chunk memory truthfulness.
+- Production selection is `TALOS_BARGE_IN_BACKEND=aec`; initialization or
+  endpoint failure visibly disables barge-in and returns to an ordinary
+  `SpeechRecognition` microphone source. The tracked feature flag remains off
+  until sensitive room fixtures and the eight-hour soak are owner-run.
 
 ## Tests that should remain
 
@@ -385,7 +471,7 @@ synthetic RMS separation.
 
 ## Explicit stop condition
 
-This investigation stops at the documented recommendation. Runtime AEC
-selection, dependency installation, audio-thread refactoring, fixture recording,
-and live microphone/speaker tests require owner authorization for the next
-bounded task.
+Phases A-F implementation is complete. Do not enable production barge-in until
+an owner-visible fixture session covers the listed near-end/double-talk/noise
+scenarios and the unattended soak meets the acceptance thresholds. Room PCM
+must remain explicit, bounded, local, and uncommitted.
