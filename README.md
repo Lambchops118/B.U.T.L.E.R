@@ -483,6 +483,14 @@ The voice worker sends recognized commands to the main agent over the text-agent
 
 ### Barge-In (Interrupting TALOS While It Speaks)
 
+> **Experimental / known unreliable:** the first-pass implementation uses an
+> RMS energy heuristic instead of acoustic echo cancellation. Live use has shown
+> missed interruptions, false ducking, and false transcripts. Do not treat it as
+> production-ready. The root-cause review and AEC-first replacement are in
+> [the barge-in redesign plan](docs/voice/BARGE_IN_REDESIGN_PLAN.md). Until that
+> work is authorized and accepted, use `TALOS_BARGE_IN=0`; wake-word-required
+> mode reduces false command acceptance but does not fix the underlying problem.
+
 You can talk over a spoken reply or a proactive alert. Interrupting stops the
 answer, tells the agent how much of it you actually heard, and — unless you only
 asked it to stop — sends what you said as the next command. That covers
