@@ -167,6 +167,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/speak":
             self._handle_speak()
             return
+        if self.path == "/interrupt":
+            self._handle_interrupt()
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def _handle_notify(self) -> None:
@@ -233,6 +236,53 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             Message(type="voice_cmd", payload=VoicePayload(instruction))
         )
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
+
+    def _handle_interrupt(self) -> None:
+        """The user talked over a spoken reply; stop it and correct the record.
+
+        Two jobs, in this order. First cancel the in-flight streaming turn, so a
+        local model stops producing tokens for an answer nobody is still
+        listening to. Then rewrite the stored assistant turn to the text the
+        voice worker actually played, because synthesis runs ahead of playback
+        and the model would otherwise believe it finished a thought the user
+        never heard.
+
+        The voice worker calls this without waiting for the response; audio has
+        already stopped locally by then.
+        """
+        try:
+            body = self._read_json_body()
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        session_id = str(body.get("session_id") or "").strip()
+        if not session_id:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'session_id'."}
+            )
+            return
+        request_id = str(body.get("request_id") or "").strip()
+        spoken_text = str(body.get("spoken_text") or "")
+
+        cancelled = agent_runtime.request_cancel(request_id) if request_id else False
+        recorded = agent_runtime.note_interruption(session_id, spoken_text)
+        print(
+            f"[text-agent] interrupted session={session_id} request={request_id or '-'} "
+            f"cancelled={cancelled} recorded={recorded}"
+        )
+        emit_pipeline_event(
+            request_id=request_id or session_id,
+            component="text_server",
+            event="turn_interrupted",
+            stream_cancelled=cancelled,
+            memory_amended=recorded,
+            spoken_chars=len(spoken_text),
+        )
+        self._write_json(
+            HTTPStatus.OK,
+            {"ok": True, "cancelled": cancelled, "recorded": recorded},
+        )
 
     def log_message(self, fmt: str, *args: Any) -> None:
         path = urlparse(self.path).path
@@ -374,6 +424,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             return
 
         full_parts: list[str] = []
+        # Registered before the first delta so a barge-in arriving early in the
+        # turn still finds something to cancel.
+        cancel_token = agent_runtime.register_cancel(request_id)
 
         def send_telemetry(payload: dict[str, Any]) -> None:
             self._send_sse(
@@ -403,6 +456,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 runtime_lane="foreground",
                 request_id=request_id,
                 telemetry_callback=send_telemetry,
+                cancel=cancel_token,
             ):
                 if not delta:
                     continue
@@ -436,6 +490,8 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 error_type=type(exc).__name__,
             )
             self._send_sse({"type": "error", "error": str(exc)})
+        finally:
+            agent_runtime.release_cancel(request_id)
 
     def _send_sse(self, payload: dict[str, Any]) -> None:
         data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")

@@ -26,6 +26,7 @@ from talos.voice.backends.base import (
     responses_tools_to_chat_tools,
     tool_calls_to_assistant_message,
 )
+from talos.voice.streaming.barge_in import truncated_transcript
 
 
 load_environment()
@@ -44,6 +45,12 @@ CONVERSATION_HISTORY_MESSAGE_LIMIT = max(
 CONVERSATION_HISTORY_CHAR_LIMIT = max(
     0,
     env_int("TALOS_CONVERSATION_HISTORY_CHAR_LIMIT", 4000),
+)
+# How long an interruption record waits for the interrupted turn to release the
+# conversation lock before recording anyway (it may be inside a slow tool call).
+INTERRUPTION_LOCK_TIMEOUT_SECONDS = max(
+    0.1,
+    env_float("TALOS_INTERRUPTION_LOCK_TIMEOUT", 10.0),
 )
 OPENAI_SERVER_ERROR_RETRIES = max(0, env_int("TALOS_OPENAI_SERVER_ERROR_RETRIES", 2))
 OPENAI_SERVER_ERROR_RETRY_DELAY = max(
@@ -106,6 +113,10 @@ MINECRAFT_SERVER_DIR = os.getenv("MINECRAFT_SERVER_DIR", "").strip()
 _conversation_state_lock = threading.Lock()
 _conversation_locks: dict[str, threading.Lock] = {}
 _last_response_ids: dict[str, str] = {}
+# Cancellation tokens for in-flight streaming turns, keyed by request id, so a
+# barge-in can stop generation that nobody is listening to any more.
+_cancel_registry_lock = threading.Lock()
+_cancel_registry: dict[str, threading.Event] = {}
 HOST_TOOL_NAMES = {
     "list_mcp_resources",
     "list_mcp_resource_templates",
@@ -714,6 +725,80 @@ def _get_conversation_lock(thread_key: str) -> threading.Lock:
             lock = threading.Lock()
             _conversation_locks[thread_key] = lock
         return lock
+
+
+def register_cancel(request_id: str) -> threading.Event:
+    """Create the cancellation token for an in-flight streaming turn.
+
+    Barge-in has to stop generation that the transport alone cannot stop: the
+    voice worker closing its SSE socket is only noticed the next time the server
+    writes a delta, which may be seconds away (or never, if the OS buffered the
+    remaining response). An explicit token makes the stop deterministic.
+    """
+    token = threading.Event()
+    normalized = str(request_id or "").strip()
+    if not normalized:
+        return token
+    with _cancel_registry_lock:
+        _cancel_registry[normalized] = token
+    return token
+
+
+def release_cancel(request_id: str) -> None:
+    normalized = str(request_id or "").strip()
+    if not normalized:
+        return
+    with _cancel_registry_lock:
+        _cancel_registry.pop(normalized, None)
+
+
+def request_cancel(request_id: str) -> bool:
+    """Ask an in-flight streaming turn to stop. False if it already finished."""
+    normalized = str(request_id or "").strip()
+    if not normalized:
+        return False
+    with _cancel_registry_lock:
+        token = _cancel_registry.get(normalized)
+    if token is None:
+        return False
+    token.set()
+    return True
+
+
+def note_interruption(
+    session_id: str,
+    spoken_text: str,
+    *,
+    runtime_lane: str = "foreground",
+) -> bool:
+    """Rewrite the last assistant turn to what the user actually heard.
+
+    The voice worker is authoritative here: speech synthesis runs ahead of
+    playback, so both the text this process streamed and the text it recorded
+    overstate what reached the room, often by whole sentences. Without this the
+    model believes it finished a thought the user never heard, and follow-ups
+    like "no, not that one" have nothing to attach to.
+
+    Takes the same per-session conversation lock as the turn itself, so the
+    rewrite is ordered after the interrupted turn's own memory write and before
+    the next turn reads history. The lock is taken with a timeout because the
+    interrupted turn may still be inside a slow tool call.
+    """
+    memory_store = _get_memory_store()
+    if memory_store is None:
+        return False
+
+    content = truncated_transcript(spoken_text)
+    lock = _get_conversation_lock(_response_thread_key(session_id, runtime_lane))
+    acquired = lock.acquire(timeout=INTERRUPTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        return memory_store.amend_last_assistant_message(session_id, content)
+    except Exception as exc:
+        print(f"TALOS interruption record failed: {_truncate_text(str(exc), 300)}")
+        return False
+    finally:
+        if acquired:
+            lock.release()
 
 
 def _get_last_response_id(thread_key: str) -> str | None:
@@ -2096,6 +2181,7 @@ def run_command_stream(
     extra_context: str | None = None,
     request_id: str | None = None,
     telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancel: threading.Event | None = None,
 ):
     """Streaming variant of :func:`run_command`.
 
@@ -2111,6 +2197,11 @@ def run_command_stream(
     The per-session lock is acquired before those messages are read so a queued
     voice turn observes the turn that completed immediately before it. Within
     a single request the tool loop keeps full message history.
+
+    ``cancel`` is set when the user barges in over the spoken answer. Generation
+    stops at the next delta or tool round, and whatever was produced is still
+    recorded, so the interrupted turn stays in history rather than vanishing from
+    it. :func:`note_interruption` then trims that record to what was audible.
     """
     telemetry_id = str(request_id or session_id or "stream")
     pipeline_started = time.perf_counter()
@@ -2199,6 +2290,7 @@ def run_command_stream(
         )
         full_text_parts: list[str] = []
         rounds = 0
+        interrupted = False
         tool_execution_total_ms = 0.0
         physical_action_request = _looks_like_physical_action_request(command)
         physical_action_tool_attempted = False
@@ -2266,6 +2358,9 @@ def run_command_stream(
             return
 
         while True:
+            if cancel is not None and cancel.is_set():
+                interrupted = True
+                break
             turn_text_parts: list[str] = []
             spoken_parts: list[str] = []
             pending: list[str] = []
@@ -2294,8 +2389,12 @@ def run_command_stream(
                 prompt_tokens_estimated=round_prompt_tokens,
                 prompt_bytes=round_prompt_bytes,
             )
+            stream_iter = backend.stream(messages, tools=tool_defs)
             try:
-                for event in backend.stream(messages, tools=tool_defs):
+                for event in stream_iter:
+                    if cancel is not None and cancel.is_set():
+                        interrupted = True
+                        break
                     if isinstance(event, LLMTextDelta):
                         if not event.text:
                             continue
@@ -2341,6 +2440,18 @@ def run_command_stream(
                     **_prompt_limits_from_error(exc),
                 )
                 raise
+            finally:
+                # Closing the backend generator is what actually tears down the
+                # HTTP request to the model server; without it a cancelled turn
+                # would keep the GPU busy producing tokens nobody will hear.
+                close_stream = getattr(stream_iter, "close", None)
+                if callable(close_stream):
+                    try:
+                        close_stream()
+                    except Exception:
+                        pass
+            if interrupted:
+                break
             if completion is None:
                 break
             completion_telemetry = dict(completion.telemetry or {})
@@ -2447,7 +2558,8 @@ def run_command_stream(
         _emit_runtime_telemetry(
             telemetry_callback,
             request_id=telemetry_id,
-            event="agent_stream_completed",
+            event="agent_stream_interrupted" if interrupted else "agent_stream_completed",
+            interrupted=interrupted,
             llm_round_count=rounds + 1,
             tool_execution_total_ms=round(tool_execution_total_ms, 1),
             agent_stream_total_ms=round(

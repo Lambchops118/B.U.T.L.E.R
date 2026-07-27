@@ -14,6 +14,13 @@ Three stages run concurrently:
 The TTS function and the audio sink are injected, so the engine is fully
 backend-agnostic (Polly today, local cloned voice later) and unit-testable, and
 the same engine drives the room mic and, later, the phone (Twilio) transport.
+
+Because those stages are overlapped, the text pulled from the model runs ahead of
+the text actually leaving the speakers. ``on_chunk_playing`` reports the latter,
+which is the only thing the user has really heard -- barge-in needs that
+distinction to tell the model where it was cut off. ``should_stop`` lets a
+barge-in unwind all three stages promptly instead of finishing a response nobody
+is listening to any more.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ SynthFn = Callable[[str], Iterable[bytes]]  # text -> PCM chunks
 SinkFn = Callable[[bytes], None]  # play/consume one PCM chunk
 
 _CLOSE = object()  # queue sentinel
+_PUT_POLL_SECONDS = 0.05
 
 
 class StreamingSpeaker:
@@ -39,19 +47,28 @@ class StreamingSpeaker:
         *,
         chunker: SentenceChunker | None = None,
         on_first_audio: Callable[[], None] | None = None,
+        on_chunk_playing: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
         max_queue: int = 64,
     ) -> None:
         self._synth = synth
         self._sink = sink
         self._chunker = chunker or SentenceChunker()
         self._on_first_audio = on_first_audio
+        self._on_chunk_playing = on_chunk_playing
+        self._should_stop = should_stop
         self._max_queue = max_queue
 
-    def speak_stream(self, text_deltas: Iterable[str]) -> str:
-        """Speak a streamed response and return the full text that was spoken.
+    def _stopped(self) -> bool:
+        return self._should_stop is not None and self._should_stop()
 
-        Blocks until all audio has been played. Exceptions raised by the synth
-        function or the sink propagate to the caller after workers are drained.
+    def speak_stream(self, text_deltas: Iterable[str]) -> str:
+        """Speak a streamed response and return the text that was consumed.
+
+        Blocks until all audio has been played, or returns early once
+        ``should_stop`` reports that the utterance has been abandoned. Exceptions
+        raised by the synth function or the sink propagate to the caller after
+        workers are drained.
         """
         text_q: "queue.Queue[object]" = queue.Queue(maxsize=self._max_queue)
         pcm_q: "queue.Queue[object]" = queue.Queue(maxsize=self._max_queue)
@@ -64,25 +81,39 @@ class StreamingSpeaker:
                     chunk = text_q.get()
                     if chunk is _CLOSE:
                         break
+                    if self._stopped():
+                        # Do not spend another TTS request on audio nobody will
+                        # hear; keep draining so the producer never blocks.
+                        continue
                     for pcm in self._synth(chunk):  # type: ignore[arg-type]
-                        if pcm:
-                            pcm_q.put(pcm)
+                        if not pcm:
+                            continue
+                        if not self._put(pcm_q, (chunk, pcm)):
+                            break
             except BaseException as exc:  # noqa: BLE001 - surfaced to caller
                 errors.append(exc)
             finally:
                 pcm_q.put(_CLOSE)
 
         def playback_worker() -> None:
+            playing: object = None
             try:
                 while True:
-                    pcm = pcm_q.get()
-                    if pcm is _CLOSE:
+                    item = pcm_q.get()
+                    if item is _CLOSE:
                         break
+                    if self._stopped():
+                        continue
+                    chunk_text, pcm = item  # type: ignore[misc]
+                    if chunk_text is not playing:
+                        playing = chunk_text
+                        if self._on_chunk_playing is not None:
+                            self._on_chunk_playing(chunk_text)
                     if not first_audio_done.is_set():
                         first_audio_done.set()
                         if self._on_first_audio is not None:
                             self._on_first_audio()
-                    self._sink(pcm)  # type: ignore[arg-type]
+                    self._sink(pcm)
             except BaseException as exc:  # noqa: BLE001 - surfaced to caller
                 errors.append(exc)
                 # Drain remaining PCM so the synth worker never blocks on a full
@@ -97,22 +128,55 @@ class StreamingSpeaker:
         full_text_parts: list[str] = []
         try:
             for delta in text_deltas:
+                if self._stopped():
+                    break
                 if not delta:
                     continue
                 full_text_parts.append(delta)
                 for chunk in self._chunker.push(delta):
-                    text_q.put(chunk)
-            tail = self._chunker.flush()
-            if tail:
-                text_q.put(tail)
+                    if not self._put(text_q, chunk):
+                        break
+            if not self._stopped():
+                tail = self._chunker.flush()
+                if tail:
+                    self._put(text_q, tail)
         finally:
-            text_q.put(_CLOSE)
+            # Abandoning the response also abandons the upstream generator, which
+            # is what closes the SSE connection and stops the model generating.
+            close = getattr(text_deltas, "close", None)
+            if self._stopped() and callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            while True:
+                try:
+                    text_q.put(_CLOSE, timeout=_PUT_POLL_SECONDS)
+                    break
+                except queue.Full:
+                    if not synth_thread.is_alive():
+                        break
             synth_thread.join()
             playback_thread.join()
 
         if errors:
             raise errors[0]
         return "".join(full_text_parts).strip()
+
+    def _put(self, q: "queue.Queue[object]", item: object) -> bool:
+        """Enqueue, giving up if the utterance is abandoned mid-wait.
+
+        A blocking ``put`` on a full queue would otherwise keep a barge-in
+        waiting on a consumer that has already stopped consuming.
+        """
+        while True:
+            if self._stopped():
+                return False
+            try:
+                q.put(item, timeout=_PUT_POLL_SECONDS)
+                return True
+            except queue.Full:
+                continue
 
 
 def _drain_until_close(q: "queue.Queue[object]") -> None:

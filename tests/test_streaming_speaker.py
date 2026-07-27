@@ -90,5 +90,111 @@ class StreamingSpeakerTests(unittest.TestCase):
         self.assertEqual(plays, ["play:One.", "play:Two.", "play:Three."])
 
 
+class StreamingSpeakerInterruptionTests(unittest.TestCase):
+    """Barge-in: what the user heard, and unwinding once they cut in."""
+
+    def _synth(self, text):
+        return [text.encode("utf-8")]
+
+    def test_chunk_playing_reports_only_what_reached_the_sink(self):
+        playing: list[str] = []
+        speaker = StreamingSpeaker(
+            self._synth,
+            lambda pcm: None,
+            chunker=SentenceChunker(min_chars=1),
+            on_chunk_playing=playing.append,
+        )
+        speaker.speak_stream(iter(["One. ", "Two. ", "Three."]))
+        self.assertEqual(playing, ["One.", "Two.", "Three."])
+
+    def test_chunk_playing_fires_once_per_chunk_not_per_pcm_buffer(self):
+        playing: list[str] = []
+        speaker = StreamingSpeaker(
+            lambda text: [b"a", b"b", b"c"],
+            lambda pcm: None,
+            chunker=SentenceChunker(min_chars=1),
+            on_chunk_playing=playing.append,
+        )
+        speaker.speak_stream(iter(["One. ", "Two."]))
+        self.assertEqual(playing, ["One.", "Two."])
+
+    def test_stopping_halts_synthesis_and_playback(self):
+        stop = threading.Event()
+        synthesized: list[str] = []
+        played: list[str] = []
+
+        def synth(text):
+            synthesized.append(text)
+            # The user cuts in while the first sentence is being synthesized.
+            stop.set()
+            return [text.encode("utf-8")]
+
+        speaker = StreamingSpeaker(
+            synth,
+            lambda pcm: played.append(pcm.decode("utf-8")),
+            chunker=SentenceChunker(min_chars=1),
+            should_stop=stop.is_set,
+        )
+        speaker.speak_stream(iter([f"Sentence {i}. " for i in range(20)]))
+
+        self.assertEqual(synthesized, ["Sentence 0."])
+        self.assertEqual(played, [])
+
+    def test_stopping_closes_the_upstream_generator(self):
+        """Closing it is what tears down the SSE stream and stops the model."""
+        stop = threading.Event()
+        interrupted = threading.Event()
+        closed: list[bool] = []
+
+        def deltas():
+            try:
+                yield "First sentence. "
+                # Hold the model's stream open until the user has cut in.
+                interrupted.wait(timeout=5)
+                for index in range(100):
+                    yield f"Sentence {index}. "
+            except GeneratorExit:
+                closed.append(True)
+                raise
+
+        def sink(pcm):
+            stop.set()
+            interrupted.set()
+
+        speaker = StreamingSpeaker(
+            self._synth,
+            sink,
+            chunker=SentenceChunker(min_chars=1),
+            should_stop=stop.is_set,
+        )
+        speaker.speak_stream(deltas())
+        self.assertEqual(closed, [True])
+
+    def test_stopping_does_not_deadlock_on_a_full_queue(self):
+        stop = threading.Event()
+
+        def sink(pcm):
+            stop.set()
+
+        speaker = StreamingSpeaker(
+            self._synth,
+            sink,
+            chunker=SentenceChunker(min_chars=1),
+            should_stop=stop.is_set,
+            max_queue=2,
+        )
+        # Far more chunks than the queues hold: the producer must notice the stop
+        # rather than block forever waiting on a consumer that has given up.
+        finished = threading.Event()
+
+        def run():
+            speaker.speak_stream(iter([f"Sentence {i}. " for i in range(200)]))
+            finished.set()
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        self.assertTrue(finished.wait(timeout=10), "speak_stream did not unwind")
+
+
 if __name__ == "__main__":
     unittest.main()

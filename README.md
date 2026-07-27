@@ -481,6 +481,64 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 
 The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `TALOS_TEXT_AGENT_URL` and `TALOS_TEXT_AGENT_TOKEN`.
 
+### Barge-In (Interrupting TALOS While It Speaks)
+
+You can talk over a spoken reply or a proactive alert. Interrupting stops the
+answer, tells the agent how much of it you actually heard, and — unless you only
+asked it to stop — sends what you said as the next command. That covers
+correcting a wrong answer mid-sentence, adding information it was missing, and
+cutting off a reply that has gone on too long.
+
+The constraint that shapes the design is that the microphone and the speakers are
+open in the same room and nothing in this stack cancels the echo. A plain
+voice-activity trigger would cut TALOS off with its own voice, so the decision is
+made in two stages:
+
+1. Every microphone frame is compared against the level TALOS is currently
+   hearing back from its own speakers, which it learns per room rather than
+   taking from configuration. A sustained rise above that level **ducks** the
+   reply to ~12% and starts recording you. Ducking drops the echo by about 18 dB,
+   so the recording is nearly clean.
+2. That recording is transcribed locally and checked against what TALOS just
+   said. Only a confirmed utterance stops the reply. A rejected one un-ducks and
+   speech continues — so a false alarm costs a moment of quieter audio, not a
+   truncated answer.
+
+While TALOS is speaking, the background recognizer is fed silence and the
+detector owns the microphone. Otherwise unbroken echo would keep the recognizer
+mid-phrase for the whole reply, and the interruption would surface seconds late.
+When nothing is playing the path is untouched, so the wake-word flow and its
+latency are exactly as before.
+
+Stopping is local and immediate: audio is written in 20 ms slices and stops at
+the next one. Everything after that — cancelling generation on the agent,
+correcting the record — happens off the audio path.
+
+Because synthesis runs ahead of playback, the text the agent generated is longer
+than the text you heard. The voice worker is authoritative about the difference:
+it reports the audible prefix to `POST /interrupt`, which cancels the in-flight
+turn and rewrites the stored assistant turn to what was heard, marked as cut off.
+Without that, TALOS would believe it finished a thought you never heard, and a
+follow-up like "no, not that one" would have nothing to attach to.
+
+Bare stop phrases ("stop", "never mind", "that's enough") end the reply without
+spending a turn on an answer you did not ask for.
+
+Tuning lives in `settings.env` under `TALOS_BARGE_IN_*`. The two that matter:
+
+- `TALOS_BARGE_IN_ECHO_MARGIN` — lower it if interruptions are missed, raise it
+  if TALOS cuts itself off mid-sentence.
+- `TALOS_BARGE_IN_REQUIRE_WAKE_WORD=1` — fallback for a room where the speakers
+  overwhelm the microphone; only an interruption naming the wake word (or a bare
+  "stop") is accepted.
+
+`TALOS_BARGE_IN=0` disables the feature entirely.
+
+Barge-in covers the streaming reply path and proactive speech. The opt-in
+non-streaming fallback (`TALOS_REMOTE_LLM_FALLBACK=1`) is not interruptible: its
+audio is synthesized in one piece, so there is no way to say which part of it you
+had heard, and recording a guess would be worse than recording nothing.
+
 ### Phone Calling
 
 TALOS phone calling is intentionally separate from the room microphone voice worker.
@@ -562,6 +620,8 @@ Endpoints:
 - `GET /` serves a minimal browser chat UI
 - `GET /health` returns a health check
 - `POST /chat` sends a text prompt
+- `POST /interrupt` reports that the user talked over a spoken reply: cancels the
+  in-flight streaming turn and cuts its stored text back to what was heard
 - `POST /sessions/reset` clears conversation state for one session
 
 Example request:

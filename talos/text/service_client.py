@@ -213,6 +213,37 @@ def stream_message(
                 raise RuntimeError(str(event.get("error") or "stream error"))
 
 
+def send_interrupt(
+    *,
+    session_id: str,
+    request_id: str | None = None,
+    spoken_text: str = "",
+    base_url: str = DEFAULT_URL,
+    token: str = DEFAULT_TOKEN,
+    timeout: float | None = 5.0,
+) -> dict:
+    """Tell the agent the user talked over its spoken reply.
+
+    ``spoken_text`` is what was actually played to the room, which is shorter
+    than what the agent generated -- synthesis runs ahead of playback. Callers
+    fire this off the audio path; playback has already stopped locally.
+    """
+    body = request_json(
+        base_url,
+        "/interrupt",
+        {
+            "session_id": session_id,
+            "request_id": request_id or "",
+            "spoken_text": spoken_text,
+        },
+        token=token,
+        timeout=timeout,
+    )
+    if not body.get("ok"):
+        raise RuntimeError(body.get("error", "Unknown server error"))
+    return body
+
+
 def get_job(
     job_id: str,
     *,

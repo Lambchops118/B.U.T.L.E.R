@@ -116,6 +116,47 @@ class MemoryStore:
             self.record_message(session_id, "assistant", assistant_message, metadata=metadata)
         self.refresh_session_summary(session_id)
 
+    def amend_last_assistant_message(self, session_id: str, content: str) -> bool:
+        """Replace the newest assistant turn's text, or add one if it is missing.
+
+        Used when a reply turns out to be shorter than what was recorded -- a
+        spoken answer the user interrupted was generated further ahead than it
+        was heard, so the stored turn has to be cut back to the audible part.
+        Adding the message when the newest entry is a user turn covers the case
+        where the reply was cut off before it produced any text at all.
+
+        Returns True when a turn was amended or inserted.
+        """
+        session_id = _required_text(session_id, "session_id")
+        content = _required_text(content, "content")
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT id, role
+                FROM messages
+                WHERE session_id = ? AND role IN ('user', 'assistant')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            if str(row["role"]) == "assistant":
+                self._conn.execute(
+                    "UPDATE messages SET content = ? WHERE id = ?",
+                    (content, int(row["id"])),
+                )
+                self._conn.commit()
+                amended = True
+            else:
+                amended = False
+
+        if not amended:
+            self.record_message(session_id, "assistant", content)
+        self.refresh_session_summary(session_id)
+        return True
+
     def refresh_session_summary(self, session_id: str, *, message_limit: int = 8) -> str:
         session_id = _required_text(session_id, "session_id")
         message_limit = max(1, int(message_limit))

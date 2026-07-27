@@ -17,10 +17,12 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import speech_recognition as sr
 
-from talos.config import env_bool, load_environment, require_env
+from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.telemetry import emit_pipeline_event
-from talos.text.service_client import send_message, stream_message
+from talos.text.service_client import send_interrupt, send_message, stream_message
 from talos.voice.benchmarking import VoiceBenchmarkSession
+from talos.voice.streaming import barge_in as barge_in_module
+from talos.voice.streaming.barge_in import BargeInConfig, BargeInDetector, SpeechSession
 from talos.voice.streaming.speaker import StreamingSpeaker
 
 
@@ -64,6 +66,43 @@ _wake_model = None
 _wake_model_lock = threading.Lock()
 _wake_infer_lock = threading.Lock()
 _command_executor = ThreadPoolExecutor(max_workers=2)
+
+# --------------------------------------------------------------------------- #
+# Barge-in
+# --------------------------------------------------------------------------- #
+# Letting the user talk over TALOS while it is speaking. See
+# talos/voice/streaming/barge_in.py for why this is a two-stage decision rather
+# than a plain voice-activity trigger: the microphone hears the speakers and
+# nothing in this stack cancels that echo.
+BARGE_IN_ENABLED = env_bool("TALOS_BARGE_IN", True)
+# Strict mode only accepts an interruption that names the wake word or is a bare
+# "stop". Worth turning on in a room where the speakers overwhelm the mic.
+BARGE_IN_REQUIRE_WAKE_WORD = env_bool("TALOS_BARGE_IN_REQUIRE_WAKE_WORD", False)
+# Session the proactive lane records its turns under (see talos/router.py); an
+# interrupted alert has to be corrected where it was written.
+PROACTIVE_SESSION_ID = os.getenv("TALOS_VOICE_PROACTIVE_SESSION", "voice")
+# Must stay above the agent's own TALOS_INTERRUPTION_LOCK_TIMEOUT, so a slow
+# correction is waited out rather than abandoned while the server still applies
+# it behind our back.
+VOICE_INTERRUPT_TIMEOUT = env_float("TALOS_VOICE_INTERRUPT_TIMEOUT", 15.0)
+# 20 ms of 16 kHz mono 16-bit PCM.
+PLAYBACK_SLICE_BYTES = 640
+
+_BARGE_IN_CONFIG = BargeInConfig(
+    floor_rms=env_int("TALOS_BARGE_IN_FLOOR_RMS", 550),
+    echo_margin=env_float("TALOS_BARGE_IN_ECHO_MARGIN", 2.2),
+    output_delay_ms=env_float("TALOS_BARGE_IN_OUTPUT_DELAY_MS", 180.0),
+    trigger_frames=env_int("TALOS_BARGE_IN_TRIGGER_FRAMES", 3),
+    endpoint_silence_ms=env_float("TALOS_BARGE_IN_ENDPOINT_SILENCE_MS", 550.0),
+    min_speech_ms=env_float("TALOS_BARGE_IN_MIN_SPEECH_MS", 260.0),
+    duck_gain=env_float("TALOS_BARGE_IN_DUCK_GAIN", 0.12),
+)
+_barge_in = BargeInDetector(_BARGE_IN_CONFIG)
+# Only one utterance may hold the output device at a time. Also guarantees a
+# cancelled reply has fully torn down before the reply that interrupted it opens
+# its own stream.
+_playback_lock = threading.RLock()
+_silence_frames: dict[int, bytes] = {}
 
 
 def _emit_voice_pipeline_event(benchmark, event: str, **fields) -> None:
@@ -112,6 +151,220 @@ def _describe_output_device(device_index):
     host_api = info.get("hostApi")
     max_channels = info.get("maxOutputChannels")
     return f"{name} (index={info.get('index')}, hostApi={host_api}, maxOutputChannels={max_channels})"
+
+
+def _open_speech_stream():
+    """Open the 16 kHz mono output stream both spoken paths write into."""
+    output_device_index = _resolve_output_device_index()
+    print(
+        "Opening playback stream on output device: "
+        f"{_describe_output_device(output_device_index)}"
+    )
+    return audio_interface.open(
+        format=audio_interface.get_format_from_width(2),
+        channels=1,
+        rate=16000,
+        output=True,
+        output_device_index=output_device_index,
+    )
+
+
+def _barge_in_available() -> bool:
+    """Barge-in needs local STT to confirm an interruption.
+
+    Without it the only evidence would be microphone energy, which in this room
+    is mostly TALOS's own voice -- it would cut itself off constantly. If local
+    STT is off or has failed, stay uninterruptible rather than unusable.
+    """
+    return BARGE_IN_ENABLED and LOCAL_STT_ENABLED and not _stt_unavailable
+
+
+def _arm_playback(session: SpeechSession) -> None:
+    if _barge_in_available():
+        _barge_in.arm(session)
+
+
+def _disarm_playback(session: SpeechSession) -> None:
+    if BARGE_IN_ENABLED:
+        _barge_in.disarm(session)
+
+
+def _write_pcm(stream, session: SpeechSession, pcm: bytes) -> None:
+    """Play PCM in short slices, applying the current duck gain.
+
+    A synthesized sentence is seconds of audio; handing it to ``stream.write``
+    in one call would block for that whole time and could not be interrupted.
+    Slicing also gives the detector a steady record of what we are emitting, so
+    it can tell its own echo apart from the user.
+    """
+    for start in range(0, len(pcm), PLAYBACK_SLICE_BYTES):
+        if session.is_cancelled:
+            return
+        chunk = pcm[start : start + PLAYBACK_SLICE_BYTES]
+        gain = session.gain
+        if gain < 1.0:
+            chunk = audioop.mul(chunk, 2, gain)
+        stream.write(chunk)
+        _barge_in.observe_output(chunk)
+
+
+def _silence_like(frame: bytes) -> bytes:
+    silence = _silence_frames.get(len(frame))
+    if silence is None:
+        silence = b"\x00" * len(frame)
+        _silence_frames[len(frame)] = silence
+    return silence
+
+
+class _MicrophoneTap:
+    """Wraps the recognizer's audio stream to give barge-in the raw frames.
+
+    Two jobs. It feeds every frame to the detector while TALOS is speaking, and
+    it hands the background recognizer silence for those frames. The second part
+    matters as much as the first: ``Recognizer.listen`` only delivers a phrase
+    after 0.6 s of quiet, so unbroken echo would keep it mid-phrase for the whole
+    reply and the interruption would surface seconds late as one echo-and-user
+    blob. Muting it also drops the wasted transcription passes TALOS currently
+    runs on its own voice.
+
+    When nothing is playing the tap is completely transparent, which is what
+    keeps the normal wake-word path unchanged.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def read(self, size):
+        frame = self._inner.read(size)
+        if not _barge_in.should_mute_recognizer():
+            return frame
+        try:
+            captured = _barge_in.observe_input(frame)
+        except Exception as exc:
+            print(f"Barge-in detector error: {exc}")
+            return frame
+        if captured:
+            try:
+                _confirm_barge_in(captured)
+            except Exception as exc:
+                print(f"Barge-in confirmation error: {exc}")
+                _barge_in.resume_after_rejection()
+        return _silence_like(frame)
+
+    def close(self):
+        self._inner.close()
+
+
+class _TappedMicrophone(sr.Microphone):
+    def __enter__(self):
+        super().__enter__()
+        self.stream = _MicrophoneTap(self.stream)
+        return self
+
+
+def _confirm_barge_in(captured_pcm: bytes) -> None:
+    """Decide whether a captured burst was really the user talking over us.
+
+    Runs inline on the listener thread so speech-to-text stays single-threaded,
+    as it already is for wake-word capture. The reply is ducked (not stopped)
+    while this runs, so rejecting costs the user a moment of quieter audio
+    rather than a truncated answer.
+    """
+    from talos.voice.backends.base import AudioChunk
+
+    session = _barge_in.session
+    if session is None or session.is_cancelled:
+        return
+
+    started = time.perf_counter()
+    try:
+        result = _get_stt_backend().transcribe(
+            AudioChunk(pcm=captured_pcm, sample_rate=16000)
+        )
+        transcript = (result.text or "").strip()
+    except Exception as exc:
+        # Cannot confirm, so do not stop: an unverified cut is worse than a
+        # missed one. Playback resumes at full volume.
+        print(f"Barge-in transcription failed: {exc}")
+        _barge_in.resume_after_rejection()
+        return
+
+    decision_ms = round((time.perf_counter() - started) * 1000.0, 1)
+    decision = barge_in_module.classify_barge_in(
+        transcript,
+        session.spoken_text,
+        wake_word=WAKE_WORD,
+        require_wake_word=BARGE_IN_REQUIRE_WAKE_WORD,
+    )
+    if not decision.accepted:
+        print(
+            f"Barge-in rejected ({decision.reason}) after {decision_ms} ms: "
+            f"'{transcript}'"
+        )
+        _barge_in.resume_after_rejection()
+        return
+
+    _accept_barge_in(session, transcript, decision, decision_ms)
+
+
+def _accept_barge_in(session, transcript, decision, decision_ms: float) -> None:
+    spoken = session.spoken_text
+    # Stops audio within one 20 ms slice; everything after this is bookkeeping.
+    session.cancel("barge_in")
+    _barge_in.disarm(session)
+    print(f"Barge-in accepted after {decision_ms} ms: '{transcript}'")
+    emit_pipeline_event(
+        request_id=session.request_id or session.session_id or "voice",
+        component="voice_worker",
+        event="barge_in_accepted",
+        barge_in_decision_ms=decision_ms,
+        spoken_chars=len(spoken),
+        transcript_chars=len(transcript),
+    )
+
+    command = "" if decision.is_stop_request else decision.command
+    if decision.is_stop_request:
+        # "stop" asks for silence, not for an answer about stopping.
+        print("Barge-in was a stop request; not starting a new turn.")
+
+    # Reporting and re-dispatch happen on one background thread, in that order,
+    # and off the listener thread so the microphone keeps being read. The order
+    # matters: both take the agent's per-session conversation lock, and a
+    # follow-up that got there first would have the correction land on its own
+    # reply instead of the interrupted one.
+    threading.Thread(
+        target=_report_then_redispatch,
+        args=(session, spoken, transcript, command),
+        name="talos-barge-in-report",
+        daemon=True,
+    ).start()
+
+
+def _report_then_redispatch(
+    session: SpeechSession, spoken_text: str, transcript: str, command: str
+) -> None:
+    try:
+        send_interrupt(
+            session_id=session.session_id or VOICE_SESSION_ID,
+            request_id=session.request_id,
+            spoken_text=spoken_text,
+            base_url=VOICE_AGENT_URL,
+            token=VOICE_AGENT_TOKEN,
+            timeout=VOICE_INTERRUPT_TIMEOUT,
+        )
+    except Exception as exc:
+        # The correction is best-effort; losing it must not also lose the command
+        # the user just spoke.
+        print(f"Could not report the interruption to the agent: {exc}")
+
+    if not command:
+        return
+    benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
+    benchmark.set_transcript(transcript.lower())
+    benchmark.set_command(command)
+    benchmark.set_dimension("barge_in", True)
+    benchmark.add_note("Command spoken over a reply that was in progress.")
+    _command_executor.submit(handle_command, command, benchmark)
 
 
 def _get_wake_model():
@@ -178,12 +431,19 @@ def _extract_transcription_words(transcription_result):
 
 
 def play_audio(filename, benchmark=None):
+    """Play a fully rendered WAV file.
+
+    Used only by the opt-in non-streaming fallback path. Not barge-in aware: the
+    text was synthesized in one piece, so there is no way to say which part of it
+    the user had heard when they cut in, and recording a guess would be worse
+    than recording nothing.
+    """
     try:
         chunk = 1024
         output_device_index = _resolve_output_device_index()
         if benchmark:
             benchmark.mark_stage("audio_open_start")
-        with wave.open(filename, "rb") as wf:
+        with _playback_lock, wave.open(filename, "rb") as wf:
             print(f"Opening playback stream for '{filename}' using output device: {_describe_output_device(output_device_index)}")
             stream = audio_interface.open(
                 format=audio_interface.get_format_from_width(wf.getsampwidth()),
@@ -395,9 +655,6 @@ def recognition_callback(recognizer, audio_data):
         benchmark.emit_summary_once("recognition_callback_error")
 
 
-_speak_lock = threading.Lock()
-
-
 def speak_text(text: str) -> None:
     """Vocalize already-composed text through the same Polly + audio-output path
     used for spoken replies, WITHOUT invoking the LLM.
@@ -405,21 +662,20 @@ def speak_text(text: str) -> None:
     Proactive speech (reminders, awareness alerts, scheduled reports) is phrased
     upstream in the main-agent router and handed here only to be heard, so the
     system can speak without the user prompting it. Serialized on a lock so two
-    proactive utterances never fight over the output device.
+    utterances never fight over the output device, and interruptible on the same
+    terms as a reply -- an alert the user does not want to sit through is exactly
+    the case barge-in exists for.
     """
     text = " ".join((text or "").split())
     if not text:
         return
-    with _speak_lock:
-        output_device_index = _resolve_output_device_index()
-        print(f"Speaking proactively on output device: {_describe_output_device(output_device_index)}")
-        stream = audio_interface.open(
-            format=audio_interface.get_format_from_width(2),
-            channels=1,
-            rate=16000,
-            output=True,
-            output_device_index=output_device_index,
-        )
+    session = SpeechSession(
+        session_id=PROACTIVE_SESSION_ID,
+        duck_gain=_BARGE_IN_CONFIG.duck_gain,
+    )
+    with _playback_lock:
+        print("Speaking proactively.")
+        stream = _open_speech_stream()
 
         def synth(chunk):
             with contextlib.closing(
@@ -434,16 +690,25 @@ def speak_text(text: str) -> None:
                 return [audio_stream.read()]
 
         def sink(pcm):
-            stream.write(pcm)
+            _write_pcm(stream, session, pcm)
 
+        _arm_playback(session)
         try:
-            StreamingSpeaker(synth, sink).speak_stream([text])
+            StreamingSpeaker(
+                synth,
+                sink,
+                on_chunk_playing=session.note_playing,
+                should_stop=lambda: session.is_cancelled,
+            ).speak_stream([text])
         finally:
+            _disarm_playback(session)
             try:
                 stream.stop_stream()
                 stream.close()
             except Exception:
                 pass
+    if session.is_cancelled:
+        print("Proactive speech was interrupted by the user.")
 
 
 def run_speak_server(port: int | None = None):
@@ -492,7 +757,7 @@ def run_speak_server(port: int | None = None):
 
 
 def run_voice_recognition():
-    mic = sr.Microphone()
+    mic = _TappedMicrophone() if BARGE_IN_ENABLED else sr.Microphone()
     print("Microphone initialized.")
     with mic as source:
         r.adjust_for_ambient_noise(source, duration=1.0)
@@ -556,17 +821,22 @@ def handle_command(command, benchmark=None):
 
 def _handle_command_streaming(command, benchmark, progress):
     """Stream the agent response and speak it sentence-by-sentence as it arrives."""
-    output_device_index = _resolve_output_device_index()
-    print(f"Opening streaming playback on output device: {_describe_output_device(output_device_index)}")
+    session = SpeechSession(
+        request_id=benchmark.session_id if benchmark else None,
+        command=command,
+        session_id=VOICE_SESSION_ID,
+        duck_gain=_BARGE_IN_CONFIG.duck_gain,
+    )
+    # Waits out a reply the user has just interrupted, so its output stream is
+    # closed before this one opens. That reply is already unwinding.
+    with _playback_lock:
+        _speak_streamed_response(command, benchmark, progress, session)
+
+
+def _speak_streamed_response(command, benchmark, progress, session):
     if benchmark:
         benchmark.mark_stage("audio_open_start")
-    stream = audio_interface.open(
-        format=audio_interface.get_format_from_width(2),
-        channels=1,
-        rate=16000,
-        output=True,
-        output_device_index=output_device_index,
-    )
+    stream = _open_speech_stream()
     if benchmark:
         benchmark.mark_stage("audio_stream_ready")
     marks = {"polly": False}
@@ -596,7 +866,7 @@ def _handle_command_streaming(command, benchmark, progress):
 
     def sink(pcm):
         write_started = time.perf_counter()
-        stream.write(pcm)
+        _write_pcm(stream, session, pcm)
         if benchmark:
             benchmark.add_metric(
                 "audio_write_total_ms",
@@ -635,15 +905,36 @@ def _handle_command_streaming(command, benchmark, progress):
             if benchmark:
                 benchmark.mark_stage("llm_done")
 
-    speaker = StreamingSpeaker(synth, sink, on_first_audio=on_first_audio)
+    speaker = StreamingSpeaker(
+        synth,
+        sink,
+        on_first_audio=on_first_audio,
+        # What the user actually heard, which lags what the model has produced.
+        on_chunk_playing=session.note_playing,
+        should_stop=lambda: session.is_cancelled,
+    )
+    _arm_playback(session)
     try:
         response_text = speaker.speak_stream(tracked_deltas())
     finally:
+        _disarm_playback(session)
         try:
             stream.stop_stream()
             stream.close()
         except Exception:
             pass
+
+    if session.is_cancelled:
+        spoken = session.spoken_text
+        print(f"Reply interrupted by the user after: {spoken!r}")
+        if benchmark:
+            benchmark.set_response_text(spoken)
+            benchmark.set_dimension("interrupted", True)
+            benchmark.add_note("The user interrupted this reply.")
+            benchmark.emit_summary_once("barge_in")
+            benchmark.mark_stage("pipeline_done")
+            _emit_voice_pipeline_event(benchmark, "voice_pipeline_interrupted")
+        return
 
     if benchmark:
         benchmark.set_response_text(response_text)
