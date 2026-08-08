@@ -1,0 +1,3 @@
+[submodule "Peripherals/Pump-Power-Controller"]
+	path = Peripherals/Pump-Power-Controller
+	url = https://github.com/Lambchops118/Pump-Power-Controller.git
