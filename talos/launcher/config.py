@@ -127,6 +127,30 @@ def get_setting(key: str, default: str | None = None) -> str:
     return default if default is not None else ""
 
 
+def get_active_setting(key: str) -> str:
+    """Value of an *uncommented* ``settings.env`` assignment, else "".
+
+    ``get_setting`` deliberately falls back to commented example values; for
+    deciding whether an optional MCP helper is actually configured we need the
+    stricter question — is this key really set for the run? An OS-level variable
+    counts too, since children inherit it and ``load_environment`` never
+    overrides a real environment variable.
+    """
+
+    import os
+
+    from_env = os.getenv(key, "").strip()
+    if from_env:
+        return from_env
+
+    active_re = re.compile(_ACTIVE_RE.format(key=re.escape(key)))
+    for line in _settings_lines():
+        match = active_re.match(line)
+        if match:
+            return _strip_inline(match.group("value"))
+    return ""
+
+
 def _strip_inline(raw: str) -> str:
     """Strip surrounding whitespace and a trailing ``# comment`` from a value.
 
@@ -264,6 +288,151 @@ def _pick_gpu(gpus: list[Gpu], preferred: str, fallback_index: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# MCP servers / tool groups the user can switch off for a run
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class McpEntry:
+    """One selectable MCP item.
+
+    ``key`` is what gets stored in ``launcher.config.json`` and passed to the
+    agent. For ``kind="server"`` it is the server name the MCP client uses (so it
+    must track any ``*_SERVER_NAME`` override); for ``kind="provider"`` it is a
+    provider group inside the built-in ``talos-local`` aggregate server.
+    """
+
+    key: str
+    label: str
+    kind: str  # "server" | "provider"
+    detail: str = ""
+    available: bool = True
+
+
+# Default server names, mirroring the defaults in talos/mcp_client/client.py.
+# Duplicated rather than imported so the launcher stays importable from any venv.
+_DEFAULT_SERVER_NAMES = {
+    "TALOS_FILESYSTEM_SERVER_NAME": "filesystem",
+    "TALOS_FILESYSTEM_DIAGNOSTICS_SERVER_NAME": "filesystem-diagnostics",
+    "KICAD_MCP_SERVER_NAME": "kicad",
+    "MINECRAFT_MCP_FILESYSTEM_SERVER_NAME": "minecraft-filesystem",
+    "MINECRAFT_MCP_SEARCH_SERVER_NAME": "minecraft-search",
+}
+
+
+def _server_name(setting_key: str) -> str:
+    return get_active_setting(setting_key) or _DEFAULT_SERVER_NAMES[setting_key]
+
+
+def mcp_catalog() -> list[McpEntry]:
+    """Everything the GUI can offer as a checkbox, in display order.
+
+    Optional helpers that are not configured in ``settings.env`` are still listed
+    (so it is obvious they exist) but marked unavailable — the agent would not
+    start them either way.
+    """
+
+    filesystem_ready = bool(get_active_setting("TALOS_FILESYSTEM_ROOTS"))
+    minecraft_ready = bool(get_active_setting("MINECRAFT_SERVER_DIR"))
+    kicad_ready = bool(
+        get_active_setting("KICAD_MCP_SERVER_PATH") or get_active_setting("KICAD_MCP_URL")
+    )
+
+    entries = [
+        McpEntry(
+            key="talos-local",
+            label="talos-local (built-in tool server)",
+            kind="server",
+            detail="home automation, kitchen screen, awareness",
+        ),
+        McpEntry(
+            key="home_automation",
+            label="Home automation tools",
+            kind="provider",
+            detail="lights, switches, scenes",
+        ),
+        McpEntry(
+            key="kitchen_recipe_screen",
+            label="Kitchen recipe screen tools",
+            kind="provider",
+        ),
+        McpEntry(
+            key="awareness",
+            label="Awareness / memory tools",
+            kind="provider",
+            detail="presence, state, long-term memory",
+        ),
+        McpEntry(
+            key=_server_name("TALOS_FILESYSTEM_SERVER_NAME"),
+            label="Filesystem",
+            kind="server",
+            detail="needs TALOS_FILESYSTEM_ROOTS",
+            available=filesystem_ready,
+        ),
+        McpEntry(
+            key=_server_name("TALOS_FILESYSTEM_DIAGNOSTICS_SERVER_NAME"),
+            label="Filesystem diagnostics",
+            kind="server",
+            detail="needs TALOS_FILESYSTEM_ROOTS",
+            available=filesystem_ready,
+        ),
+        McpEntry(
+            key=_server_name("KICAD_MCP_SERVER_NAME"),
+            label="KiCad",
+            kind="server",
+            detail="needs KICAD_MCP_SERVER_PATH",
+            available=kicad_ready,
+        ),
+        McpEntry(
+            key=_server_name("MINECRAFT_MCP_FILESYSTEM_SERVER_NAME"),
+            label="Minecraft filesystem",
+            kind="server",
+            detail="needs MINECRAFT_SERVER_DIR",
+            available=minecraft_ready,
+        ),
+        McpEntry(
+            key=_server_name("MINECRAFT_MCP_SEARCH_SERVER_NAME"),
+            label="Minecraft diagnostics",
+            kind="server",
+            detail="needs MINECRAFT_SERVER_DIR",
+            available=minecraft_ready,
+        ),
+    ]
+
+    known = {entry.key for entry in entries}
+    for name in _extra_server_names():
+        if name not in known:
+            entries.append(
+                McpEntry(key=name, label=name, kind="server", detail="from TALOS_MCP_SERVERS")
+            )
+            known.add(name)
+    return entries
+
+
+def _extra_server_names() -> list[str]:
+    """Server names declared explicitly in ``TALOS_MCP_SERVERS``."""
+
+    raw = get_active_setting("TALOS_MCP_SERVERS")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return []
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return []
+
+    names = []
+    for item in parsed:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            if name:
+                names.append(name)
+    return names
+
+
+# ---------------------------------------------------------------------------
 # Launcher configuration (launcher.config.json)
 # ---------------------------------------------------------------------------
 
@@ -302,6 +471,14 @@ class LauncherConfig:
     use_api_models: bool = False
     api_llm_model: str = "gpt-4o-mini"
 
+    # MCP tool surface. Stored as *disabled* keys so anything added later (a new
+    # provider group, a new server in TALOS_MCP_SERVERS) is on by default and an
+    # old config file never silently hides it. The launcher turns these into
+    # TALOS_MCP_DISABLED_SERVERS / TALOS_MCP_DISABLED_PROVIDERS for the main agent;
+    # settings.env is not modified.
+    disabled_mcp_servers: list[str] = field(default_factory=list)
+    disabled_mcp_providers: list[str] = field(default_factory=list)
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
 
@@ -314,9 +491,17 @@ class LauncherConfig:
             except (ValueError, OSError):
                 data = {}
             known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+            list_fields = {"disabled_mcp_servers", "disabled_mcp_providers"}
             for key, value in data.items():
-                if key in known:
-                    setattr(cfg, key, value)
+                if key not in known:
+                    continue
+                if key in list_fields:
+                    value = (
+                        [str(item).strip() for item in value if str(item).strip()]
+                        if isinstance(value, list)
+                        else []
+                    )
+                setattr(cfg, key, value)
         else:
             # First run: seed GPU choices from detected hardware.
             gpus = detect_gpus()

@@ -62,8 +62,8 @@ class LauncherGUI:
         self._log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
 
         root.title("TALOS Launcher")
-        root.geometry("860x680")
-        root.minsize(720, 560)
+        root.geometry("900x820")
+        root.minsize(760, 620)
 
         self._build_widgets()
         self._load_into_widgets()
@@ -109,6 +109,33 @@ class LauncherGUI:
         ttk.Checkbutton(opts, text="Start Ollama if not already running", variable=self.var_manage_ollama).pack(anchor="w")
         ttk.Checkbutton(opts, text="Manage Docker Postgres (compose up)", variable=self.var_manage_docker).pack(anchor="w")
         ttk.Checkbutton(opts, text="Run DB migrations before serving", variable=self.var_run_migrations).pack(anchor="w")
+
+        # --- MCP servers / tools -------------------------------------------
+        # Checked = the main agent boots with that server (or built-in provider
+        # group) available. Unchecked entries are simply never started, so their
+        # tools are absent from the model's tool surface for the whole run.
+        mcp = ttk.LabelFrame(left, text="MCP servers & tools", padding=8)
+        mcp.pack(fill="x", pady=(8, 0))
+        self.mcp_entries = config.mcp_catalog()
+        self.mcp_vars: dict[str, tk.BooleanVar] = {}
+        for entry in self.mcp_entries:
+            var = tk.BooleanVar(value=True)
+            self.mcp_vars[entry.key] = var
+            text = entry.label
+            if entry.detail:
+                text += f"  ({entry.detail})"
+            if not entry.available:
+                text += " — not configured"
+            box = ttk.Checkbutton(mcp, text=text, variable=var)
+            if not entry.available:
+                box.configure(state="disabled")
+            # Provider groups live inside talos-local; indent them under it.
+            box.pack(anchor="w", padx=(16, 0) if entry.kind == "provider" else 0)
+
+        mcp_buttons = ttk.Frame(mcp)
+        mcp_buttons.pack(anchor="w", pady=(6, 0))
+        ttk.Button(mcp_buttons, text="All on", width=8, command=lambda: self._set_all_mcp(True)).pack(side="left")
+        ttk.Button(mcp_buttons, text="All off", width=8, command=lambda: self._set_all_mcp(False)).pack(side="left", padx=4)
 
         # --- LLM / model --------------------------------------------------
         llm = ttk.LabelFrame(right, text="Language model", padding=8)
@@ -202,6 +229,11 @@ class LauncherGUI:
         scroll.pack(side="right", fill="y")
         self.log_text.configure(yscrollcommand=scroll.set, state="disabled")
 
+    def _set_all_mcp(self, enabled: bool) -> None:
+        for entry in self.mcp_entries:
+            if entry.available:
+                self.mcp_vars[entry.key].set(enabled)
+
     def _gpu_choices(self) -> list[str]:
         choices = [f"{g.index}: {g.name}" for g in self.gpus]
         choices.append("-1: (no pin — all GPUs)")
@@ -246,6 +278,11 @@ class LauncherGUI:
         self.var_manage_ollama.set(self.cfg.manage_ollama)
         self.var_manage_docker.set(self.cfg.manage_docker)
         self.var_run_migrations.set(self.cfg.run_migrations)
+        disabled_servers = {key.lower() for key in self.cfg.disabled_mcp_servers}
+        disabled_providers = {key.lower() for key in self.cfg.disabled_mcp_providers}
+        for entry in self.mcp_entries:
+            disabled = disabled_servers if entry.kind == "server" else disabled_providers
+            self.mcp_vars[entry.key].set(entry.key.lower() not in disabled)
         self.var_llm_gpu.set(self._gpu_label_for(self.cfg.llm_gpu_index))
         self.var_stt_gpu.set(self._gpu_label_for(self.cfg.stt_gpu_index))
 
@@ -273,7 +310,29 @@ class LauncherGUI:
         self.cfg.stt_gpu_index = self._gpu_index_from(self.var_stt_gpu.get())
         self.cfg.use_api_models = self.var_use_api.get()
         self.cfg.api_llm_model = self.var_api_model.get().strip() or "gpt-4o-mini"
+        self.cfg.disabled_mcp_servers = self._collect_disabled("server")
+        self.cfg.disabled_mcp_providers = self._collect_disabled("provider")
         return self.cfg
+
+    def _collect_disabled(self, kind: str) -> list[str]:
+        """Unchecked keys of one kind, keeping any the catalog no longer lists.
+
+        A server configured on a different machine (or one whose env var is
+        currently commented out) still appears in the saved config; preserving it
+        means the choice survives round-tripping through this GUI.
+        """
+
+        shown = {entry.key for entry in self.mcp_entries if entry.kind == kind}
+        previous = (
+            self.cfg.disabled_mcp_servers if kind == "server" else self.cfg.disabled_mcp_providers
+        )
+        disabled = [key for key in previous if key not in shown]
+        disabled += [
+            entry.key
+            for entry in self.mcp_entries
+            if entry.kind == kind and not self.mcp_vars[entry.key].get()
+        ]
+        return disabled
 
     def _persist(self) -> None:
         self._collect_config().save()

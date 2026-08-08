@@ -128,6 +128,27 @@ def _api_model_env(base: dict[str, str], api_model: str) -> dict[str, str]:
     return env
 
 
+def _mcp_env(base: dict[str, str], cfg: LauncherConfig) -> dict[str, str]:
+    """Return ``base`` with the MCP disable-lists applied for this run.
+
+    Empty selections clear the variables rather than leaving an inherited value
+    in place, so unchecking everything in the GUI really does mean "all servers
+    enabled" even if the launching shell had one of these set.
+    """
+
+    env = dict(base)
+    for name, keys in (
+        ("TALOS_MCP_DISABLED_SERVERS", cfg.disabled_mcp_servers),
+        ("TALOS_MCP_DISABLED_PROVIDERS", cfg.disabled_mcp_providers),
+    ):
+        values = [str(key).strip() for key in (keys or []) if str(key).strip()]
+        if values:
+            env[name] = ",".join(values)
+        else:
+            env.pop(name, None)
+    return env
+
+
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -287,6 +308,10 @@ class Supervisor:
         env = _venv_env(base, py)
         if self._cfg.use_api_models:
             env = _api_model_env(env, self._cfg.api_llm_model)
+        env = _mcp_env(env, self._cfg)
+        disabled = [*self._cfg.disabled_mcp_servers, *self._cfg.disabled_mcp_providers]
+        if disabled:
+            self._say("MCP disabled for this run: " + ", ".join(disabled))
         self._spawn("main", [str(py), "-m", "talos"], env)
         self._wait_port(
             "main",

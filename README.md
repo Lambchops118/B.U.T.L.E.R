@@ -168,6 +168,19 @@ GPU assignment. Component/GPU choices persist to a git-ignored
 `settings.env` in place. Child-process logs stream into the window, and closing
 it (or **Stop**) shuts every process down.
 
+**MCP servers & tools.** The **MCP servers & tools** panel picks the tool surface
+the agent boots with: each MCP server (the built-in `talos-local`, plus the
+optional filesystem, KiCad, and Minecraft helpers and anything listed in
+`TALOS_MCP_SERVERS`), and — indented under it — the provider groups inside
+`talos-local` (home automation, kitchen recipe screen, awareness). Unticked
+entries are never started, so their tools are absent from the model's tool
+surface for that run. Optional helpers that are not configured in `settings.env`
+are shown greyed out with the variable they need. The selection persists to
+`launcher.config.json` and is applied as per-run environment overrides
+(`TALOS_MCP_DISABLED_SERVERS` / `TALOS_MCP_DISABLED_PROVIDERS`) — `settings.env`
+is not edited. Headless, add `--disable-mcp kicad,home_automation` (repeatable)
+on top of the saved selection.
+
 **Local vs. hosted API models.** By default TALOS runs fully local (Ollama LLM on
 the 5080, faster-whisper STT on the 2060). Tick **Use hosted API models (OpenAI)
 instead of local** (or pass `--api-models` headless) to run the LLM and STT

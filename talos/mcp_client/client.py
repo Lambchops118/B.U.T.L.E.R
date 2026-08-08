@@ -1379,6 +1379,31 @@ class LocalMcpClient:
         return normalized
 
 
+def _names_from_env(variable: str) -> set[str]:
+    """Parse a disable-list env var into a set of lowercase names.
+
+    Accepts either a JSON array (``["kicad","filesystem"]``) or a plain
+    comma-separated list (``kicad, filesystem``) so the value is easy to set by
+    hand as well as to write from the launcher.
+    """
+
+    raw = os.getenv(variable, "").strip()
+    if not raw:
+        return set()
+
+    values: list[str] = []
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            values = [str(item) for item in parsed]
+    if not values:
+        values = raw.split(",")
+    return {value.strip().lower() for value in values if value.strip()}
+
+
 def _default_local_server_config() -> McpServerConfig:
     return McpServerConfig(
         name="talos-local",
@@ -1386,6 +1411,25 @@ def _default_local_server_config() -> McpServerConfig:
         command=sys.executable,
         args=["-m", "talos.mcp_server"],
     )
+
+
+def _apply_disabled_providers(configs: list[McpServerConfig]) -> None:
+    """Switch off provider groups inside every local aggregate server config.
+
+    The groups are disabled on the server's command line rather than through the
+    environment: the stdio client only forwards the parent environment when a
+    server declares its own ``env``, and widening that for the aggregate server
+    would change what all of its providers see. Applied here (not where the
+    default config is built) so it also covers a ``talos-local`` entry written
+    out explicitly in ``TALOS_MCP_SERVERS``.
+    """
+
+    disabled = sorted(_names_from_env("TALOS_MCP_DISABLED_PROVIDERS"))
+    if not disabled:
+        return
+    for config in configs:
+        if "talos.mcp_server" in [str(arg) for arg in config.args]:
+            config.args = [*config.args, "--disable-provider", ",".join(disabled)]
 
 
 def _filesystem_writes_allowed() -> bool:
@@ -1670,6 +1714,22 @@ def _optional_kicad_server_config() -> McpServerConfig | None:
 
 
 def _load_mcp_server_configs() -> list[McpServerConfig]:
+    """Configured MCP servers, minus any named in ``TALOS_MCP_DISABLED_SERVERS``.
+
+    The disable list is a per-run switch (the launcher sets it from its
+    checkboxes); the underlying configuration in ``settings.env`` is untouched, so
+    re-enabling a server is just a matter of dropping it from the list.
+    """
+
+    configs = _collect_mcp_server_configs()
+    disabled = _names_from_env("TALOS_MCP_DISABLED_SERVERS")
+    if disabled:
+        configs = [config for config in configs if config.name.strip().lower() not in disabled]
+    _apply_disabled_providers(configs)
+    return configs
+
+
+def _collect_mcp_server_configs() -> list[McpServerConfig]:
     raw_config = os.getenv("TALOS_MCP_SERVERS", "").strip()
     if not raw_config:
         configs = [_default_local_server_config()]
