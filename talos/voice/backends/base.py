@@ -44,6 +44,9 @@ class TranscriptResult:
     text: str
     language: str | None = None
     confidence: float | None = None
+    duration_seconds: float | None = None
+    average_log_probability: float | None = None
+    no_speech_probability: float | None = None
     raw: Any = None
 
     @property

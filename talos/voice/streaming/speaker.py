@@ -33,9 +33,10 @@ from talos.voice.streaming.sentence_chunker import SentenceChunker
 
 # Injected callables.
 SynthFn = Callable[[str], Iterable[bytes]]  # text -> PCM chunks
-SinkFn = Callable[[bytes], None]  # play/consume one PCM chunk
+SinkFn = Callable[[bytes], bool | None]  # False means playback cut this PCM short
 
 _CLOSE = object()  # queue sentinel
+_CHUNK_DONE = object()
 _PUT_POLL_SECONDS = 0.05
 
 
@@ -48,6 +49,7 @@ class StreamingSpeaker:
         chunker: SentenceChunker | None = None,
         on_first_audio: Callable[[], None] | None = None,
         on_chunk_playing: Callable[[str], None] | None = None,
+        on_chunk_partial: Callable[[str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
         max_queue: int = 64,
     ) -> None:
@@ -56,6 +58,7 @@ class StreamingSpeaker:
         self._chunker = chunker or SentenceChunker()
         self._on_first_audio = on_first_audio
         self._on_chunk_playing = on_chunk_playing
+        self._on_chunk_partial = on_chunk_partial
         self._should_stop = should_stop
         self._max_queue = max_queue
 
@@ -90,6 +93,7 @@ class StreamingSpeaker:
                             continue
                         if not self._put(pcm_q, (chunk, pcm)):
                             break
+                    self._put(pcm_q, (_CHUNK_DONE, chunk))
             except BaseException as exc:  # noqa: BLE001 - surfaced to caller
                 errors.append(exc)
             finally:
@@ -97,23 +101,42 @@ class StreamingSpeaker:
 
         def playback_worker() -> None:
             playing: object = None
+            partial_reported = False
             try:
                 while True:
                     item = pcm_q.get()
                     if item is _CLOSE:
                         break
-                    if self._stopped():
+                    first, second = item  # type: ignore[misc]
+                    if first is _CHUNK_DONE:
+                        if (
+                            playing == second
+                            and not partial_reported
+                            and not self._stopped()
+                            and self._on_chunk_playing is not None
+                        ):
+                            self._on_chunk_playing(second)
+                        playing = None
+                        partial_reported = False
                         continue
-                    chunk_text, pcm = item  # type: ignore[misc]
-                    if chunk_text is not playing:
+                    chunk_text, pcm = first, second
+                    if chunk_text != playing:
                         playing = chunk_text
-                        if self._on_chunk_playing is not None:
-                            self._on_chunk_playing(chunk_text)
+                        partial_reported = False
+                    if self._stopped():
+                        if not partial_reported and self._on_chunk_partial is not None:
+                            self._on_chunk_partial(chunk_text)
+                            partial_reported = True
+                        continue
                     if not first_audio_done.is_set():
                         first_audio_done.set()
                         if self._on_first_audio is not None:
                             self._on_first_audio()
-                    self._sink(pcm)
+                    completed = self._sink(pcm)
+                    if completed is False or self._stopped():
+                        if not partial_reported and self._on_chunk_partial is not None:
+                            self._on_chunk_partial(chunk_text)
+                            partial_reported = True
             except BaseException as exc:  # noqa: BLE001 - surfaced to caller
                 errors.append(exc)
                 # Drain remaining PCM so the synth worker never blocks on a full

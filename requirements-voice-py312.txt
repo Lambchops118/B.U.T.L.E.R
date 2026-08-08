@@ -11,4 +11,16 @@ openwakeword
 PyAudio==0.2.14
 python-dotenv==1.2.1
 SpeechRecognition==3.14.3
+winrt-runtime==3.2.1
+winrt-Windows-Devices-Enumeration==3.2.1
+winrt-Windows-Foundation==3.2.1
+winrt-Windows-Foundation-Collections==3.2.1
+winrt-Windows-Media==3.2.1
+winrt-Windows-Media-Audio==3.2.1
+winrt-Windows-Media-Capture==3.2.1
+winrt-Windows-Media-Devices==3.2.1
+winrt-Windows-Media-Effects==3.2.1
+winrt-Windows-Media-MediaProperties==3.2.1
+winrt-Windows-Media-Render==3.2.1
+winrt-Windows-Storage-Streams==3.2.1
 

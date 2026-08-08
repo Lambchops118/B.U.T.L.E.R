@@ -28,7 +28,16 @@ class FakeModel:
     def transcribe(self, samples, **kwargs):
         self.calls.append(kwargs)
         info = SimpleNamespace(language=self._language)
-        segments = [SimpleNamespace(text=t) for t in self._segments]
+        segments = [
+            SimpleNamespace(
+                text=t,
+                start=index * 0.4,
+                end=(index + 1) * 0.4,
+                avg_logprob=-0.25,
+                no_speech_prob=0.05,
+            )
+            for index, t in enumerate(self._segments)
+        ]
         return iter(segments), info
 
 
@@ -40,6 +49,9 @@ class FasterWhisperSTTTests(unittest.TestCase):
         self.assertIsInstance(result, TranscriptResult)
         self.assertEqual(result.text, "Butler   what time is it")
         self.assertEqual(result.language, "en")
+        self.assertAlmostEqual(result.duration_seconds, 0.8)
+        self.assertEqual(result.average_log_probability, -0.25)
+        self.assertEqual(result.no_speech_probability, 0.05)
         self.assertTrue(stt.last_model_preloaded)
         self.assertEqual(stt.last_model_load_ms, 0.0)
 
@@ -58,6 +70,17 @@ class FasterWhisperSTTTests(unittest.TestCase):
         self.assertEqual(kwargs["beam_size"], 1)
         self.assertEqual(kwargs["language"], "en")
         self.assertFalse(kwargs["condition_on_previous_text"])
+        self.assertFalse(kwargs["vad_filter"])
+
+    def test_barge_in_transcription_enables_silero_filter(self):
+        model = FakeModel(["stop"])
+        stt = FasterWhisperSTT(model=model)
+        stt.transcribe_barge_in(AudioChunk(pcm=_pcm(800), sample_rate=16000))
+        self.assertTrue(model.calls[0]["vad_filter"])
+        self.assertEqual(
+            model.calls[0]["vad_parameters"]["min_speech_duration_ms"],
+            120,
+        )
 
     def test_device_resolution_cpu_default(self):
         stt = FasterWhisperSTT(device="cpu")
