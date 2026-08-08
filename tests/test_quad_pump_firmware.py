@@ -16,7 +16,8 @@ import unittest
 FIRMWARE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "Peripherals",
-    "quad_pump",
+    "Pump-Power-Controller",
+    "Firmware",
 )
 if FIRMWARE_DIR not in sys.path:
     # The Pico filesystem is flat, so the firmware uses flat imports.
