@@ -88,6 +88,39 @@ class DisabledProviderTests(unittest.TestCase):
         )
 
 
+class EveryServerDisabledTests(unittest.TestCase):
+    """Turning everything off must leave a working agent, not a broken one.
+
+    The client used to reject an empty server list outright, which took down the
+    whole turn (and with it voice output) the first time the launcher made "all
+    off" reachable.
+    """
+
+    def setUp(self) -> None:
+        self.client = local_mcp_client.LocalMcpClient([])
+        self.addCleanup(self.client.stop)
+
+    def test_client_accepts_an_empty_server_list(self) -> None:
+        self.assertFalse(self.client.enabled())
+        self.assertEqual(self.client.list_tools(), [])
+        self.assertEqual(self.client.openai_tool_definitions(), [])
+        self.assertEqual(self.client.list_server_status(), [])
+
+    def test_no_event_loop_is_started(self) -> None:
+        self.client.start()
+        self.assertIsNone(self.client._loop)
+
+    def test_resource_listings_are_empty(self) -> None:
+        self.assertEqual(self.client.list_resources(), [])
+        self.assertEqual(self.client.list_resource_templates(), [])
+        self.assertEqual(self.client.retry_server(), [])
+
+    def test_calling_a_tool_explains_why_it_is_gone(self) -> None:
+        with self.assertRaises(local_mcp_client.McpProtocolError) as caught:
+            self.client.call_tool("get_current_weather", {})
+        self.assertIn("switched off", str(caught.exception))
+
+
 class LauncherEnvTests(unittest.TestCase):
     def test_selection_becomes_environment_variables(self) -> None:
         cfg = LauncherConfig()

@@ -340,9 +340,10 @@ class LocalMcpClient:
         reconnect_backoff_seconds: float | None = None,
         failure_threshold: int | None = None,
     ) -> None:
-        if not configs:
-            raise ValueError("At least one MCP server config is required.")
-
+        # An empty list is a legitimate state: the launcher can start TALOS with
+        # every MCP server switched off, leaving only the agent's own host-side
+        # tools. Every entry point below short-circuits rather than starting an
+        # event loop that would have nothing to talk to.
         self._configs = list(configs)
         self._connections = {config.name: _ServerConnection(config) for config in self._configs}
         self._status = {
@@ -353,7 +354,9 @@ class LocalMcpClient:
             )
             for config in self._configs
         }
-        max_config_timeout = max(config.timeout_seconds for config in self._configs)
+        max_config_timeout = max(
+            (config.timeout_seconds for config in self._configs), default=30.0
+        )
         self._bridge_timeout_seconds = (
             bridge_timeout_seconds
             if bridge_timeout_seconds is not None
@@ -386,9 +389,14 @@ class LocalMcpClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
 
+    def enabled(self) -> bool:
+        """False when every MCP server is switched off for this run."""
+
+        return bool(self._configs)
+
     def start(self) -> None:
         with self._lock:
-            if self._loop is not None:
+            if self._loop is not None or not self._configs:
                 return
 
             loop = asyncio.new_event_loop()
@@ -419,6 +427,8 @@ class LocalMcpClient:
 
     def list_tools(self, refresh: bool = False) -> list[dict[str, Any]]:
         self.start()
+        if not self._configs:
+            return []
         if self._tool_cache is not None and not refresh:
             return list(self._tool_cache)
 
@@ -449,6 +459,10 @@ class LocalMcpClient:
 
     def call_tool(self, name: str, arguments: str | dict[str, Any] | None = None) -> str:
         self.start()
+        if not self._configs:
+            raise McpProtocolError(
+                f"Tool '{name}' is unavailable: every MCP server is switched off for this run."
+            )
         if not self._tool_routes:
             self.list_tools()
         parsed_arguments = self._parse_arguments(arguments)
@@ -456,6 +470,8 @@ class LocalMcpClient:
 
     def list_resources(self, refresh: bool = False) -> list[dict[str, Any]]:
         self.start()
+        if not self._configs:
+            return []
         if self._resource_cache is not None and not refresh:
             return list(self._resource_cache)
 
@@ -468,6 +484,8 @@ class LocalMcpClient:
 
     def list_resource_templates(self, refresh: bool = False) -> list[dict[str, Any]]:
         self.start()
+        if not self._configs:
+            return []
         if self._resource_template_cache is not None and not refresh:
             return list(self._resource_template_cache)
 
@@ -482,6 +500,10 @@ class LocalMcpClient:
 
     def read_resource(self, uri: str, server: str | None = None) -> str:
         self.start()
+        if not self._configs:
+            raise McpProtocolError(
+                f"Cannot read resource '{uri}': every MCP server is switched off for this run."
+            )
         return self._run_coro(self._async_read_resource(uri, server))
 
     def list_server_status(self, refresh: bool = False) -> list[dict[str, Any]]:
@@ -512,6 +534,8 @@ class LocalMcpClient:
 
     def retry_server(self, server: str | None = None) -> list[dict[str, Any]]:
         self.start()
+        if not self._configs:
+            return []
         self._run_coro(self._async_retry_servers(server))
         return self.list_server_status()
 
