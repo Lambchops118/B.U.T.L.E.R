@@ -50,6 +50,50 @@ class BargeInVadGateTests(unittest.TestCase):
         self.assertEqual(candidates, [])
         self.assertEqual(utterances, [])
 
+    def test_candidate_opens_every_utterance_exactly_once(self):
+        """The gate is the sole endpointer, so the agent decides whether a turn
+        is an interruption or an ordinary command from ``on_candidate``, which
+        fires when the gate opens. That routing is only correct if every
+        utterance is preceded by exactly one candidate."""
+        probabilities = iter([0.9] * 3 + [0.0] * 3 + [0.9] * 3 + [0.0] * 3)
+        events = []
+        gate = BargeInVadGate(
+            lambda _: next(probabilities),
+            lambda pcm, evidence: events.append("utterance"),
+            on_candidate=lambda probability: events.append("candidate"),
+            config=VadGateConfig(
+                start_frames=3,
+                min_speech_ms=90,
+                end_silence_ms=90,
+                preroll_ms=96,
+            ),
+        )
+        for _ in range(12):
+            gate.observe(b"\x01\x00" * 512)
+        self.assertEqual(
+            events, ["candidate", "utterance", "candidate", "utterance"]
+        )
+
+    def test_max_utterance_ms_closes_a_turn_that_never_pauses(self):
+        """Unbroken speech still has to terminate, or a turn endpointed only by
+        the gate could be held open indefinitely."""
+        utterances = []
+        gate = BargeInVadGate(
+            lambda _: 0.9,
+            lambda pcm, evidence: utterances.append(evidence),
+            config=VadGateConfig(
+                start_frames=1,
+                min_speech_ms=32,
+                end_silence_ms=1000,
+                preroll_ms=0,
+                max_utterance_ms=160,
+            ),
+        )
+        for _ in range(12):
+            gate.observe(b"\x01\x00" * 512)
+        self.assertTrue(utterances)
+        self.assertLessEqual(utterances[0]["duration_ms"], 160 + 32)
+
 
 if __name__ == "__main__":
     unittest.main()
