@@ -40,6 +40,7 @@ def _load(**env: str) -> list[local_mcp_client.McpServerConfig]:
         "MINECRAFT_SERVER_DIR": "",
         "KICAD_MCP_SERVER_PATH": "",
         "KICAD_MCP_URL": "",
+        "TALOS_DISABLE_ALL_TOOLS": "",
     }
     base.update(env)
     with patch.dict(os.environ, base, clear=False):
@@ -119,6 +120,19 @@ class EveryServerDisabledTests(unittest.TestCase):
         with self.assertRaises(local_mcp_client.McpProtocolError) as caught:
             self.client.call_tool("get_current_weather", {})
         self.assertIn("switched off", str(caught.exception))
+
+
+class GlobalToolKillSwitchTests(unittest.TestCase):
+    def test_no_servers_are_configured(self) -> None:
+        self.assertEqual(_load(TALOS_DISABLE_ALL_TOOLS="1"), [])
+
+    def test_switch_is_off_by_default(self) -> None:
+        self.assertTrue(_load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS))
+
+    def test_explicit_servers_are_ignored_while_on(self) -> None:
+        self.assertEqual(
+            _load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS, TALOS_DISABLE_ALL_TOOLS="true"), []
+        )
 
 
 class LauncherEnvTests(unittest.TestCase):

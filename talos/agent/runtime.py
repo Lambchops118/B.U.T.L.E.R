@@ -37,6 +37,9 @@ ai_model = os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-mini")
 ROUTER_MODEL = os.getenv("TALOS_ROUTER_MODEL", ai_model)
 MAX_TOOL_CALL_ROUNDS = max(1, env_int("TALOS_MAX_TOOL_CALL_ROUNDS", 8))
 MEMORY_ENABLED = env_bool("TALOS_MEMORY_ENABLED", True)
+# Debug: drop the entire tool layer (MCP servers and the agent's own host tools)
+# so a turn measures model latency and nothing else.
+TOOLS_DISABLED = env_bool("TALOS_DISABLE_ALL_TOOLS", False)
 PROMPT_MEMORY_CHAR_LIMIT = max(0, env_int("TALOS_PROMPT_MEMORY_CHAR_LIMIT", 1600))
 CONVERSATION_HISTORY_MESSAGE_LIMIT = max(
     0,
@@ -624,6 +627,13 @@ def _reduce_tool_surface(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]
 def _build_tool_definitions(
     mcp_client: Any, command: str | None = None
 ) -> list[dict[str, Any]]:
+    if TOOLS_DISABLED:
+        # Debug switch for timing the model alone. The OpenAI-compatible backend
+        # omits the "tools" key entirely for an empty list, so the request that
+        # goes out carries nothing but the prompt.
+        print("Tool surface disabled (TALOS_DISABLE_ALL_TOOLS): sending 0 tools.")
+        return []
+
     tool_defs = _resource_tool_definitions() + mcp_client.openai_tool_definitions()
     reduce_kicad = os.getenv("TALOS_REDUCE_KICAD_TOOL_SURFACE", "1").strip().lower()
     if reduce_kicad not in {"0", "false", "no", "off"}:

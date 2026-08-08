@@ -62,8 +62,8 @@ class LauncherGUI:
         self._log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
 
         root.title("TALOS Launcher")
-        root.geometry("900x820")
-        root.minsize(760, 620)
+        root.geometry("900x900")
+        root.minsize(820, 680)
 
         self._build_widgets()
         self._load_into_widgets()
@@ -110,36 +110,9 @@ class LauncherGUI:
         ttk.Checkbutton(opts, text="Manage Docker Postgres (compose up)", variable=self.var_manage_docker).pack(anchor="w")
         ttk.Checkbutton(opts, text="Run DB migrations before serving", variable=self.var_run_migrations).pack(anchor="w")
 
-        # --- MCP servers / tools -------------------------------------------
-        # Checked = the main agent boots with that server (or built-in provider
-        # group) available. Unchecked entries are simply never started, so their
-        # tools are absent from the model's tool surface for the whole run.
-        mcp = ttk.LabelFrame(left, text="MCP servers & tools", padding=8)
-        mcp.pack(fill="x", pady=(8, 0))
-        self.mcp_entries = config.mcp_catalog()
-        self.mcp_vars: dict[str, tk.BooleanVar] = {}
-        for entry in self.mcp_entries:
-            var = tk.BooleanVar(value=True)
-            self.mcp_vars[entry.key] = var
-            text = entry.label
-            if entry.detail:
-                text += f"  ({entry.detail})"
-            if not entry.available:
-                text += " — not configured"
-            box = ttk.Checkbutton(mcp, text=text, variable=var)
-            if not entry.available:
-                box.configure(state="disabled")
-            # Provider groups live inside talos-local; indent them under it.
-            box.pack(anchor="w", padx=(16, 0) if entry.kind == "provider" else 0)
-
-        mcp_buttons = ttk.Frame(mcp)
-        mcp_buttons.pack(anchor="w", pady=(6, 0))
-        ttk.Button(mcp_buttons, text="All on", width=8, command=lambda: self._set_all_mcp(True)).pack(side="left")
-        ttk.Button(mcp_buttons, text="All off", width=8, command=lambda: self._set_all_mcp(False)).pack(side="left", padx=4)
-
         # --- LLM / model --------------------------------------------------
-        llm = ttk.LabelFrame(right, text="Language model", padding=8)
-        llm.pack(fill="x")
+        llm = ttk.LabelFrame(left, text="Language model", padding=8)
+        llm.pack(fill="x", pady=(8, 0))
         self.var_use_api = tk.BooleanVar()
         ttk.Checkbutton(
             llm,
@@ -180,7 +153,7 @@ class LauncherGUI:
         llm.columnconfigure(1, weight=1)
 
         # --- Awareness / MQTT --------------------------------------------
-        mqtt = ttk.LabelFrame(right, text="Awareness / MQTT", padding=8)
+        mqtt = ttk.LabelFrame(left, text="Awareness / MQTT", padding=8)
         mqtt.pack(fill="x", pady=(8, 0))
         self.var_mqtt = tk.BooleanVar()
         ttk.Checkbutton(mqtt, text="MQTT enabled", variable=self.var_mqtt).grid(row=0, column=0, columnspan=2, sticky="w")
@@ -193,7 +166,7 @@ class LauncherGUI:
         mqtt.columnconfigure(1, weight=1)
 
         # --- GPU assignment ----------------------------------------------
-        gpu = ttk.LabelFrame(right, text="GPU assignment", padding=8)
+        gpu = ttk.LabelFrame(left, text="GPU assignment", padding=8)
         gpu.pack(fill="x", pady=(8, 0))
         gpu_choices = self._gpu_choices()
         ttk.Label(gpu, text="LLM (Ollama):").grid(row=0, column=0, sticky="w")
@@ -205,6 +178,8 @@ class LauncherGUI:
         self.stt_gpu_box = ttk.Combobox(gpu, textvariable=self.var_stt_gpu, values=gpu_choices, state="readonly", width=32)
         self.stt_gpu_box.grid(row=1, column=1, sticky="we", padx=4, pady=2)
         gpu.columnconfigure(1, weight=1)
+
+        self._build_prompt_context(right)
 
         # --- Buttons ------------------------------------------------------
         buttons = ttk.Frame(outer)
@@ -223,11 +198,133 @@ class LauncherGUI:
         # --- Log pane -----------------------------------------------------
         logframe = ttk.LabelFrame(outer, text="Logs", padding=4)
         logframe.pack(fill="both", expand=True)
-        self.log_text = tk.Text(logframe, wrap="none", height=16, bg="#101418", fg="#d0d0d0", insertbackground="#d0d0d0")
+        # The settings columns are fixed-height, so the log pane is what absorbs
+        # window resizing; it starts short and grows with the window.
+        self.log_text = tk.Text(logframe, wrap="none", height=8, bg="#101418", fg="#d0d0d0", insertbackground="#d0d0d0")
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(logframe, command=self.log_text.yview)
         scroll.pack(side="right", fill="y")
         self.log_text.configure(yscrollcommand=scroll.set, state="disabled")
+
+    def _build_prompt_context(self, parent: tk.Widget) -> None:
+        """Everything that ends up in front of the model, in one place.
+
+        Each box here changes what the main agent sends per turn — tool schemas,
+        remembered facts, the injected clock, the awareness snapshot — rather than
+        which processes run. All of them persist to ``settings.env`` (the agent
+        reads them at startup), unlike the component checkboxes on the left.
+        """
+
+        outer = ttk.LabelFrame(parent, text="Prompt context — what the model receives", padding=8)
+        outer.pack(fill="x")
+
+        # -- master tool switch + surface trimming ---------------------------
+        surface = ttk.LabelFrame(outer, text="Tool surface", padding=6)
+        surface.pack(fill="x")
+        self.var_tools_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            surface,
+            text="Send tools to the model",
+            variable=self.var_tools_enabled,
+            command=self._on_toggle_tools,
+        ).pack(anchor="w")
+        ttk.Label(
+            surface,
+            text="Off = no MCP server starts and no tool schema is sent (bare-LLM timing).",
+            foreground="#808080",
+            wraplength=380,
+            justify="left",
+        ).pack(anchor="w", padx=(16, 0))
+
+        self.var_scope_tools = tk.BooleanVar(value=True)
+        self.var_reduce_kicad = tk.BooleanVar(value=True)
+        self._tool_dependent: list[ttk.Widget] = [
+            ttk.Checkbutton(
+                surface,
+                text="Scope kitchen tools to cooking requests",
+                variable=self.var_scope_tools,
+            ),
+            ttk.Checkbutton(
+                surface,
+                text="Reduce KiCad tool surface (35 of ~100 tools)",
+                variable=self.var_reduce_kicad,
+            ),
+        ]
+        for widget in self._tool_dependent:
+            widget.pack(anchor="w")
+
+        # -- MCP servers / provider groups -----------------------------------
+        # Checked = the main agent boots with that server (or built-in provider
+        # group) available. Unchecked entries are simply never started, so their
+        # tools are absent from the model's tool surface for the whole run.
+        mcp = ttk.LabelFrame(outer, text="MCP servers & tools", padding=6)
+        mcp.pack(fill="x", pady=(8, 0))
+        self.mcp_entries = config.mcp_catalog()
+        self.mcp_vars: dict[str, tk.BooleanVar] = {}
+        for entry in self.mcp_entries:
+            var = tk.BooleanVar(value=True)
+            self.mcp_vars[entry.key] = var
+            text = entry.label
+            if entry.detail:
+                text += f"  ({entry.detail})"
+            if not entry.available:
+                text += " — not configured"
+            box = ttk.Checkbutton(mcp, text=text, variable=var)
+            if entry.available:
+                self._tool_dependent.append(box)
+            else:
+                box.configure(state="disabled")
+            # Provider groups live inside talos-local; indent them under it.
+            box.pack(anchor="w", padx=(16, 0) if entry.kind == "provider" else 0)
+
+        mcp_buttons = ttk.Frame(mcp)
+        mcp_buttons.pack(anchor="w", pady=(6, 0))
+        for text, value in (("All on", True), ("All off", False)):
+            button = ttk.Button(
+                mcp_buttons,
+                text=text,
+                width=8,
+                command=lambda v=value: self._set_all_mcp(v),
+            )
+            button.pack(side="left", padx=(0, 4))
+            self._tool_dependent.append(button)
+
+        # -- non-tool context injected every turn ----------------------------
+        injected = ttk.LabelFrame(outer, text="Injected context", padding=6)
+        injected.pack(fill="x", pady=(8, 0))
+        self.var_memory = tk.BooleanVar(value=True)
+        self.var_inject_time = tk.BooleanVar(value=True)
+        self.var_situation = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            injected, text="Remembered facts (memory block)", variable=self.var_memory
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            injected, text="Current date & time", variable=self.var_inject_time
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            injected,
+            text="Awareness situation snapshot",
+            variable=self.var_situation,
+        ).pack(anchor="w")
+
+    # settings.env keys behind the prompt-context boxes, with their defaults.
+    # ``invert`` marks a checkbox whose "on" means the variable is off.
+    def _prompt_context_settings(self) -> list[tuple[tk.BooleanVar, str, bool, bool]]:
+        return [
+            (self.var_tools_enabled, "TALOS_DISABLE_ALL_TOOLS", False, True),
+            (self.var_scope_tools, "TALOS_SCOPE_TOOL_SURFACE", True, False),
+            (self.var_reduce_kicad, "TALOS_REDUCE_KICAD_TOOL_SURFACE", True, False),
+            (self.var_memory, "TALOS_MEMORY_ENABLED", True, False),
+            (self.var_inject_time, "TALOS_INJECT_CURRENT_TIME", True, False),
+            (self.var_situation, "TALOS_AWARENESS_SITUATION_ENABLED", True, False),
+        ]
+
+    def _on_toggle_tools(self) -> None:
+        """Grey out the tool-surface detail when tools are switched off entirely."""
+
+        state = "normal" if self.var_tools_enabled.get() else "disabled"
+        for widget in self._tool_dependent:
+            widget.configure(state=state)
 
     def _set_all_mcp(self, enabled: bool) -> None:
         for entry in self.mcp_entries:
@@ -294,7 +391,11 @@ class LauncherGUI:
         self.var_mqtt.set(config.setting_bool("TALOS_AWARENESS_MQTT_ENABLED", True))
         self.var_mqtt_host.set(config.get_setting("TALOS_AWARENESS_MQTT_HOST"))
         self.var_mqtt_port.set(config.get_setting("TALOS_AWARENESS_MQTT_PORT"))
+        for var, key, default, invert in self._prompt_context_settings():
+            value = config.setting_bool(key, default)
+            var.set(not value if invert else value)
         self._on_toggle_api()
+        self._on_toggle_tools()
 
     def _collect_config(self) -> LauncherConfig:
         self.cfg.start_ollama = self.var_ollama.get()
@@ -343,6 +444,9 @@ class LauncherGUI:
         config.set_setting("TALOS_AWARENESS_MQTT_ENABLED", "1" if self.var_mqtt.get() else "0")
         config.set_setting("TALOS_AWARENESS_MQTT_HOST", self.var_mqtt_host.get().strip())
         config.set_setting("TALOS_AWARENESS_MQTT_PORT", self.var_mqtt_port.get().strip())
+        for var, key, _default, invert in self._prompt_context_settings():
+            checked = var.get()
+            config.set_setting(key, "1" if (not checked if invert else checked) else "0")
 
     # -- actions -----------------------------------------------------------
 

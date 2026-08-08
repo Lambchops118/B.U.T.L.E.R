@@ -1737,6 +1737,17 @@ def _optional_kicad_server_config() -> McpServerConfig | None:
     )
 
 
+def _tools_globally_disabled() -> bool:
+    """True when ``TALOS_DISABLE_ALL_TOOLS`` turns the whole tool layer off.
+
+    A debug switch for measuring bare model latency: no MCP server is started and
+    no tool schema is sent, so the request carries only the prompt.
+    """
+
+    raw = os.getenv("TALOS_DISABLE_ALL_TOOLS", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _load_mcp_server_configs() -> list[McpServerConfig]:
     """Configured MCP servers, minus any named in ``TALOS_MCP_DISABLED_SERVERS``.
 
@@ -1744,6 +1755,9 @@ def _load_mcp_server_configs() -> list[McpServerConfig]:
     checkboxes); the underlying configuration in ``settings.env`` is untouched, so
     re-enabling a server is just a matter of dropping it from the list.
     """
+
+    if _tools_globally_disabled():
+        return []
 
     configs = _collect_mcp_server_configs()
     disabled = _names_from_env("TALOS_MCP_DISABLED_SERVERS")
