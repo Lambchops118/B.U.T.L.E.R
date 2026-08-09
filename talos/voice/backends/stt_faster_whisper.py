@@ -69,6 +69,23 @@ class FasterWhisperSTT(STTBackend):
                     )
         return self._model
 
+    def preload(self) -> float:
+        """Load model weights ahead of the first utterance and return load ms."""
+        self._model_with_metrics()
+        return float(self.last_model_load_ms or 0.0)
+
+    def _model_with_metrics(self) -> Any:
+        model_preloaded = self._model is not None
+        model_load_started = time.perf_counter()
+        model = self._ensure_model()
+        self.last_model_preloaded = model_preloaded
+        self.last_model_load_ms = (
+            0.0
+            if model_preloaded
+            else round((time.perf_counter() - model_load_started) * 1000.0, 1)
+        )
+        return model
+
     def transcribe(self, audio: AudioChunk) -> TranscriptResult:
         return self._transcribe(audio, vad_filter=self.vad_filter)
 
@@ -84,15 +101,7 @@ class FasterWhisperSTT(STTBackend):
     ) -> TranscriptResult:
         import numpy as np
 
-        model_preloaded = self._model is not None
-        model_load_started = time.perf_counter()
-        model = self._ensure_model()
-        self.last_model_preloaded = model_preloaded
-        self.last_model_load_ms = (
-            0.0
-            if model_preloaded
-            else round((time.perf_counter() - model_load_started) * 1000.0, 1)
-        )
+        model = self._model_with_metrics()
         samples = np.frombuffer(audio.pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if samples.size == 0:
             return TranscriptResult(text="")

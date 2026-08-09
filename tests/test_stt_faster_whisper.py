@@ -42,6 +42,16 @@ class FakeModel:
 
 
 class FasterWhisperSTTTests(unittest.TestCase):
+    def test_preload_marks_injected_model_ready_without_transcribing(self):
+        model = FakeModel(["unused"])
+        stt = FasterWhisperSTT(model=model)
+
+        load_ms = stt.preload()
+
+        self.assertEqual(load_ms, 0.0)
+        self.assertTrue(stt.last_model_preloaded)
+        self.assertEqual(model.calls, [])
+
     def test_joins_segments_and_strips(self):
         model = FakeModel([" Butler ", " what time is it "])
         stt = FasterWhisperSTT(model=model)

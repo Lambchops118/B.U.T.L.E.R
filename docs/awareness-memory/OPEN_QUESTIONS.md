@@ -54,6 +54,7 @@ Remaining open items:
 | OQ-F | Should the ingestion pipeline skip its own registered command topics instead of dead-lettering them as `unauthorized_topic`? The backend subscribes to `home/#` and therefore receives every command it publishes. Pre-existing behavior (the simulator's command topic does the same); it costs one dead-letter row per dispatched command. | Optional cleanup; not a pump blocker |
 | OQ-H | **Resolved 2026-07-27 (ADR-024).** Windows communications-mode AudioGraph AEC is proven and selected on the pinned Yeti capture and BenQ render endpoints. Live far-end probe measured 45.696 dB ERLE with no callback errors; Windows reported AEC/NS/AGC/deep-NS. | Resolved |
 | OQ-I | Does the owner-visible room corpus and eight-hour soak meet the Phase F recall, false-command, latency, overflow, wake-latency, and memory-prefix thresholds across real near-end/double-talk positions, volumes, noise, and device restart? | Before changing `TALOS_BARGE_IN` from 0 to 1 |
+| OQ-J | Does the independent idle Silero lane meet or beat the SpeechRecognition baseline for "Butler" recall, false wakes, command-pause handling, and endpoint p95 across the owner-visible room corpus? | Before setting `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`; keep SpeechRecognition idle segmentation in production until then |
 
 ## Potential source tension to confirm
 

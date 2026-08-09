@@ -526,6 +526,16 @@ is available only as the explicit `heuristic_diagnostic` backend and is never a
 silent fallback. If AEC, endpoint identity, or the VAD stack fails, barge-in is
 disabled while ordinary wake-word capture stays available.
 
+Ordinary wake commands use SpeechRecognition only for energy-based utterance
+segmentation; the resulting clip is still transcribed once by local
+faster-whisper. Experimental idle Silero endpointing has independent thresholds
+and a 640 ms pre-roll, and cannot activate unless both
+`TALOS_IDLE_VAD_ENDPOINTING=1` and `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`. The second
+flag is an operator acknowledgement that the owner-visible wake/pause/noise
+corpus passed; it must not be set merely to reduce latency. Local STT weights are
+preloaded asynchronously at voice-worker startup, and a bounded priority queue
+places fresh idle commands ahead of queued barge-in confirmation work.
+
 Telemetry includes privacy-safe aggregate counters for candidates started, rejected,
 and accepted; bounded numeric summaries for mixed-capture/render RMS, capture and
 heuristic-speech duration, ASR latency/confidence when available, and pause
