@@ -244,6 +244,42 @@ The launcher can also be invoked directly with any project interpreter:
 .venv-main/Scripts/python.exe -m talos.launcher --no-gui   # headless
 ```
 
+### Local Debug Dashboard
+
+TALOS includes a separate, read-only web debug console for interaction I/O,
+pipeline timings, component/host health, CPU/GPU usage, and available audio
+metrics. It reads the existing conversation database, voice benchmark CSVs, and
+privacy-safe pipeline telemetry without joining the agent or audio hot paths.
+
+Start it with the main Python environment:
+
+```powershell
+.venv-main\Scripts\python.exe -m talos.debug_dashboard
+```
+
+Then open `http://127.0.0.1:8787`. The page polls once per second by default,
+can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
+GPU, memory, disk, RMS, and audio-measurement graphs in the browser. Expanded
+JSON/detail rows remain open while polling. New dashboard topics can be added
+through the versioned snapshot's `extensions` list without changing the
+existing tabs.
+
+The console host is not assumed to be the TALOS system host, so it never reports
+its own CPU, GPU, memory, or disk as TALOS metrics. Set
+`TALOS_DEBUG_SYSTEM_METRICS_URL` to a JSON metrics or compatible debug-snapshot
+endpoint on the TALOS host; until then, the hardware cards truthfully show
+`NOT_CONFIGURED`. If that endpoint requires a bearer token, set
+`TALOS_DEBUG_SYSTEM_METRICS_TOKEN`. Selecting and deploying the system-host
+metrics exporter remains a separate task.
+
+The dashboard defaults to loopback because it displays private transcripts and
+has no authentication. A non-loopback `--host` is refused unless the operator
+also passes `--allow-remote`; use that only on a trusted network. Exact prompt
+text, tool names/arguments, raw PCM, and continuously sampled idle-room RMS are
+not currently persisted by the runtime, so the page labels those feeds as
+unavailable instead of inventing data. Adding them requires a separate,
+explicitly bounded and privacy-reviewed runtime instrumentation task.
+
 #### Note: `TALOS_TEXT_AGENT_URL` and local voice
 
 The voice worker reaches the main agent over `TALOS_TEXT_AGENT_URL`. A real

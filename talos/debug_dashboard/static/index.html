@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TALOS Debug Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div>
+      <h1>TALOS DEBUG CONSOLE</h1>
+      <div class="subtitle">READ-ONLY LOCAL DIAGNOSTICS / SCHEMA v<span id="schema-version">?</span></div>
+    </div>
+    <div class="connection-box">
+      <span id="connection-light" class="light unknown" aria-hidden="true"></span>
+      <span id="connection-text">CONNECTING...</span>
+    </div>
+  </header>
+
+  <section class="toolbar" aria-label="Debug console controls">
+    <button id="refresh-now" type="button">Refresh now</button>
+    <button id="pause-toggle" type="button">Pause</button>
+    <label>Refresh
+      <select id="refresh-rate">
+        <option value="250">250 ms</option>
+        <option value="1000" selected>1 sec</option>
+        <option value="5000">5 sec</option>
+        <option value="15000">15 sec</option>
+      </select>
+    </label>
+    <label>Filter
+      <input id="global-filter" type="search" placeholder="request, event, session, text...">
+    </label>
+    <span class="toolbar-spacer"></span>
+    <span>Snapshot: <time id="snapshot-time">never</time></span>
+    <span>Age: <span id="snapshot-age">--</span></span>
+  </section>
+
+  <nav id="tabs" class="tabs" role="tablist" aria-label="Debug topics">
+    <button role="tab" id="tab-interactions" aria-controls="panel-interactions" aria-selected="true" data-tab="interactions">Interaction I/O</button>
+    <button role="tab" id="tab-health" aria-controls="panel-health" aria-selected="false" data-tab="health">System Health</button>
+    <button role="tab" id="tab-audio" aria-controls="panel-audio" aria-selected="false" data-tab="audio">Live Audio</button>
+    <button role="tab" id="tab-raw" aria-controls="panel-raw" aria-selected="false" data-tab="raw">Raw Events</button>
+  </nav>
+
+  <main>
+    <section id="panel-interactions" class="tab-panel" role="tabpanel" aria-labelledby="tab-interactions">
+      <div id="interaction-summary" class="status-strip">Waiting for interaction sources...</div>
+      <div class="split-grid">
+        <section class="window">
+          <h2>VOICE INPUT / TRANSCRIPTION / OUTPUT</h2>
+          <div class="window-body table-scroll"><table id="voice-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>PERSISTED CONVERSATION I/O</h2>
+          <div class="window-body table-scroll"><table id="conversation-table"></table></div>
+        </section>
+      </div>
+      <div class="split-grid lower-grid">
+        <section class="window">
+          <h2>LLM PROMPT INSPECTOR</h2>
+          <div id="prompt-inspector" class="window-body"></div>
+        </section>
+        <section class="window">
+          <h2>TOOL CALL SUMMARY</h2>
+          <div class="window-body table-scroll"><table id="tool-table"></table></div>
+        </section>
+      </div>
+      <section class="window">
+        <h2>PIPELINE TIMELINE</h2>
+        <div class="window-body table-scroll tall"><table id="pipeline-table"></table></div>
+      </section>
+    </section>
+
+    <section id="panel-health" class="tab-panel" role="tabpanel" aria-labelledby="tab-health" hidden>
+      <div id="host-kpis" class="kpi-grid"></div>
+      <div class="split-grid">
+        <section class="window">
+          <h2>COMPONENT STATUS</h2>
+          <div class="window-body table-scroll"><table id="service-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>HOST HISTORY (BROWSER SESSION)</h2>
+          <div id="host-charts" class="window-body chart-grid"></div>
+        </section>
+      </div>
+      <section class="window">
+        <h2>GPU STATUS</h2>
+        <div class="window-body table-scroll"><table id="gpu-table"></table></div>
+      </section>
+    </section>
+
+    <section id="panel-audio" class="tab-panel" role="tabpanel" aria-labelledby="tab-audio" hidden>
+      <div id="audio-summary" class="status-strip">Waiting for audio telemetry...</div>
+      <div id="audio-kpis" class="kpi-grid"></div>
+      <section class="window">
+        <h2>AUDIO METRIC SERIES</h2>
+        <div id="audio-charts" class="window-body chart-grid"></div>
+      </section>
+      <div class="split-grid">
+        <section class="window">
+          <h2>LATEST BARGE-IN COUNTERS</h2>
+          <div class="window-body table-scroll"><table id="audio-counter-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>LATEST AUDIO MEASUREMENTS</h2>
+          <div class="window-body table-scroll"><table id="audio-measurement-table"></table></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="panel-raw" class="tab-panel" role="tabpanel" aria-labelledby="tab-raw" hidden>
+      <section class="window">
+        <h2>BOUNDED RAW PIPELINE EVENTS (NEWEST FIRST)</h2>
+        <div class="window-body table-scroll raw-scroll"><table id="raw-table"></table></div>
+      </section>
+    </section>
+
+    <div id="extension-panels"></div>
+  </main>
+
+  <footer>
+    <span>Data is read-only. No PCM is captured by this page.</span>
+    <span id="footer-source">No snapshot received.</span>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
