@@ -263,7 +263,7 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
     ]
 
 
-    #character = objl.load_obj_wire( "InfoPanel/butlerv3.obj", keep_edges="feature", # try "boundary" or "all" 
+    #character = objl.load_obj_wire( "experiments/3d_vector_art_test/butlerv3.obj", keep_edges="feature", # try "boundary" or "all"
     #                                   feature_angle_deg=50.00, # larger -> fewer, sharper edges kept
     #                                     target_radius=0.8 )
 

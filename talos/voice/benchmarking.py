@@ -11,7 +11,11 @@ from typing import Any, Optional
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 RUN_STARTED_AT = datetime.now().astimezone()
-CSV_LOG_PATH = LOG_DIR / f"voice_benchmarks_{RUN_STARTED_AT.strftime('%Y%m%d_%H%M%S_%f')}.csv"
+# Single rolling log so every run appends to one readable file. The
+# ``run_started_at`` column still distinguishes individual runs. (Historically a
+# new timestamped file was created per process start, which fragmented the data
+# across dozens of files and made it look like recording had stopped.)
+CSV_LOG_PATH = LOG_DIR / "voice_benchmarks.csv"
 
 _LOG_LOCK = threading.Lock()
 
@@ -53,22 +57,30 @@ METRIC_COLUMNS = [
     "total_end_of_speech_to_first_audio_ms",
 ]
 
+# Step durations (milliseconds). These lead the metrics so the most-read numbers
+# sit right after the interaction text. Non-duration metrics (rms, counts) trail.
+DURATION_COLUMNS = [name for name in METRIC_COLUMNS if name.endswith("_ms")]
+OTHER_METRIC_COLUMNS = [name for name in METRIC_COLUMNS if not name.endswith("_ms")]
+
 CSV_COLUMNS = [
+    # Lead with the interaction context, then every step duration in ms.
     "run_started_at",
-    "csv_file",
-    "reason",
     "session_id",
-    "wake_word",
-    "wake_word_mode",
     "command",
     "transcript",
     "response_preview",
+    *DURATION_COLUMNS,
+    # Everything else follows.
+    "reason",
+    "wake_word",
+    "wake_word_mode",
+    *OTHER_METRIC_COLUMNS,
     *[f"ts_{name}" for name in TIMESTAMP_COLUMNS],
-    *METRIC_COLUMNS,
     "llm_ttft_note",
     "mp3_open_note",
     "notes",
     "errors",
+    "csv_file",
 ]
 
 
@@ -251,6 +263,22 @@ class VoiceBenchmarkSession:
             "errors": errors,
         }
 
+    @staticmethod
+    def _is_meaningful(payload: dict[str, Any]) -> bool:
+        """A row is worth logging when something was actually said or done.
+
+        Keeps real commands and general talking (any non-empty transcript), plus
+        anything that carried an error (useful for diagnostics). Excludes blank
+        clips where the model heard nothing / only noise -- e.g. ``discarded_audio``
+        and ``empty_transcript`` -- which otherwise flood the log.
+        """
+        return bool(
+            payload.get("command")
+            or payload.get("transcript")
+            or payload.get("response_preview")
+            or payload.get("errors")
+        )
+
     def emit_summary_once(self, reason: str) -> dict[str, Any]:
         already_emitted = False
         with self._lock:
@@ -265,9 +293,12 @@ class VoiceBenchmarkSession:
         payload["reason"] = reason
 
         line = self._format_summary_line(payload)
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with _LOG_LOCK:
-            self._append_csv_row(payload)
+        if self._is_meaningful(payload):
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with _LOG_LOCK:
+                self._append_csv_row(payload)
+        else:
+            line += " | csv=skipped(blank)"
 
         print(line)
         return payload
