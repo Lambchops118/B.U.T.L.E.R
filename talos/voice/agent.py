@@ -55,6 +55,17 @@ REMOTE_STT_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_STT_FALLBACK", False)
 # Keep that failover opt-in so an Ollama outage cannot silently move inference
 # off the machine.
 REMOTE_LLM_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_LLM_FALLBACK", False)
+# Boot phrase: one synthetic command driven through the whole voice pipeline once
+# listening is live, so the first real utterance does not pay the MCP tool build,
+# cold prompt evaluation, and the first Polly connection all at once. It is a
+# genuine turn (LLM, TTS, playback), so it is also the audible "system is up"
+# signal. It runs against its own session id so the synthetic exchange never
+# enters the conversation history real turns are built from.
+BOOT_PHRASE_ENABLED = env_bool("TALOS_BOOT_PHRASE", True)
+BOOT_PHRASE = os.getenv("TALOS_BOOT_PHRASE_TEXT", "").strip() or (
+    'This is the initial boot phrase. Simply say: "Monkey Butler Powering On"'
+)
+BOOT_PHRASE_SESSION_ID = os.getenv("TALOS_BOOT_PHRASE_SESSION", "voice-boot-warmup")
 
 audio_interface = pyaudio.PyAudio()
 aws_access_key = os.getenv("AWS_ACCESS_KEY")
@@ -118,6 +129,8 @@ _asr_worker_started = False
 _asr_worker_lock = threading.Lock()
 _stt_preload_started = False
 _stt_preload_lock = threading.Lock()
+_boot_phrase_started = False
+_boot_phrase_lock = threading.Lock()
 
 # --------------------------------------------------------------------------- #
 # Endpointing
@@ -732,6 +745,36 @@ def _ensure_stt_preload_worker() -> None:
         _stt_preload_started = True
 
 
+def _run_boot_phrase() -> None:
+    try:
+        started = time.perf_counter()
+        # No benchmark session: this is a synthetic turn, and letting it write a
+        # row would skew the voice-latency corpus with a deliberately cold one.
+        handle_command(BOOT_PHRASE, session_id=BOOT_PHRASE_SESSION_ID)
+        elapsed_ms = round((time.perf_counter() - started) * 1000.0, 1)
+        print(f"Boot phrase complete in {elapsed_ms:.1f} ms; pipeline is warm.")
+    except Exception as exc:
+        # Warming is never a precondition for listening. A failure here (model
+        # server still starting, AWS not reachable) leaves the first real
+        # utterance exactly where it was before.
+        print(f"Boot phrase failed; first utterance pays full latency: {exc}")
+
+
+def _ensure_boot_phrase_worker() -> None:
+    global _boot_phrase_started
+    if not BOOT_PHRASE_ENABLED:
+        return
+    with _boot_phrase_lock:
+        if _boot_phrase_started:
+            return
+        threading.Thread(
+            target=_run_boot_phrase,
+            name="talos-boot-phrase",
+            daemon=True,
+        ).start()
+        _boot_phrase_started = True
+
+
 def _transcribe_local(audio_data, benchmark):
     """Single local STT pass; the transcript serves both wake and command."""
     from talos.voice.backends.base import AudioChunk
@@ -1225,6 +1268,7 @@ def run_voice_recognition():
                     "Corpus-accepted idle VAD endpointing active; SpeechRecognition "
                     "listening is not used."
                 )
+                _ensure_boot_phrase_worker()
                 return _stop_vad_endpointing
 
             from talos.voice.streaming.duplex import DuplexRecognizerAudioSource
@@ -1255,6 +1299,10 @@ def run_voice_recognition():
 
     stop_listening = r.listen_in_background(mic, recognition_callback)
     print("Background listening started.")
+    # Deliberately after adjust_for_ambient_noise: boot audio playing during that
+    # calibration window would be measured as room noise and raise the energy
+    # threshold for the whole run.
+    _ensure_boot_phrase_worker()
     return stop_listening
 
 
@@ -1273,7 +1321,7 @@ def _stop_vad_endpointing(wait_for_stop: bool = True) -> None:
     _vad_lane = None
 
 
-def handle_command(command, benchmark=None):
+def handle_command(command, benchmark=None, session_id=None):
     print(f"Handling voice command: {command}")
     if benchmark:
         benchmark.mark_stage("command_start")
@@ -1282,7 +1330,7 @@ def handle_command(command, benchmark=None):
         if VOICE_STREAMING:
             progress = {"spoke": False}
             try:
-                _handle_command_streaming(command, benchmark, progress)
+                _handle_command_streaming(command, benchmark, progress, session_id)
                 return
             except Exception as exc:
                 print(f"Streaming voice path error: {exc}")
@@ -1318,7 +1366,7 @@ def handle_command(command, benchmark=None):
                 print("Falling back to explicitly enabled non-streaming voice path.")
                 if benchmark:
                     benchmark.set_dimension("llm_fallback_used", True)
-        _handle_command_legacy(command, benchmark)
+        _handle_command_legacy(command, benchmark, session_id)
     finally:
         # Guarantee the command is recorded exactly once. emit_summary_once is
         # idempotent, so a prior "first_audio"/error emit wins; this only catches
@@ -1328,21 +1376,26 @@ def handle_command(command, benchmark=None):
             benchmark.emit_summary_once("command_complete")
 
 
-def _handle_command_streaming(command, benchmark, progress):
+def _handle_command_streaming(command, benchmark, progress, session_id=None):
     """Stream the agent response and speak it sentence-by-sentence as it arrives."""
+    agent_session_id = session_id or VOICE_SESSION_ID
     session = SpeechSession(
         request_id=benchmark.session_id if benchmark else None,
         command=command,
-        session_id=VOICE_SESSION_ID,
+        session_id=agent_session_id,
         duck_gain=_BARGE_IN_CONFIG.duck_gain,
     )
     # Waits out a reply the user has just interrupted, so its output stream is
     # closed before this one opens. That reply is already unwinding.
     with _playback_lock:
-        _speak_streamed_response(command, benchmark, progress, session)
+        _speak_streamed_response(
+            command, benchmark, progress, session, agent_session_id
+        )
 
 
-def _speak_streamed_response(command, benchmark, progress, session):
+def _speak_streamed_response(
+    command, benchmark, progress, session, agent_session_id=None
+):
     if benchmark:
         benchmark.mark_stage("audio_open_start")
     stream = _open_speech_stream()
@@ -1352,6 +1405,7 @@ def _speak_streamed_response(command, benchmark, progress, session):
 
     def synth(text):
         synth_started = time.perf_counter()
+        first_synth = benchmark is not None and not marks["polly"]
         if benchmark and not marks["polly"]:
             marks["polly"] = True
             benchmark.mark_stage("polly_send")
@@ -1369,6 +1423,10 @@ def _speak_streamed_response(command, benchmark, progress, session):
             duration_ms = round((time.perf_counter() - synth_started) * 1000.0, 1)
             benchmark.add_metric("polly_total_ms", duration_ms)
             benchmark.add_metric("polly_request_count", 1)
+            if first_synth:
+                # First speakable chunk synthesized -- boundary for the
+                # first_synth_ms / first_audio_playback_ms breakdown.
+                benchmark.mark_stage("first_synth_done")
             if marks["polly"]:
                 benchmark.mark_stage("polly_done")
         return [pcm]
@@ -1397,7 +1455,7 @@ def _speak_streamed_response(command, benchmark, progress, session):
         try:
             for delta in stream_message(
                 command,
-                session_id=VOICE_SESSION_ID,
+                session_id=agent_session_id or VOICE_SESSION_ID,
                 source="voice",
                 base_url=VOICE_AGENT_URL,
                 token=VOICE_AGENT_TOKEN,
@@ -1455,7 +1513,7 @@ def _speak_streamed_response(command, benchmark, progress, session):
     print(f"Bot response: {response_text}")
 
 
-def _handle_command_legacy(command, benchmark=None):
+def _handle_command_legacy(command, benchmark=None, session_id=None):
     print(f"Handling voice command (legacy path): {command}")
     try:
         if benchmark:
@@ -1465,7 +1523,7 @@ def _handle_command_legacy(command, benchmark=None):
             benchmark.mark_stage("llm_send")
         response_text = send_message(
             command,
-            session_id=VOICE_SESSION_ID,
+            session_id=session_id or VOICE_SESSION_ID,
             source="voice",
             base_url=VOICE_AGENT_URL,
             token=VOICE_AGENT_TOKEN,

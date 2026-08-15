@@ -236,6 +236,68 @@ class BackendFactoryTests(unittest.TestCase):
         build_client.assert_called_once_with("http://127.0.0.1:11434/v1", None)
 
 
+class WarmupTests(unittest.TestCase):
+    def _backend(self):
+        return OpenAICompatibleChatBackend(
+            model="mb-core-v1:latest",
+            base_url="http://127.0.0.1:11434/v1",
+            client=FakeClient([]),
+            backend_name="ollama",
+        )
+
+    def test_warmup_sends_single_token_unstreamed_request(self):
+        backend = self._backend()
+        messages = [
+            {"role": "system", "content": "persona"},
+            {"role": "user", "content": "ready"},
+        ]
+
+        elapsed_ms = backend.warmup(messages)
+
+        sent = backend._client.chat.completions.calls[0]
+        self.assertEqual(sent["messages"], messages)
+        self.assertEqual(sent["model"], "mb-core-v1:latest")
+        self.assertFalse(sent["stream"])
+        self.assertEqual(sent["max_tokens"], 1)
+        self.assertGreaterEqual(elapsed_ms, 0.0)
+
+    def test_warmup_sends_tools_so_template_matches_a_real_turn(self):
+        backend = self._backend()
+        tools = [
+            {
+                "type": "function",
+                "name": "place_phone_call",
+                "description": "Call someone.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+
+        backend.warmup([{"role": "user", "content": "ready"}], tools=tools)
+
+        sent = backend._client.chat.completions.calls[0]
+        self.assertEqual(sent["tools"], responses_tools_to_chat_tools(tools))
+
+    def test_warmup_omits_tools_key_when_surface_is_empty(self):
+        backend = self._backend()
+
+        backend.warmup([{"role": "user", "content": "ready"}], tools=[])
+
+        self.assertNotIn("tools", backend._client.chat.completions.calls[0])
+
+    def test_warmup_honors_configured_max_tokens_param(self):
+        backend = OpenAICompatibleChatBackend(
+            model="gpt-4o",
+            client=FakeClient([]),
+            max_tokens_param="max_completion_tokens",
+        )
+
+        backend.warmup([{"role": "user", "content": "ready"}])
+
+        sent = backend._client.chat.completions.calls[0]
+        self.assertEqual(sent["max_completion_tokens"], 1)
+        self.assertNotIn("max_tokens", sent)
+
+
 class MessageHelperTests(unittest.TestCase):
     def test_tool_result_message_shape(self):
         call = LLMToolCall(call_id="c1", name="get_weather", arguments="{}")

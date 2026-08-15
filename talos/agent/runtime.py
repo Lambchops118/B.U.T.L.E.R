@@ -40,6 +40,14 @@ MEMORY_ENABLED = env_bool("TALOS_MEMORY_ENABLED", True)
 # Debug: drop the entire tool layer (MCP servers and the agent's own host tools)
 # so a turn measures model latency and nothing else.
 TOOLS_DISABLED = env_bool("TALOS_DISABLE_ALL_TOOLS", False)
+# Run one synthetic turn's worth of preparation at startup so the first real
+# command does not pay for the MCP tool-definition build, the cold prompt
+# assembly, and full prompt evaluation all at once.
+STARTUP_WARMUP_ENABLED = env_bool("TALOS_AGENT_STARTUP_WARMUP", True)
+STARTUP_WARMUP_COMMAND = (
+    os.getenv("TALOS_AGENT_STARTUP_WARMUP_COMMAND", "").strip()
+    or "print a bootup sequence"
+)
 PROMPT_MEMORY_CHAR_LIMIT = max(0, env_int("TALOS_PROMPT_MEMORY_CHAR_LIMIT", 1600))
 CONVERSATION_HISTORY_MESSAGE_LIMIT = max(
     0,
@@ -2025,6 +2033,58 @@ def _get_stream_backend():
     from talos.voice.backends.factory import get_llm_backend
 
     return get_llm_backend()
+
+
+def warm_agent_runtime() -> None:
+    """Pay the first turn's one-time costs at startup instead of on first use.
+
+    This walks the same preparation a real turn does -- MCP tool definitions,
+    prompt assembly, and prompt evaluation on the model -- so all three caches
+    are populated before the user speaks.
+
+    It deliberately stops short of the tool-calling loop. A real turn can
+    dispatch physical actions (pumps, phone calls), and a synthetic command must
+    never be able to trigger one, so generation is capped at a single token and
+    whatever the model starts to say is discarded. Nothing is written to memory,
+    which also keeps the warmup turn out of the conversation history that the
+    first real prompt is built from.
+    """
+    command = STARTUP_WARMUP_COMMAND
+    try:
+        started = time.perf_counter()
+        mcp_client = get_local_mcp_client()
+        tool_build_started = time.perf_counter()
+        tool_defs = _build_tool_definitions(mcp_client, command)
+        tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
+
+        instructions = _build_prompt_instructions(
+            command,
+            # A synthetic session id keeps the warmup out of any real session's
+            # stored history.
+            "startup-warmup",
+            tool_defs,
+            interaction_mode="voice",
+        )
+        messages = [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": command},
+        ]
+
+        backend = _get_stream_backend()
+        warmup = getattr(backend, "warmup", None)
+        if not callable(warmup):
+            return
+        prefill_ms = warmup(messages, tools=tool_defs)
+        total_ms = round((time.perf_counter() - started) * 1000.0, 1)
+        print(
+            f"Agent runtime warm: {len(tool_defs)} tools in {tool_build_ms:.1f} ms, "
+            f"prompt prefill {prefill_ms:.1f} ms, total {total_ms:.1f} ms."
+        )
+    except Exception as exc:
+        # Warming is an optimization, never a precondition. If the model server
+        # or an MCP provider is not up yet, the first real turn simply pays what
+        # it would have paid anyway.
+        print(f"Agent runtime warmup skipped: {_truncate_text(str(exc), 300)}")
 
 
 def _tool_definition_names(tool_defs: list[dict[str, Any]]) -> set[str]:

@@ -72,6 +72,40 @@ class OpenAICompatibleChatBackend(LLMBackend):
         # OpenAI with no explicit key: let the SDK read OPENAI_API_KEY from env.
         return openai.OpenAI()
 
+    def warmup(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> float:
+        """Evaluate a representative prompt so the first real turn is warm.
+
+        Local servers cache the evaluated KV prefix between requests, so sending
+        the prompt once at startup moves that prompt evaluation off the first
+        user turn. Generation is capped at a single token because only the
+        prefill matters here.
+
+        ``tools`` must carry the same surface a real turn sends: chat templates
+        commonly branch on whether tools are present, so a tool-less warmup
+        renders a different prompt and shares a far shorter prefix. Returns
+        elapsed milliseconds.
+        """
+        started = time.perf_counter()
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": self.temperature,
+            self.max_tokens_param: 1,
+        }
+        chat_tools = responses_tools_to_chat_tools(tools)
+        if chat_tools:
+            request["tools"] = chat_tools
+        if self._extra_body:
+            request["extra_body"] = self._extra_body
+        self._client.chat.completions.create(**request)
+        return round((time.perf_counter() - started) * 1000.0, 1)
+
     def stream(
         self,
         messages: list[dict[str, Any]],

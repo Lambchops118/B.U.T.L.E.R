@@ -256,10 +256,19 @@ class Supervisor:
         #                        tool surface AND the conversation history; at the
         #                        8192 default Ollama truncates the oldest messages
         #                        (the history) first, so the assistant "forgets"
+        #   VULKAN=0             CRITICAL for the GPU pin. Ollama (>=0.32) defaults
+        #                        OLLAMA_VULKAN=true, and the Vulkan backend IGNORES
+        #                        CUDA_VISIBLE_DEVICES -- the scheduler then picks a
+        #                        card on its own and has been observed grabbing the
+        #                        6GB RTX 2060, spilling ~56% of the model to CPU.
+        #                        Forcing it off keeps Ollama on the CUDA path, which
+        #                        honors the 5080 pin above. Without this the LLM can
+        #                        silently land on (and get slow on) the wrong GPU.
         # setdefault lets a deliberate environment override still win.
         env.setdefault("OLLAMA_KEEP_ALIVE", "-1")
         env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
         env.setdefault("OLLAMA_CONTEXT_LENGTH", "16384")
+        env.setdefault("OLLAMA_VULKAN", "0")
         self._spawn("ollama", ["ollama", "serve"], env)
         self._wait_port("ollama", "127.0.0.1", self._ports.ollama, timeout=60)
 

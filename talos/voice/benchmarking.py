@@ -18,6 +18,7 @@ RUN_STARTED_AT = datetime.now().astimezone()
 CSV_LOG_PATH = LOG_DIR / "voice_benchmarks.csv"
 
 _LOG_LOCK = threading.Lock()
+_schema_reconciled = False
 
 TIMESTAMP_COLUMNS = [
     "callback_started",
@@ -33,6 +34,7 @@ TIMESTAMP_COLUMNS = [
     "llm_followup_send",
     "llm_done",
     "polly_send",
+    "first_synth_done",
     "polly_done",
     "audio_open_start",
     "audio_stream_ready",
@@ -47,16 +49,26 @@ METRIC_COLUMNS = [
     "recording_start_to_wake_word_end_ms",
     "wake_word_to_recording_start_ms",
     "local_wake_latency_ms",
+    # --- End-of-speech -> first-audio breakdown (consecutive, non-overlapping
+    # slices; they sum to total_end_of_speech_to_first_audio_ms). Ordered ahead of
+    # the total in the CSV via FIRST_SPEECH_COMPONENT_COLUMNS below. ---
+    "eos_to_stt_send_ms",
     "speech_to_text_latency_ms",
-    "llm_ttft_ms",
+    "stt_to_command_ms",
+    "command_to_audio_open_ms",
+    "audio_file_open_latency_ms",
+    "audio_ready_to_llm_send_ms",
     "llm_initial_latency_ms",
+    "first_sentence_buffer_ms",
+    "first_synth_ms",
+    "first_audio_playback_ms",
+    "total_end_of_speech_to_first_audio_ms",
+    "llm_ttft_ms",
     "llm_followup_latency_ms",
     "llm_total_latency_ms",
     "llm_request_count",
     "aws_polly_latency_ms",
-    "audio_file_open_latency_ms",
     "mp3_open_latency_ms",
-    "total_end_of_speech_to_first_audio_ms",
     "stt_model_load_ms",
     "prompt_tokens_estimated",
     "provider_prompt_tokens",
@@ -86,9 +98,34 @@ DIMENSION_COLUMNS = [
     "llm_model_load_measurement",
 ]
 
-# Step durations (milliseconds). These lead the metrics so the most-read numbers
-# sit right after the interaction text. Non-duration metrics (rms, counts) trail.
-DURATION_COLUMNS = [name for name in METRIC_COLUMNS if name.endswith("_ms")]
+# The end-of-speech -> first-audio latency, broken into consecutive,
+# non-overlapping slices. Each slice is the gap between two pipeline stages, so
+# reading left to right you see every contributor and then the total they add up
+# to. Keep this list in true chronological order -- the CSV lays the columns out
+# exactly this way, with the total placed immediately after the components.
+FIRST_SPEECH_COMPONENT_COLUMNS = [
+    "eos_to_stt_send_ms",          # recording_ended_est -> stt_send (ASR dequeue, RMS gate, remote wake gate)
+    "speech_to_text_latency_ms",   # stt_send -> stt_done (transcription)
+    "stt_to_command_ms",           # stt_done -> command_start (wake parse + executor dispatch)
+    "command_to_audio_open_ms",    # command_start -> audio_open_start (playback-lock wait + setup)
+    "audio_file_open_latency_ms",  # audio_open_start -> audio_stream_ready (output device open)
+    "audio_ready_to_llm_send_ms",  # audio_stream_ready -> llm_send (closure setup)
+    "llm_initial_latency_ms",      # llm_send -> llm_first_done (LLM time to first token)
+    "first_sentence_buffer_ms",    # llm_first_done -> polly_send (fill first speakable sentence)
+    "first_synth_ms",              # polly_send -> first_synth_done (first-chunk Polly synth)
+    "first_audio_playback_ms",     # first_synth_done -> first_audio (hand first PCM to the device)
+]
+FIRST_SPEECH_TOTAL_COLUMN = "total_end_of_speech_to_first_audio_ms"
+
+# Step durations (milliseconds). The end-of-speech -> first-audio breakdown leads
+# (components first, then their total), followed by every other duration metric.
+# Non-duration metrics (rms, counts) trail in OTHER_METRIC_COLUMNS.
+_FIRST_SPEECH_ORDERED = [*FIRST_SPEECH_COMPONENT_COLUMNS, FIRST_SPEECH_TOTAL_COLUMN]
+_ALL_DURATION_COLUMNS = [name for name in METRIC_COLUMNS if name.endswith("_ms")]
+DURATION_COLUMNS = [
+    *_FIRST_SPEECH_ORDERED,
+    *[name for name in _ALL_DURATION_COLUMNS if name not in _FIRST_SPEECH_ORDERED],
+]
 OTHER_METRIC_COLUMNS = [name for name in METRIC_COLUMNS if not name.endswith("_ms")]
 
 CSV_COLUMNS = [
@@ -135,6 +172,36 @@ def _preview(text: Optional[str], limit: int = 160) -> Optional[str]:
     return collapsed[: limit - 3] + "..."
 
 
+def _reconcile_csv_schema() -> None:
+    """Migrate an existing CSV to the current column layout when it drifts.
+
+    Columns are added and reordered over time. When the header on disk no longer
+    matches :data:`CSV_COLUMNS`, rewrite the file once per process: preserve every
+    value whose column still exists, blank-fill new columns, and drop retired
+    ones. Runs under ``_LOG_LOCK`` (callers hold it), so the rewrite is atomic
+    with respect to appends. A no-op when the file is absent or already current.
+    """
+    global _schema_reconciled
+    if _schema_reconciled:
+        return
+    _schema_reconciled = True
+    if not CSV_LOG_PATH.exists():
+        return
+
+    with CSV_LOG_PATH.open("r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        existing_header = reader.fieldnames
+        if existing_header == CSV_COLUMNS:
+            return
+        old_rows = list(reader)
+
+    with CSV_LOG_PATH.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for old_row in old_rows:
+            writer.writerow({name: old_row.get(name, "") for name in CSV_COLUMNS})
+
+
 def _norm_token(text: Optional[str]) -> str:
     if not text:
         return ""
@@ -155,6 +222,7 @@ class VoiceBenchmarkSession:
     command: Optional[str] = None
     transcript: Optional[str] = None
     response_text: Optional[str] = None
+    wake_word_detected: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _emitted: bool = field(default=False, repr=False)
 
@@ -247,6 +315,15 @@ class VoiceBenchmarkSession:
         with self._lock:
             self.response_text = response_text
 
+    def mark_wake_word_detected(self) -> None:
+        """Flag this session as an intentional, wake-word-directed interaction.
+
+        Only sessions marked here are written to the CSV. Audio the system merely
+        overheard (no wake word) is never logged. See :meth:`_is_meaningful`.
+        """
+        with self._lock:
+            self.wake_word_detected = True
+
     def note_recording_ready(self, duration_seconds: float) -> None:
         callback_wall = time.time()
         callback_mono = time.perf_counter()
@@ -304,6 +381,7 @@ class VoiceBenchmarkSession:
             command = self.command
             transcript = self.transcript
             response_text = self.response_text
+            wake_word_detected = self.wake_word_detected
 
         def delta_ms(start: str, end: str) -> Optional[float]:
             if start not in stages_mono or end not in stages_mono:
@@ -318,6 +396,18 @@ class VoiceBenchmarkSession:
         metrics.setdefault("aws_polly_latency_ms", delta_ms("polly_send", "polly_done"))
         metrics.setdefault("audio_file_open_latency_ms", delta_ms("audio_open_start", "audio_stream_ready"))
         metrics.setdefault("mp3_open_latency_ms", metrics.get("audio_file_open_latency_ms"))
+
+        # End-of-speech -> first-audio, decomposed into the consecutive slices in
+        # FIRST_SPEECH_COMPONENT_COLUMNS. Each slice is present only when both of
+        # its bounding stages were marked (so the non-streaming fallback path,
+        # which skips some stages, simply leaves those slices blank).
+        metrics.setdefault("eos_to_stt_send_ms", delta_ms("recording_ended_est", "stt_send"))
+        metrics.setdefault("stt_to_command_ms", delta_ms("stt_done", "command_start"))
+        metrics.setdefault("command_to_audio_open_ms", delta_ms("command_start", "audio_open_start"))
+        metrics.setdefault("audio_ready_to_llm_send_ms", delta_ms("audio_stream_ready", "llm_send"))
+        metrics.setdefault("first_sentence_buffer_ms", delta_ms("llm_first_done", "polly_send"))
+        metrics.setdefault("first_synth_ms", delta_ms("polly_send", "first_synth_done"))
+        metrics.setdefault("first_audio_playback_ms", delta_ms("first_synth_done", "first_audio"))
         metrics.setdefault("total_end_of_speech_to_first_audio_ms", delta_ms("recording_ended_est", "first_audio"))
         metrics.setdefault("voice_pipeline_total_ms", delta_ms("command_start", "pipeline_done"))
         metrics.setdefault("llm_ttft_ms", None)
@@ -339,6 +429,7 @@ class VoiceBenchmarkSession:
             "session_id": self.session_id,
             "wake_word": self.wake_word,
             "wake_word_mode": self.wake_word_mode,
+            "wake_word_detected": wake_word_detected,
             "command": command,
             "transcript": transcript,
             "response_preview": _preview(response_text),
@@ -351,19 +442,17 @@ class VoiceBenchmarkSession:
 
     @staticmethod
     def _is_meaningful(payload: dict[str, Any]) -> bool:
-        """A row is worth logging when something was actually said or done.
+        """A row is worth logging only for intentional, wake-word interactions.
 
-        Keeps real commands and general talking (any non-empty transcript), plus
-        anything that carried an error (useful for diagnostics). Excludes blank
-        clips where the model heard nothing / only noise -- e.g. ``discarded_audio``
-        and ``empty_transcript`` -- which otherwise flood the log.
+        The microphone is always listening, so most captured audio is speech and
+        noise never directed at Talos. Those clips -- rejected wake gates,
+        transcripts that never began with the wake word, blank/low-energy audio,
+        recognition errors on undirected speech -- must not be logged. Only a
+        session explicitly flagged via :meth:`mark_wake_word_detected` (the wake
+        word was heard, or a command was spoken as a barge-in) is recorded, along
+        with any errors that occurred while servicing that command.
         """
-        return bool(
-            payload.get("command")
-            or payload.get("transcript")
-            or payload.get("response_preview")
-            or payload.get("errors")
-        )
+        return bool(payload.get("wake_word_detected"))
 
     def emit_summary_once(self, reason: str) -> dict[str, Any]:
         already_emitted = False
@@ -416,9 +505,10 @@ class VoiceBenchmarkSession:
         for name in METRIC_COLUMNS:
             row[name] = lat.get(name)
 
+        _reconcile_csv_schema()
         write_header = not CSV_LOG_PATH.exists()
         with CSV_LOG_PATH.open("a", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+            writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
