@@ -3,13 +3,30 @@
 
 #This is some test code that was written by chatgpt to demostrate drawing a 3d wireframe object within a panel in an already existing pygame window.
 #10/5/25
+#
+#Run with no arguments to render butlerv3.obj from this folder; --cube draws the built-in cube.
+#  python 3d_vec_art_test.py [path/to/model.obj] [--cube] [--edges feature|boundary|all] [--angle 50]
+#The OBJ parsing/edge extraction comes from InfoPanel/obj_wireframe_loader.py.
 
 
 
 
+import argparse
 import math
+import os
+import sys
+
 import numpy as np
 import pygame
+
+# Reuse the real OBJ loader from InfoPanel rather than duplicating it here.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from InfoPanel.obj_wireframe_loader import load_obj_wire
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_OBJ = os.path.join(_HERE, "butlerv3.obj")
 
 # ------------ Mesh definition helpers ------------
 class WireMesh:
@@ -207,18 +224,69 @@ class WireframeRenderer:
         # Optional: draw panel border to fit UI
         pygame.draw.rect(surface, (40, 40, 60), self.panel_rect, 1)
 
+# ------------ Model loading ------------
+def load_mesh(path, *, keep_edges="feature", feature_angle_deg=50.0,
+              target_radius=0.8, use_cache=True):
+    """Load an OBJ as a wireframe, or fall back to the built-in cube."""
+    if path is None:
+        return cube_mesh(size=0.7), "built-in cube"
+    if not os.path.exists(path):
+        raise SystemExit(f"OBJ not found: {path}")
+    mesh = load_obj_wire(
+        path,
+        keep_edges=keep_edges,
+        feature_angle_deg=feature_angle_deg,
+        target_radius=target_radius,
+        cache_npz=use_cache,
+    )
+    return mesh, os.path.basename(path)
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description="Wireframe panel test — renders an OBJ (or the built-in cube) into a pygame panel.")
+    p.add_argument("obj", nargs="?", default=DEFAULT_OBJ,
+                   help=f"path to an .obj file (default: {os.path.basename(DEFAULT_OBJ)} in this folder)")
+    p.add_argument("--cube", action="store_true", help="ignore the OBJ and draw the built-in cube")
+    p.add_argument("--edges", choices=("all", "boundary", "feature"), default="feature",
+                   help="edge selection mode (default: feature)")
+    p.add_argument("--angle", type=float, default=50.0,
+                   help="dihedral angle in degrees for --edges feature; larger keeps fewer, sharper edges")
+    p.add_argument("--radius", type=float, default=0.8, help="normalize the model to this radius")
+    p.add_argument("--scale", type=float, default=None, help="model scale (default: 3.5 for OBJ, 1.0 for cube)")
+    p.add_argument("--dist", type=float, default=None, help="distance in front of the camera (default: 3.2 for OBJ, 3.0 for cube)")
+    p.add_argument("--no-cache", action="store_true",
+                   help="ignore/refresh the _wirecache.npz sidecar (needed after changing --edges/--angle/--radius)")
+    return p.parse_args(argv)
+
+
 # ------------ Example usage ------------
 if __name__ == "__main__":
+    args = parse_args()
+
+    obj_path = None if args.cube else args.obj
+    mesh, mesh_name = load_mesh(
+        obj_path,
+        keep_edges=args.edges,
+        feature_angle_deg=args.angle,
+        target_radius=args.radius,
+        use_cache=not args.no_cache,
+    )
+    is_obj = obj_path is not None
+    model_scale = args.scale if args.scale is not None else (3.5 if is_obj else 1.0)
+    model_dist = args.dist if args.dist is not None else (3.2 if is_obj else 3.0)
+    model_y = -0.1 if is_obj else 0.1
+    print(f"{mesh_name}: {len(mesh.vertices)} verts, {len(mesh.edges)} edges")
+
     pygame.init()
     W, H = 960, 600
     screen = pygame.display.set_mode((W, H))
+    pygame.display.set_caption(f"wireframe panel test — {mesh_name}")
     clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 20)
 
     # Layout: left = app UI, right = 3D mini-panel
     panel_rect = (W - 360, 20, 340, 260)
     renderer = WireframeRenderer(panel_rect, fov=55, near=0.1, far=50.0)
-
-    mesh = cube_mesh(size=0.7)
 
     angle = 0.0
     running = True
@@ -226,20 +294,23 @@ if __name__ == "__main__":
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
+            elif e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                running = False
 
         angle += 0.012
 
         # --- Your existing UI drawing here ---
         screen.fill((18,18,20))
+        screen.blit(font.render(f"{mesh_name} — {len(mesh.edges)} edges", True, (0, 255, 100)), (20, 20))
         # ... draw the rest of your app/panel controls ...
 
         # --- Draw the wireframe character/mesh in the panel ---
         renderer.draw(
             screen,
             mesh,
-            model_pos=(0.0, 0.1, 3.0),        # move the model “into” the screen
-            model_rot=(angle*1.3, angle, 0),  # animate
-            model_scale=1.0,
+            model_pos=(0.0, model_y, model_dist),   # move the model “into” the screen
+            model_rot=(0, angle, 0) if is_obj else (angle*1.3, angle, 0),
+            model_scale=model_scale,
             camera_pos=(0.0, 0.0, 0.0),
             camera_target=(0.0, 0.0, 1.0),
             zsort=True

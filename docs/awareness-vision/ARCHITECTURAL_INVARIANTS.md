@@ -1,0 +1,19 @@
+# Vision Architectural Invariants
+
+These invariants are **additive** to the parent
+[`../awareness-memory/ARCHITECTURAL_INVARIANTS.md`](../awareness-memory/ARCHITECTURAL_INVARIANTS.md)
+(`INV-01`..`INV-20`), all of which continue to apply. The rules below (`VIN-*`)
+are the vision-specific constraints. Where a `VIN-*` rule sharpens an `INV-*`
+rule for the camera domain, it cites it.
+
+| ID | Rule and rationale | Prohibited interpretation | Sharpens |
+|---|---|---|---|
+| VIN-01 | **Frames stay in the worker.** Raw video/still frames exist only in the vision worker's process memory and are never written to disk, never published to MQTT, and never sent to any network endpoint. | Persisting frames "for debugging", uploading to any cloud, or attaching frames to events. | INV-07 |
+| VIN-02 | **Events carry facts, not pixels.** No event payload or database row contains image bytes, base64 image data, file paths to frames, or raw biometric embeddings. Only derived scalars/labels/confidences/ephemeral track ids. | Base64 thumbnails in payloads, storing crops as artifacts, embedding vectors in `payload`. | INV-02, INV-17 |
+| VIN-03 | **Inference is local.** All models (detection, pose, re-identification) run on local hardware from locally-pinned weights; no runtime call reaches an external inference or model-download service during normal operation. | Cloud vision APIs, runtime model fetches, telemetry phone-home from model runtimes. | INV-07 |
+| VIN-04 | **Vision emits state, never commands.** The worker publishes observation events only. Any physical action driven by vision goes through the existing registered-action pipeline (validation, permission, confirmation, safety checks, acknowledgement). | The worker publishing actuation/MQTT command topics; a rule bypassing confirmation because "the camera is sure". | INV-02, INV-09, INV-13 |
+| VIN-05 | **Identity is consented, encrypted, and revocable.** Household re-identification uses only templates enrolled through an explicit local consent flow, stored encrypted at rest, deletable per person. Identity events are evidence-class with their own (shorter) retention and a global kill switch. | Enrolling people silently, storing plaintext embeddings/photos, treating identity as normal-retention telemetry, no per-person delete. | INV-06, INV-16 |
+| VIN-06 | **Uncertainty is preserved end to end.** Detection/track/match confidences, model + weights versions, and the debounce window travel in `confidence`/`provenance`; low-confidence identity degrades to anonymous presence rather than asserting a name. | Emitting a name at low match score, dropping confidence to look certain, presenting inferred identity as fact. | INV-06 |
+| VIN-07 | **The worker is a well-behaved source.** One registered `source_id`, owning only its `vision/<room>/#` topics, NTP-synced clock (`device_synced`), monotonic `sequence` + `source_boot_id`, bounded event rate via transition-debouncing (not per-frame emission). | Per-frame flooding, publishing on unowned topics, unsynchronized clocks claiming `device_synced`, spoofing another source. | INV-04, INV-06, INV-17 |
+| VIN-08 | **Degrade safely.** Camera loss, model load failure, or the identity kill switch degrade capability truthfully (source health → degraded/offline; identity → anonymous) without crashing intake or fabricating observations. | Emitting stale/last-known presence as current after camera loss; silently continuing to name people with identity disabled. | INV-08, INV-14 |
+| VIN-09 | **Additive integration.** Reuse the existing envelope, ingestion, registry, state, telemetry, rules, and action layers; do not fork the pipeline or change existing MQTT topics. New locations/entities/sources arrive by migration + registry seed, not runtime table creation. | A parallel vision database, a second ingestion path, renaming existing topics. | INV-10, INV-11, INV-18 |

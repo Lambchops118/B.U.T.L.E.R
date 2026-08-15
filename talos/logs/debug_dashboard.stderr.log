@@ -1,0 +1,21 @@
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 16249)
+Traceback (most recent call last):
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\socketserver.py", line 683, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\socketserver.py", line 360, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\socketserver.py", line 747, in __init__
+    self.handle()
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\http\server.py", line 427, in handle
+    self.handle_one_request()
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\http\server.py", line 415, in handle_one_request
+    method()
+  File "C:\Users\aljac\Desktop\B.U.T.L.E.R\talos\debug_dashboard\server.py", line 632, in do_GET
+    self._write_json(
+  File "C:\Users\aljac\Desktop\B.U.T.L.E.R\talos\debug_dashboard\server.py", line 677, in _write_json
+    self.wfile.write(data)
+  File "C:\Users\aljac\AppData\Local\Programs\Python\Python39\lib\socketserver.py", line 826, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------

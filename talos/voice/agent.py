@@ -660,8 +660,10 @@ def play_audio(filename, benchmark=None):
             while data:
                 stream.write(data)
                 if benchmark and first_chunk:
+                    # Record the timestamp live (in-memory, cheap). The CSV flush
+                    # is deferred to after playback so disk I/O stays off the
+                    # audio hot path.
                     benchmark.mark_stage("first_audio")
-                    benchmark.emit_summary_once("first_audio")
                     first_chunk = False
                 data = wf.readframes(chunk)
             stream.stop_stream()
@@ -1267,46 +1269,54 @@ def handle_command(command, benchmark=None):
     if benchmark:
         benchmark.mark_stage("command_start")
         benchmark.set_dimension("llm_fallback_used", False)
-    if VOICE_STREAMING:
-        progress = {"spoke": False}
-        try:
-            _handle_command_streaming(command, benchmark, progress)
-            return
-        except Exception as exc:
-            print(f"Streaming voice path error: {exc}")
-            if benchmark:
-                benchmark.add_error(f"Streaming path error: {exc}")
-                _emit_voice_pipeline_event(
-                    benchmark,
-                    "streaming_path_failed",
-                    error_type=type(exc).__name__,
-                )
-            if progress["spoke"]:
-                # Audio already started; do not replay via the fallback path.
+    try:
+        if VOICE_STREAMING:
+            progress = {"spoke": False}
+            try:
+                _handle_command_streaming(command, benchmark, progress)
+                return
+            except Exception as exc:
+                print(f"Streaming voice path error: {exc}")
                 if benchmark:
-                    benchmark.emit_summary_once("voice_worker_error")
-                    benchmark.mark_stage("pipeline_done")
+                    benchmark.add_error(f"Streaming path error: {exc}")
                     _emit_voice_pipeline_event(
                         benchmark,
-                        "voice_pipeline_failed",
+                        "streaming_path_failed",
                         error_type=type(exc).__name__,
                     )
-                return
-            if not REMOTE_LLM_FALLBACK_ENABLED:
-                print("Remote LLM fallback is disabled; voice command failed locally.")
+                if progress["spoke"]:
+                    # Audio already started; do not replay via the fallback path.
+                    if benchmark:
+                        benchmark.emit_summary_once("voice_worker_error")
+                        benchmark.mark_stage("pipeline_done")
+                        _emit_voice_pipeline_event(
+                            benchmark,
+                            "voice_pipeline_failed",
+                            error_type=type(exc).__name__,
+                        )
+                    return
+                if not REMOTE_LLM_FALLBACK_ENABLED:
+                    print("Remote LLM fallback is disabled; voice command failed locally.")
+                    if benchmark:
+                        benchmark.emit_summary_once("voice_worker_error")
+                        benchmark.mark_stage("pipeline_done")
+                        _emit_voice_pipeline_event(
+                            benchmark,
+                            "voice_pipeline_failed",
+                            error_type=type(exc).__name__,
+                        )
+                    return
+                print("Falling back to explicitly enabled non-streaming voice path.")
                 if benchmark:
-                    benchmark.emit_summary_once("voice_worker_error")
-                    benchmark.mark_stage("pipeline_done")
-                    _emit_voice_pipeline_event(
-                        benchmark,
-                        "voice_pipeline_failed",
-                        error_type=type(exc).__name__,
-                    )
-                return
-            print("Falling back to explicitly enabled non-streaming voice path.")
-            if benchmark:
-                benchmark.set_dimension("llm_fallback_used", True)
-    _handle_command_legacy(command, benchmark)
+                    benchmark.set_dimension("llm_fallback_used", True)
+        _handle_command_legacy(command, benchmark)
+    finally:
+        # Guarantee the command is recorded exactly once. emit_summary_once is
+        # idempotent, so a prior "first_audio"/error emit wins; this only catches
+        # commands that completed without ever producing audio (empty/tool-only
+        # responses, silent failures) which previously went unlogged.
+        if benchmark:
+            benchmark.emit_summary_once("command_complete")
 
 
 def _handle_command_streaming(command, benchmark, progress):
@@ -1367,8 +1377,9 @@ def _speak_streamed_response(command, benchmark, progress, session):
     def on_first_audio():
         progress["spoke"] = True
         if benchmark:
+            # Timestamp live; defer the CSV flush to handle_command's finally
+            # (after speak_stream returns) to keep disk I/O off the audio path.
             benchmark.mark_stage("first_audio")
-            benchmark.emit_summary_once("first_audio")
 
     def tracked_deltas():
         if benchmark:
@@ -1485,6 +1496,10 @@ def _handle_command_legacy(command, benchmark=None):
         audio_thread = threading.Thread(target=play_audio, args=(filename, benchmark))
         print("Starting audio playback thread.")
         audio_thread.start()
+        # Wait for playback to finish so the benchmark flush (in handle_command's
+        # finally) lands after the interaction, not mid-playback. The command
+        # future is fire-and-forget, so blocking this worker here is harmless.
+        audio_thread.join()
     except openai.OpenAIError as exc:
         if benchmark:
             benchmark.add_error(f"OpenAI API error: {exc}")
