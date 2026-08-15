@@ -10,6 +10,26 @@ from typing import Callable
 import numpy as np
 
 
+def select_vad_lane(
+    current_lane: str | None,
+    *,
+    barge_pending: bool,
+    idle_pending: bool,
+    speaking: bool,
+    idle_enabled: bool,
+) -> str | None:
+    """Select one VAD lane without cutting off an utterance at a mode change."""
+    if current_lane == "barge_in" and barge_pending:
+        return "barge_in"
+    if current_lane == "idle" and idle_pending:
+        return "idle"
+    if speaking:
+        return "barge_in"
+    if idle_enabled:
+        return "idle"
+    return None
+
+
 class SileroProbabilityVAD:
     """Stateful 16 kHz Silero VAD v6 wrapper over faster-whisper's ONNX asset."""
 
@@ -52,7 +72,7 @@ class VadGateConfig:
     start_frames: int = 3
     end_silence_ms: float = 480.0
     min_speech_ms: float = 160.0
-    preroll_ms: float = 320.0
+    preroll_ms: float = 500.0
     max_utterance_ms: float = 9000.0
 
 
@@ -76,6 +96,7 @@ class BargeInVadGate:
         self._preroll: deque[bytes] = deque()
         self._preroll_ms = 0.0
         self._active = False
+        self._capture: list[bytes] = []
         self._hot: list[bytes] = []
         self._hot_probabilities: list[float] = []
         self._silence_ms = 0.0
@@ -89,6 +110,7 @@ class BargeInVadGate:
             self._preroll.clear()
             self._preroll_ms = 0.0
             self._active = False
+            self._capture.clear()
             self._hot.clear()
             self._hot_probabilities.clear()
             self._silence_ms = 0.0
@@ -104,6 +126,17 @@ class BargeInVadGate:
             vad_frame = bytes(self._bytes[:quantum])
             del self._bytes[:quantum]
             self._observe_vad_frame(vad_frame)
+
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._active
+
+    @property
+    def has_pending_speech(self) -> bool:
+        """Whether switching gates now could discard an utterance onset."""
+        with self._lock:
+            return self._active or bool(self._hot)
 
     @property
     def _frame_ms(self) -> float:
@@ -159,12 +192,23 @@ class BargeInVadGate:
                                 sum(self._probabilities) / len(self._probabilities), 6
                             ),
                         }
+                    max_preroll_frames = max(
+                        1, int(self.config.preroll_ms // self._frame_ms) + 1
+                    )
+                    capture_tail = self._capture[-max_preroll_frames:]
                     self._active = False
                     self._capture = []
                     self._speech_ms = 0.0
                     self._total_ms = 0.0
                     self._silence_ms = 0.0
                     self._probabilities.clear()
+                    # Seed the next turn only with the most recent tail.  Keeping
+                    # the old pre-trigger ring here can duplicate the prior wake
+                    # word when two commands arrive close together.
+                    self._preroll.clear()
+                    self._preroll_ms = 0.0
+                    for captured_frame in capture_tail:
+                        self._push_preroll(captured_frame)
         if candidate_probability is not None and self._on_candidate is not None:
             self._on_candidate(candidate_probability)
         if completed is not None and evidence is not None:

@@ -10,7 +10,6 @@ import boto3
 import openai
 import whisper
 import pyaudio
-import queue
 import threading
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +21,7 @@ import speech_recognition as sr
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.telemetry import emit_pipeline_event
 from talos.text.service_client import send_interrupt, send_message, stream_message
+from talos.voice.asr_queue import AsrPriority, BoundedAsrQueue
 from talos.voice.benchmarking import VoiceBenchmarkSession
 from talos.voice.streaming import barge_in as barge_in_module
 from talos.voice.streaming.barge_in import BargeInConfig, BargeInDetector, SpeechSession
@@ -30,6 +30,7 @@ from talos.voice.streaming.barge_in_observability import (
     SynchronizedFixtureRecorder,
 )
 from talos.voice.streaming.speaker import StreamingSpeaker
+from talos.voice.streaming.vad import select_vad_lane
 
 
 load_environment()
@@ -106,47 +107,34 @@ _BARGE_IN_CONFIG = BargeInConfig(
 )
 _barge_in = BargeInDetector(_BARGE_IN_CONFIG)
 _duplex = None
-_vad_gate = None
+_barge_vad_gate = None
+_idle_vad_gate = None
+_barge_probability_vad = None
+_idle_probability_vad = None
+_vad_lane = None
 _barge_in_runtime_ready = False
-_barge_asr_queue: "queue.Queue[tuple[SpeechSession, bytes, dict[str, float]]]" = (
-    queue.Queue(maxsize=4)
-)
-_barge_asr_worker_started = False
-_barge_asr_worker_lock = threading.Lock()
+_asr_queue = BoundedAsrQueue(capacity=env_int("TALOS_ASR_QUEUE_CAPACITY", 8))
+_asr_worker_started = False
+_asr_worker_lock = threading.Lock()
+_stt_preload_started = False
+_stt_preload_lock = threading.Lock()
 
 # --------------------------------------------------------------------------- #
 # Endpointing
 # --------------------------------------------------------------------------- #
-# Historically two endpointers ran side by side: SpeechRecognition's fixed
-# energy threshold closed an idle turn after ``pause_threshold`` seconds of
-# quiet, while the Silero gate closed a barge-in burst after
-# ``end_silence_ms``. The gate was only fed while we were speaking, so an
-# ordinary turn paid SpeechRecognition's wall-clock wait -- longer than the
-# gate's, decided by raw RMS rather than a speech probability, and reported
-# short in ``recording_duration_ms`` because ``listen()`` trims the trailing
-# silence it waited out.
-#
-# The gate now runs on every clean frame and is the single endpointer for both
-# kinds of turn, so there is one implementation and one tunable. This requires
-# the AEC duplex, which is the only source of clean frames; when it is
-# unavailable we fall back to ``sr.Microphone`` and the old listener, since a
-# gate with nothing to observe would never close a turn at all.
-VAD_ENDPOINTING_ENABLED = env_bool("TALOS_VAD_ENDPOINTING", True)
-# The gate's own cap was sized for interruptions ("stop", "no, the other one"),
-# which are much shorter than a cold command. Endpointing a full turn needs a
-# ceiling that a genuine long request will not hit.
-VAD_MAX_UTTERANCE_MS = env_float("TALOS_VAD_MAX_UTTERANCE_MS", 15000.0)
-
-# Latched when the gate opens, not when it closes: whether an utterance is an
-# interruption is decided by what was happening when the user started talking.
-_vad_capture_is_barge_in = False
+# SpeechRecognition remains the production idle endpointer.  The independent
+# idle Silero lane can only replace it after both an operator request and an
+# explicit recorded-corpus acceptance acknowledgement.  The legacy setting is
+# retained as a request alias, but cannot bypass the acceptance gate.
+IDLE_VAD_ENDPOINTING_REQUESTED = env_bool(
+    "TALOS_IDLE_VAD_ENDPOINTING",
+    env_bool("TALOS_VAD_ENDPOINTING", False),
+)
+IDLE_VAD_CORPUS_ACCEPTED = env_bool("TALOS_IDLE_VAD_CORPUS_ACCEPTED", False)
+IDLE_VAD_ENDPOINTING_ENABLED = (
+    IDLE_VAD_ENDPOINTING_REQUESTED and IDLE_VAD_CORPUS_ACCEPTED
+)
 _vad_endpointing_active = False
-# Idle turns are handed to a worker thread. The gate's callback runs on the
-# duplex dispatch thread, and blocking that on an STT pass would stall capture
-# fan-out for every consumer.
-_idle_utterance_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=4)
-_idle_worker_started = False
-_idle_worker_lock = threading.Lock()
 
 _FIXTURE_RECORDING_ENABLED = env_bool(
     "TALOS_BARGE_IN_FIXTURE_RECORDING", False
@@ -287,8 +275,11 @@ def _disarm_playback(session: SpeechSession) -> None:
         _barge_in.disarm(session)
         if _duplex is not None:
             _duplex.finish_speaking()
-        if _vad_gate is not None:
-            _vad_gate.reset()
+        # Do not reset an utterance that began before playback ended.  The VAD
+        # lane keeps consuming it and routes it as an idle command if the reply
+        # finishes naturally before endpointing.
+        if _barge_vad_gate is not None and not _barge_vad_gate.has_pending_speech:
+            _barge_vad_gate.reset()
         _emit_barge_in_metrics(session)
 
 
@@ -711,6 +702,36 @@ def _get_stt_backend():
     return _stt_backend
 
 
+def _preload_stt_backend() -> None:
+    try:
+        backend = _get_stt_backend()
+        preload = getattr(backend, "preload", None)
+        if not callable(preload):
+            return
+        load_ms = preload()
+        print(f"Local STT model ready (startup preload={load_ms:.1f} ms).")
+    except Exception as exc:
+        # Do not permanently disable STT for a startup race (for example, a GPU
+        # service becoming ready slightly later).  The first utterance retries
+        # through the existing explicit failure/fallback policy.
+        print(f"Local STT startup preload failed; first utterance will retry: {exc}")
+
+
+def _ensure_stt_preload_worker() -> None:
+    global _stt_preload_started
+    if not LOCAL_STT_ENABLED:
+        return
+    with _stt_preload_lock:
+        if _stt_preload_started:
+            return
+        threading.Thread(
+            target=_preload_stt_backend,
+            name="talos-stt-preload",
+            daemon=True,
+        ).start()
+        _stt_preload_started = True
+
+
 def _transcribe_local(audio_data, benchmark):
     """Single local STT pass; the transcript serves both wake and command."""
     from talos.voice.backends.base import AudioChunk
@@ -809,6 +830,17 @@ def _acquire_transcript(audio_data, benchmark):
 
 
 def recognition_callback(recognizer, audio_data):
+    """Enqueue an idle command without blocking microphone consumption."""
+    queued = _asr_queue.put_nowait(
+        kind="idle",
+        payload=audio_data,
+        priority=AsrPriority.IDLE_COMMAND,
+    )
+    if not queued:
+        print("Dropping idle utterance: bounded ASR queue is full.")
+
+
+def _process_recognition_audio(audio_data):
     print("Recognition callback triggered.")
     benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
     try:
@@ -967,110 +999,124 @@ def run_speak_server(port: int | None = None):
     return server
 
 
-def _barge_asr_loop() -> None:
+def _asr_loop() -> None:
     while True:
-        session, pcm, evidence = _barge_asr_queue.get()
-        try:
-            _confirm_barge_in(pcm, session, evidence)
-        except Exception as exc:
-            print(f"Barge-in confirmation error: {exc}")
-            _barge_in.record_rejection("asr_error")
-            _barge_in.resume_after_rejection()
+        item = _asr_queue.get()
+        if item.kind == "idle":
+            try:
+                _process_recognition_audio(item.payload)
+            except Exception as exc:
+                print(f"Idle recognition worker error: {exc}")
+            continue
+
+        if item.kind == "barge_in":
+            session, pcm, evidence = item.payload
+            try:
+                _confirm_barge_in(pcm, session, evidence)
+            except Exception as exc:
+                print(f"Barge-in confirmation error: {exc}")
+                _barge_in.record_rejection("asr_error")
+                _barge_in.resume_after_rejection()
 
 
-def _ensure_barge_asr_worker() -> None:
-    global _barge_asr_worker_started
-    with _barge_asr_worker_lock:
-        if _barge_asr_worker_started:
+def _ensure_asr_worker() -> None:
+    global _asr_worker_started
+    with _asr_worker_lock:
+        if _asr_worker_started:
             return
         threading.Thread(
-            target=_barge_asr_loop,
-            name="talos-barge-in-asr",
+            target=_asr_loop,
+            name="talos-asr",
             daemon=True,
         ).start()
-        _barge_asr_worker_started = True
-
-
-def _idle_utterance_loop() -> None:
-    while True:
-        pcm = _idle_utterance_queue.get()
-        try:
-            # The gate emits 16 kHz mono 16-bit PCM, which is exactly what the
-            # recognizer callback already expects, so the whole downstream
-            # contract -- wake-word gate, benchmarking, local STT -- is reached
-            # unchanged and only the endpointer in front of it has moved.
-            recognition_callback(None, sr.AudioData(pcm, 16000, 2))
-        except Exception as exc:
-            print(f"VAD-endpointed turn failed: {exc}")
-
-
-def _ensure_idle_utterance_worker() -> None:
-    global _idle_worker_started
-    with _idle_worker_lock:
-        if _idle_worker_started:
-            return
-        threading.Thread(
-            target=_idle_utterance_loop,
-            name="talos-idle-utterance",
-            daemon=True,
-        ).start()
-        _idle_worker_started = True
+        _asr_worker_started = True
 
 
 def _dispatch_idle_utterance(pcm: bytes) -> None:
-    try:
-        _idle_utterance_queue.put_nowait(pcm)
-    except queue.Full:
-        # A turn is already being transcribed and another is queued behind it.
-        # Dropping the newest is the honest outcome; silently growing the queue
-        # would answer commands long after they stopped being current.
-        print("Dropping VAD-endpointed turn: transcription queue is full.")
+    recognition_callback(None, sr.AudioData(pcm, 16000, 2))
 
 
-def _on_vad_candidate(probability: float) -> None:
-    global _vad_capture_is_barge_in
+def _on_barge_vad_candidate(probability: float) -> None:
     session = _barge_in.session
-    _vad_capture_is_barge_in = session is not None and not session.is_cancelled
-    if not _vad_capture_is_barge_in:
-        # Nothing is playing, so there is no reply to duck and no interruption
-        # to measure. The gate is simply endpointing an ordinary turn.
+    if session is None or session.is_cancelled:
         return
     session.duck()
     _barge_in.record_vad_candidate(probability)
 
 
-def _on_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
-    if not _vad_capture_is_barge_in:
-        _dispatch_idle_utterance(pcm)
-        return
+def _on_idle_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
+    _dispatch_idle_utterance(pcm)
+
+
+def _on_barge_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
     session = _barge_in.session
     if session is None or session.is_cancelled:
-        _barge_in.record_rejection("stale_session")
+        # Playback may have ended naturally while the user was still speaking.
+        # The utterance is still a valid idle command and must not disappear at
+        # that boundary merely because there is no reply left to interrupt.
+        _dispatch_idle_utterance(pcm)
         return
     _barge_in.record_vad_capture(evidence)
-    try:
-        _barge_asr_queue.put_nowait((session, pcm, evidence))
-    except queue.Full:
+    queued = _asr_queue.put_nowait(
+        kind="barge_in",
+        payload=(session, pcm, evidence),
+        priority=AsrPriority.BARGE_IN_CONFIRMATION,
+    )
+    if not queued:
         _barge_in.record_rejection("asr_queue_overflow")
         session.unduck()
 
 
 def _on_clean_aec_frame(frame: bytes) -> None:
+    global _vad_lane
     _fixture_recorder.record_capture(frame)
     if not frame:
         return
     _barge_in.record_aec_residual(float(audioop.rms(frame, 2)))
-    if _vad_gate is None:
+    if _barge_vad_gate is None:
         return
-    # Observed continuously once the gate endpoints idle turns as well. While
-    # we are speaking this is the barge-in path exactly as before; the frames
-    # that used to be discarded are now the ordinary listening path.
-    if _vad_endpointing_active or (_duplex is not None and _duplex.speaking):
-        _vad_gate.observe(frame)
+
+    speaking = _duplex is not None and _duplex.speaking
+    desired_lane = select_vad_lane(
+        _vad_lane,
+        barge_pending=_barge_vad_gate.has_pending_speech,
+        idle_pending=(
+            _idle_vad_gate is not None and _idle_vad_gate.has_pending_speech
+        ),
+        speaking=speaking,
+        idle_enabled=_vad_endpointing_active,
+    )
+
+    if desired_lane != _vad_lane:
+        if desired_lane == "barge_in":
+            _barge_vad_gate.reset()
+            _barge_probability_vad.reset()
+        elif desired_lane == "idle":
+            if _idle_vad_gate is None or _idle_probability_vad is None:
+                return
+            _idle_vad_gate.reset()
+            _idle_probability_vad.reset()
+        else:
+            if _vad_lane == "barge_in":
+                _barge_vad_gate.reset()
+                _barge_probability_vad.reset()
+            elif _vad_lane == "idle":
+                if _idle_vad_gate is not None:
+                    _idle_vad_gate.reset()
+                if _idle_probability_vad is not None:
+                    _idle_probability_vad.reset()
+        _vad_lane = desired_lane
+
+    if _vad_lane == "barge_in":
+        _barge_vad_gate.observe(frame)
+    elif _vad_lane == "idle" and _idle_vad_gate is not None:
+        _idle_vad_gate.observe(frame)
 
 
 def _start_aec_duplex():
-    global _duplex, _vad_gate, _barge_in_runtime_ready, _vad_endpointing_active
+    global _duplex, _barge_vad_gate, _idle_vad_gate
+    global _barge_probability_vad, _idle_probability_vad
+    global _barge_in_runtime_ready, _vad_endpointing_active, _vad_lane
     from talos.voice.streaming.duplex import build_windows_duplex_pipeline
     from talos.voice.streaming.vad import (
         BargeInVadGate,
@@ -1096,48 +1142,76 @@ def _start_aec_duplex():
             "Pinned Windows audio endpoint identity does not match the current "
             "default capture/render pair."
         )
-    vad = SileroProbabilityVAD()
-    _vad_gate = BargeInVadGate(
-        vad.probability,
-        _on_vad_utterance,
-        on_candidate=_on_vad_candidate,
+    _barge_probability_vad = SileroProbabilityVAD()
+    _barge_vad_gate = BargeInVadGate(
+        _barge_probability_vad.probability,
+        _on_barge_vad_utterance,
+        on_candidate=_on_barge_vad_candidate,
         config=VadGateConfig(
             start_probability=env_float("TALOS_BARGE_IN_VAD_START", 0.65),
             end_probability=env_float("TALOS_BARGE_IN_VAD_END", 0.35),
             start_frames=env_int("TALOS_BARGE_IN_VAD_START_FRAMES", 3),
             end_silence_ms=env_float("TALOS_BARGE_IN_ENDPOINT_SILENCE_MS", 480.0),
             min_speech_ms=env_float("TALOS_BARGE_IN_MIN_SPEECH_MS", 160.0),
-            preroll_ms=env_float("TALOS_BARGE_IN_PREROLL_MS", 320.0),
-            max_utterance_ms=VAD_MAX_UTTERANCE_MS,
+            preroll_ms=env_float("TALOS_BARGE_IN_PREROLL_MS", 500.0),
+            max_utterance_ms=env_float(
+                "TALOS_BARGE_IN_MAX_UTTERANCE_MS", 9000.0
+            ),
         ),
     )
+    if IDLE_VAD_ENDPOINTING_ENABLED:
+        _idle_probability_vad = SileroProbabilityVAD()
+        _idle_vad_gate = BargeInVadGate(
+            _idle_probability_vad.probability,
+            _on_idle_vad_utterance,
+            config=VadGateConfig(
+                start_probability=env_float("TALOS_IDLE_VAD_START", 0.50),
+                end_probability=env_float("TALOS_IDLE_VAD_END", 0.35),
+                start_frames=env_int("TALOS_IDLE_VAD_START_FRAMES", 2),
+                end_silence_ms=env_float(
+                    "TALOS_IDLE_VAD_ENDPOINT_SILENCE_MS", 480.0
+                ),
+                min_speech_ms=env_float("TALOS_IDLE_VAD_MIN_SPEECH_MS", 160.0),
+                preroll_ms=env_float("TALOS_IDLE_VAD_PREROLL_MS", 640.0),
+                max_utterance_ms=env_float(
+                    "TALOS_IDLE_VAD_MAX_UTTERANCE_MS",
+                    env_float("TALOS_VAD_MAX_UTTERANCE_MS", 15000.0),
+                ),
+            ),
+        )
+    else:
+        _idle_probability_vad = None
+        _idle_vad_gate = None
     _duplex = build_windows_duplex_pipeline(
         endpoints,
         on_clean_frame=_on_clean_aec_frame,
     )
-    _ensure_barge_asr_worker()
-    if VAD_ENDPOINTING_ENABLED:
-        _ensure_idle_utterance_worker()
     _duplex.start()
     _barge_in_runtime_ready = True
-    _vad_endpointing_active = VAD_ENDPOINTING_ENABLED
+    _vad_lane = None
+    _vad_endpointing_active = IDLE_VAD_ENDPOINTING_ENABLED
     print("AEC duplex capture started on the pinned Windows endpoints.")
     return _duplex
 
 
 def run_voice_recognition():
     global _barge_in_runtime_ready, _vad_endpointing_active
+    _ensure_asr_worker()
+    _ensure_stt_preload_worker()
+    if IDLE_VAD_ENDPOINTING_REQUESTED and not IDLE_VAD_CORPUS_ACCEPTED:
+        print(
+            "Idle VAD endpointing was requested but remains disabled until "
+            "TALOS_IDLE_VAD_CORPUS_ACCEPTED=1. Using SpeechRecognition."
+        )
     if BARGE_IN_ENABLED and BARGE_IN_BACKEND == "aec":
         try:
             pipeline = _start_aec_duplex()
             if _vad_endpointing_active:
-                # The Silero gate is endpointing both kinds of turn, so the
-                # SpeechRecognition listener is not started at all: a second
-                # endpointer on the same audio would dispatch the same command
-                # twice. The pipeline's recognizer queue drops oldest, so
-                # leaving it undrained is bounded and safe.
+                # The independently configured idle Silero gate has passed its
+                # explicit corpus-acceptance gate, so a second endpointer would
+                # dispatch every command twice.
                 print(
-                    "VAD endpointing active; SpeechRecognition background "
+                    "Corpus-accepted idle VAD endpointing active; SpeechRecognition "
                     "listening is not used."
                 )
                 return _stop_vad_endpointing
@@ -1179,10 +1253,13 @@ def _stop_vad_endpointing(wait_for_stop: bool = True) -> None:
     Capture itself is owned by the duplex pipeline, so stopping the listener
     only means detaching the gate from it; ``shutdown`` tears the rest down.
     """
-    global _vad_endpointing_active
+    global _vad_endpointing_active, _vad_lane
     _vad_endpointing_active = False
-    if _vad_gate is not None:
-        _vad_gate.reset()
+    if _idle_vad_gate is not None:
+        _idle_vad_gate.reset()
+    if _idle_probability_vad is not None:
+        _idle_probability_vad.reset()
+    _vad_lane = None
 
 
 def handle_command(command, benchmark=None):

@@ -244,6 +244,42 @@ The launcher can also be invoked directly with any project interpreter:
 .venv-main/Scripts/python.exe -m talos.launcher --no-gui   # headless
 ```
 
+### Local Debug Dashboard
+
+TALOS includes a separate, read-only web debug console for interaction I/O,
+pipeline timings, component/host health, CPU/GPU usage, and available audio
+metrics. It reads the existing conversation database, voice benchmark CSVs, and
+privacy-safe pipeline telemetry without joining the agent or audio hot paths.
+
+Start it with the main Python environment:
+
+```powershell
+.venv-main\Scripts\python.exe -m talos.debug_dashboard
+```
+
+Then open `http://127.0.0.1:8787`. The page polls once per second by default,
+can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
+GPU, memory, disk, RMS, and audio-measurement graphs in the browser. Expanded
+JSON/detail rows remain open while polling. New dashboard topics can be added
+through the versioned snapshot's `extensions` list without changing the
+existing tabs.
+
+The console host is not assumed to be the TALOS system host, so it never reports
+its own CPU, GPU, memory, or disk as TALOS metrics. Set
+`TALOS_DEBUG_SYSTEM_METRICS_URL` to a JSON metrics or compatible debug-snapshot
+endpoint on the TALOS host; until then, the hardware cards truthfully show
+`NOT_CONFIGURED`. If that endpoint requires a bearer token, set
+`TALOS_DEBUG_SYSTEM_METRICS_TOKEN`. Selecting and deploying the system-host
+metrics exporter remains a separate task.
+
+The dashboard defaults to loopback because it displays private transcripts and
+has no authentication. A non-loopback `--host` is refused unless the operator
+also passes `--allow-remote`; use that only on a trusted network. Exact prompt
+text, tool names/arguments, raw PCM, and continuously sampled idle-room RMS are
+not currently persisted by the runtime, so the page labels those feeds as
+unavailable instead of inventing data. Adding them requires a separate,
+explicitly bounded and privacy-reviewed runtime instrumentation task.
+
 #### Note: `TALOS_TEXT_AGENT_URL` and local voice
 
 The voice worker reaches the main agent over `TALOS_TEXT_AGENT_URL`. A real
@@ -525,6 +561,16 @@ asked it to stop — sends the utterance as the next command.
 is available only as the explicit `heuristic_diagnostic` backend and is never a
 silent fallback. If AEC, endpoint identity, or the VAD stack fails, barge-in is
 disabled while ordinary wake-word capture stays available.
+
+Ordinary wake commands use SpeechRecognition only for energy-based utterance
+segmentation; the resulting clip is still transcribed once by local
+faster-whisper. Experimental idle Silero endpointing has independent thresholds
+and a 640 ms pre-roll, and cannot activate unless both
+`TALOS_IDLE_VAD_ENDPOINTING=1` and `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`. The second
+flag is an operator acknowledgement that the owner-visible wake/pause/noise
+corpus passed; it must not be set merely to reduce latency. Local STT weights are
+preloaded asynchronously at voice-worker startup, and a bounded priority queue
+places fresh idle commands ahead of queued barge-in confirmation work.
 
 Telemetry includes privacy-safe aggregate counters for candidates started, rejected,
 and accepted; bounded numeric summaries for mixed-capture/render RMS, capture and
