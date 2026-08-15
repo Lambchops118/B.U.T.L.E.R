@@ -63,7 +63,7 @@ REMOTE_LLM_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_LLM_FALLBACK", False)
 # enters the conversation history real turns are built from.
 BOOT_PHRASE_ENABLED = env_bool("TALOS_BOOT_PHRASE", True)
 BOOT_PHRASE = os.getenv("TALOS_BOOT_PHRASE_TEXT", "").strip() or (
-    'This is the initial boot phrase. Simply say: "Monkey Butler Powering On"'
+    'This is the initial boot phrase. Simply say: "Booting complete. Good Day Sir"'
 )
 BOOT_PHRASE_SESSION_ID = os.getenv("TALOS_BOOT_PHRASE_SESSION", "voice-boot-warmup")
 
@@ -73,11 +73,15 @@ aws_secret_key = os.getenv("AWS_SECRET_KEY")
 VOICE_AUDIO_OUTPUT_DEVICE_INDEX = os.getenv("TALOS_AUDIO_OUTPUT_DEVICE_INDEX")
 
 _remote_stt_client = None
+# Region is latency, not preference: every synthesis pays the round trip. Measured
+# TLS connect from this box -- us-east-1 50 ms, us-east-2 88 ms, us-west-2 239 ms.
+# Override if the box moves.
+POLLY_REGION = os.getenv("TALOS_POLLY_REGION", "").strip() or "us-east-1"
 polly_client = boto3.client(
     "polly",
     aws_access_key_id=aws_access_key,
     aws_secret_access_key=aws_secret_key,
-    region_name="us-west-2",
+    region_name=POLLY_REGION,
 )
 
 _wake_model = None
@@ -1294,7 +1298,7 @@ def run_voice_recognition():
         r.dynamic_energy_threshold = False
         r.energy_threshold = 500
         r.pause_threshold = 0.6
-        r.non_speaking_duration = 0.4
+        r.non_speaking_duration = 0.3
         print("Adjusted for ambient noise.")
 
     stop_listening = r.listen_in_background(mic, recognition_callback)
