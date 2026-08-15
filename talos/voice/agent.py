@@ -275,10 +275,7 @@ def _disarm_playback(session: SpeechSession) -> None:
         _barge_in.disarm(session)
         if _duplex is not None:
             _duplex.finish_speaking()
-        # Do not reset an utterance that began before playback ended.  The VAD
-        # lane keeps consuming it and routes it as an idle command if the reply
-        # finishes naturally before endpointing.
-        if _barge_vad_gate is not None and not _barge_vad_gate.has_pending_speech:
+        if _barge_vad_gate is not None:
             _barge_vad_gate.reset()
         _emit_barge_in_metrics(session)
 
@@ -561,6 +558,7 @@ def _report_then_redispatch(
     if not command:
         return
     benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
+    benchmark.mark_wake_word_detected()
     benchmark.set_transcript(transcript.lower())
     benchmark.set_command(command)
     benchmark.set_dimension("barge_in", True)
@@ -876,6 +874,9 @@ def _process_recognition_audio(audio_data):
         print(f"User said: {text_spoken}")
 
         if text_spoken.startswith(WAKE_WORD):
+            # Intentional, wake-word-directed interaction: this is the only path
+            # (besides barge-in) that should ever be benchmarked/logged.
+            benchmark.mark_wake_word_detected()
             command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
             print(f"Command received: {command}")
             if command:
@@ -883,6 +884,12 @@ def _process_recognition_audio(audio_data):
                 _command_executor.submit(handle_command, command, benchmark)
                 return
 
+            benchmark.add_note("Wake word detected but no command followed it.")
+            benchmark.emit_summary_once("wake_word_without_command")
+            return
+
+        # Speech the system overheard but that was never directed at it. Not an
+        # interaction -- deliberately not logged (filtered by _is_meaningful).
         benchmark.add_note("Transcript did not begin with the configured wake word.")
         benchmark.emit_summary_once("wake_word_missing_in_transcript")
     except sr.UnknownValueError:
@@ -1053,10 +1060,12 @@ def _on_idle_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
 def _on_barge_vad_utterance(pcm: bytes, evidence: dict[str, float]) -> None:
     session = _barge_in.session
     if session is None or session.is_cancelled:
-        # Playback may have ended naturally while the user was still speaking.
-        # The utterance is still a valid idle command and must not disappear at
-        # that boundary merely because there is no reply left to interrupt.
-        _dispatch_idle_utterance(pcm)
+        # Drop it. This gate's audio only carries ``preroll_ms`` of lead-in, the
+        # tail of which is already inside the first word, so transcribing it as
+        # an ordinary command clips the wake word ("butler" -> "but there").
+        # Idle turns belong to SpeechRecognition, which keeps its own lead-in;
+        # it is listening on the same source and will capture the utterance.
+        _barge_in.record_rejection("stale_session")
         return
     _barge_in.record_vad_capture(evidence)
     queued = _asr_queue.put_nowait(
