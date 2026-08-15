@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 
-from talos.config import env_float, env_int, load_environment
+from talos.config import env_bool, env_float, env_int, load_environment
 from talos.voice.backends.base import LLMBackend, STTBackend
 from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
 
@@ -57,6 +57,7 @@ def get_llm_backend() -> LLMBackend:
             ),
             max_tokens_param=max_tokens_param,
             backend_name=backend,
+            stream_usage=env_bool("TALOS_LLM_STREAM_USAGE", True),
         )
 
     raise RuntimeError(

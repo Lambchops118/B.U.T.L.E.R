@@ -7,6 +7,7 @@ import wave
 import audioop
 import tempfile
 import boto3
+from botocore.config import Config as BotocoreConfig
 import openai
 import whisper
 import pyaudio
@@ -77,12 +78,40 @@ _remote_stt_client = None
 # TLS connect from this box -- us-east-1 50 ms, us-east-2 88 ms, us-west-2 239 ms.
 # Override if the box moves.
 POLLY_REGION = os.getenv("TALOS_POLLY_REGION", "").strip() or "us-east-1"
+# Timeouts are a stale-socket backstop, not a latency knob. An idle-dropped
+# connection still looks established, so the write succeeds and we block on the
+# read -- read_timeout is what unsticks it. Keep it well above real synthesis
+# time (warm calls are 72-140 ms; long text is several hundred): botocore treats
+# a read timeout as retryable, so a tight value aborts legitimate requests and
+# pays a reconnect to retry them.
 polly_client = boto3.client(
     "polly",
     aws_access_key_id=aws_access_key,
     aws_secret_access_key=aws_secret_key,
     region_name=POLLY_REGION,
+    config=BotocoreConfig(
+        tcp_keepalive=True,
+        connect_timeout=2,
+        read_timeout=3,
+        retries={"max_attempts": 2, "mode": "standard"},
+        max_pool_connections=4,
+    ),
 )
+
+# Polly's pooled TLS connection dies after a couple of minutes idle -- most
+# likely the local NAT mapping expiring rather than anything AWS does -- and the
+# next real synthesis pays DNS + TCP + TLS again. Measured against
+# logs/voice_benchmarks.csv: calls following >300 s idle averaged 718 ms versus
+# 236 ms otherwise, and every one of the ten slowest calls in the corpus follows
+# an idle gap of 167 s or more. tcp_keepalive above is not enough on its own,
+# because Windows waits 2 h before the first probe. Real traffic on a short
+# interval is what actually holds the mapping open.
+#
+# describe_voices, not synthesize_speech: it rides the same pooled connection to
+# the same endpoint but is a metadata call, so the ping bills no characters.
+POLLY_KEEPALIVE_SECONDS = float(os.getenv("TALOS_POLLY_KEEPALIVE_SECONDS", "60"))
+_polly_keepalive_started = False
+_polly_keepalive_lock = threading.Lock()
 
 _wake_model = None
 _wake_model_lock = threading.Lock()
@@ -779,6 +808,35 @@ def _ensure_boot_phrase_worker() -> None:
         _boot_phrase_started = True
 
 
+def _run_polly_keepalive() -> None:
+    """Hold the pooled Polly connection open so no real turn pays a reconnect."""
+    while True:
+        time.sleep(POLLY_KEEPALIVE_SECONDS)
+        try:
+            # LanguageCode only to keep the response small; the reply is discarded.
+            polly_client.describe_voices(LanguageCode="en-GB")
+        except Exception:
+            # Never let a ping failure kill the thread or surface to the user. A
+            # dropped ping just means the next one reconnects; worst case a real
+            # synthesis pays the same cold path it paid before this existed.
+            pass
+
+
+def _ensure_polly_keepalive_worker() -> None:
+    global _polly_keepalive_started
+    if POLLY_KEEPALIVE_SECONDS <= 0:
+        return
+    with _polly_keepalive_lock:
+        if _polly_keepalive_started:
+            return
+        threading.Thread(
+            target=_run_polly_keepalive,
+            name="talos-polly-keepalive",
+            daemon=True,
+        ).start()
+        _polly_keepalive_started = True
+
+
 def _transcribe_local(audio_data, benchmark):
     """Single local STT pass; the transcript serves both wake and command."""
     from talos.voice.backends.base import AudioChunk
@@ -1272,6 +1330,7 @@ def run_voice_recognition():
                     "Corpus-accepted idle VAD endpointing active; SpeechRecognition "
                     "listening is not used."
                 )
+                _ensure_polly_keepalive_worker()
                 _ensure_boot_phrase_worker()
                 return _stop_vad_endpointing
 
@@ -1306,6 +1365,7 @@ def run_voice_recognition():
     # Deliberately after adjust_for_ambient_noise: boot audio playing during that
     # calibration window would be measured as room noise and raise the energy
     # threshold for the whole run.
+    _ensure_polly_keepalive_worker()
     _ensure_boot_phrase_worker()
     return stop_listening
 

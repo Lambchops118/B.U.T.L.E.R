@@ -715,6 +715,37 @@ def _emit_runtime_telemetry(
         return
 
 
+def _emit_tool_call_telemetry(
+    callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    request_id: str,
+    name: str,
+    round_number: int,
+    tool_ms: float,
+    raw_result: str,
+    shaped_output: str,
+) -> None:
+    """Record one tool invocation: which tool, how long, how much it returned.
+
+    The aggregate ``tools_completed`` event cannot say which tool was slow or
+    which one flooded the next round's prompt. Sizes are recorded before and
+    after :func:`_shape_tool_output` so truncation/summarisation savings are
+    visible, and result *text* is never emitted -- only its length.
+    """
+    _emit_runtime_telemetry(
+        callback,
+        request_id=request_id,
+        event="tool_call_completed",
+        tool_name=name,
+        transport="host" if name in HOST_TOOL_NAMES else "mcp",
+        round=round_number,
+        tool_ms=tool_ms,
+        raw_result_bytes=len(raw_result.encode("utf-8", "replace")),
+        shaped_output_bytes=len(shaped_output.encode("utf-8", "replace")),
+        failed=_tool_result_indicates_failure(raw_result),
+    )
+
+
 def _normalize_interaction_mode(mode: str | None) -> str:
     normalized = str(mode or "").strip().lower()
     if normalized.startswith("voice"):
@@ -1824,6 +1855,9 @@ def _collect_tool_outputs(
     *,
     session_id: str = "default",
     runtime_lane: str = "foreground",
+    request_id: str | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+    round_number: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     tool_outputs = []
     tool_events: list[dict[str, Any]] = []
@@ -1832,6 +1866,7 @@ def _collect_tool_outputs(
             continue
 
         print(f"FUNCTION CALL DETECTED: {item.name} with args {item.arguments}")
+        started = time.perf_counter()
         try:
             if item.name in HOST_TOOL_NAMES:
                 result = _invoke_host_tool(
@@ -1847,6 +1882,7 @@ def _collect_tool_outputs(
             result = f"Unknown function: {item.name}"
         except Exception as exc:
             result = f"Error calling {item.name}: {exc}"
+        tool_ms = round((time.perf_counter() - started) * 1000.0, 1)
 
         shaped_output = _shape_tool_output(item.name, result)
         raw_result = str(result)
@@ -1863,7 +1899,17 @@ def _collect_tool_outputs(
                 "raw_result": raw_result,
                 "output": shaped_output,
                 "failed": _tool_result_indicates_failure(raw_result),
+                "tool_ms": tool_ms,
             }
+        )
+        _emit_tool_call_telemetry(
+            telemetry_callback,
+            request_id=request_id or session_id,
+            name=item.name,
+            round_number=round_number,
+            tool_ms=tool_ms,
+            raw_result=raw_result,
+            shaped_output=shaped_output,
         )
         print(f"Function '{item.name}' executed with result: {_truncate_text(raw_result, 600)}")
     return tool_outputs, tool_events
@@ -1944,6 +1990,7 @@ def run_command(
                     mcp_client,
                     session_id=session_id,
                     runtime_lane=runtime_lane,
+                    round_number=rounds,
                 )
                 if recent_events:
                     tool_events.extend(recent_events)
@@ -2202,6 +2249,9 @@ def _execute_chat_tool_calls(
     *,
     session_id: str,
     runtime_lane: str,
+    request_id: str | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+    round_number: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Execute streamed tool calls and return (tool result messages, events).
 
@@ -2212,6 +2262,7 @@ def _execute_chat_tool_calls(
     events: list[dict[str, Any]] = []
     for call in tool_calls:
         print(f"FUNCTION CALL DETECTED (stream): {call.name} with args {call.arguments}")
+        started = time.perf_counter()
         try:
             if call.name in HOST_TOOL_NAMES:
                 result = _invoke_host_tool(
@@ -2227,6 +2278,7 @@ def _execute_chat_tool_calls(
             result = f"Unknown function: {call.name}"
         except Exception as exc:  # noqa: BLE001 - surfaced back to the model
             result = f"Error calling {call.name}: {exc}"
+        tool_ms = round((time.perf_counter() - started) * 1000.0, 1)
 
         shaped_output = _shape_tool_output(call.name, result)
         messages.append(chat_messages_to_tool_result(call, shaped_output))
@@ -2236,7 +2288,17 @@ def _execute_chat_tool_calls(
                 "raw_result": str(result),
                 "output": shaped_output,
                 "failed": _tool_result_indicates_failure(str(result)),
+                "tool_ms": tool_ms,
             }
+        )
+        _emit_tool_call_telemetry(
+            telemetry_callback,
+            request_id=request_id or session_id,
+            name=call.name,
+            round_number=round_number,
+            tool_ms=tool_ms,
+            raw_result=str(result),
+            shaped_output=shaped_output,
         )
     return messages, events
 
@@ -2381,6 +2443,9 @@ def run_command_stream(
                 mcp_client,
                 session_id=session_id,
                 runtime_lane=runtime_lane,
+                request_id=telemetry_id,
+                telemetry_callback=telemetry_callback,
+                round_number=0,
             )
             tool_execution_ms = round(
                 (time.perf_counter() - tool_execution_started) * 1000.0, 1
@@ -2591,6 +2656,9 @@ def run_command_stream(
                 mcp_client,
                 session_id=session_id,
                 runtime_lane=runtime_lane,
+                request_id=telemetry_id,
+                telemetry_callback=telemetry_callback,
+                round_number=round_number,
             )
             action_results = [
                 event

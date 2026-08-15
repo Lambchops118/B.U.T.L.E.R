@@ -42,6 +42,7 @@ class OpenAICompatibleChatBackend(LLMBackend):
         client: Any | None = None,
         extra_body: dict[str, Any] | None = None,
         backend_name: str = "openai_compatible",
+        stream_usage: bool = True,
     ) -> None:
         if not model:
             raise ValueError("OpenAICompatibleChatBackend requires a model name.")
@@ -52,6 +53,12 @@ class OpenAICompatibleChatBackend(LLMBackend):
         # Completions; local servers (Ollama/vLLM) use the classic ``max_tokens``.
         self.max_tokens_param = max_tokens_param or "max_tokens"
         self._extra_body = dict(extra_body or {})
+        # Streamed responses carry no usage block unless it is requested. Ollama,
+        # vLLM, and OpenAI all honour ``stream_options``; the flag exists so a
+        # provider that rejects the unknown field can switch it off rather than
+        # failing every turn. Without it ``provider_prompt_tokens`` is always
+        # null and prompt size can only be estimated.
+        self._stream_usage = bool(stream_usage)
         self.backend_name = (backend_name or "openai_compatible").strip().lower()
         self.base_url = base_url
         self.is_local = self.backend_name in {"ollama", "vllm"} or _is_loopback_url(
@@ -121,6 +128,10 @@ class OpenAICompatibleChatBackend(LLMBackend):
             "temperature": self.temperature if temperature is None else temperature,
         }
         request[self.max_tokens_param] = self.max_tokens if max_tokens is None else max_tokens
+        if self._stream_usage:
+            # Arrives as a final chunk with an empty ``choices`` list, which the
+            # delta loop below already skips.
+            request["stream_options"] = {"include_usage": True}
         chat_tools = responses_tools_to_chat_tools(tools)
         if chat_tools:
             request["tools"] = chat_tools

@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-15T15:53:35.052+00:00","request_id":"req-test","component":"agent_runtime","event":"tool_call_completed","tool_name":"get_current_weather","transport":"mcp","round":2,"tool_ms":0.0,"raw_result_bytes":5000,"shaped_output_bytes":4000,"failed":false}
+{"timestamp":"2026-08-15T15:53:35.052+00:00","request_id":"s","component":"agent_runtime","event":"tool_call_completed","tool_name":"list_mcp_tools","transport":"host","round":1,"tool_ms":0.0,"raw_result_bytes":84,"shaped_output_bytes":84,"failed":true}
