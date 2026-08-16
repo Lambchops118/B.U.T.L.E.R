@@ -170,6 +170,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/interrupt":
             self._handle_interrupt()
             return
+        if self.path == "/prewarm":
+            self._handle_prewarm()
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def _handle_notify(self) -> None:
@@ -283,6 +286,22 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {"ok": True, "cancelled": cancelled, "recorded": recorded},
         )
+
+    def _handle_prewarm(self) -> None:
+        """A turn is about to arrive; get the GPU off its idle clocks now.
+
+        The voice worker calls this the moment it has speech worth transcribing,
+        so the model server's clock ramp overlaps STT instead of landing on the
+        turn. It answers immediately and does the work on a background thread:
+        the caller is on the audio path and must never wait on this, and the
+        result only ever affects latency, never correctness.
+        """
+        threading.Thread(
+            target=agent_runtime.prewarm_llm,
+            name="talos-llm-preramp",
+            daemon=True,
+        ).start()
+        self._write_json(HTTPStatus.ACCEPTED, {"ok": True, "started": True})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         path = urlparse(self.path).path

@@ -66,6 +66,39 @@ class RunCommandStreamTests(unittest.TestCase):
             for p in patches:
                 p.stop()
 
+    def test_records_the_sent_prompt_for_a_later_pre_ramp(self):
+        """A pre-ramp may only replay what the model server actually cached."""
+        backend = _FakeBackend(
+            [[LLMTextDelta("On."), LLMCompletion(text="On.")]]
+        )
+        agent_runtime._last_prompt = None
+        self.addCleanup(setattr, agent_runtime, "_last_prompt", None)
+
+        self._run(backend, _FakeMCP())
+
+        self.assertIsNotNone(agent_runtime._last_prompt)
+        recorded_messages, _tools = agent_runtime._last_prompt
+        self.assertEqual(recorded_messages, backend.stream_calls[0])
+
+    def test_marks_the_turn_in_flight_while_streaming(self):
+        """A pre-ramp must not land on the model server mid-turn."""
+        seen: list[int] = []
+
+        class _ProbingBackend(_FakeBackend):
+            def stream(self, messages, *, tools=None, temperature=None, max_tokens=None):
+                seen.append(agent_runtime._active_turns)
+                yield from super().stream(
+                    messages, tools=tools, temperature=temperature, max_tokens=max_tokens
+                )
+
+        probing = _ProbingBackend(
+            [[LLMTextDelta("On."), LLMCompletion(text="On.")]]
+        )
+        self._run(probing, _FakeMCP())
+
+        self.assertEqual(seen, [1])
+        self.assertEqual(agent_runtime._active_turns, 0)
+
     def test_plain_answer_streams_deltas(self):
         backend = _FakeBackend(
             [

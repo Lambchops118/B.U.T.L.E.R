@@ -7,11 +7,17 @@ import random
 import re
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
 import openai
 
-from talos.agent.prompting import DEFAULT_DOMAIN_OVERLAYS, PromptContext, build_instructions
+from talos.agent.prompting import (
+    DEFAULT_DOMAIN_OVERLAYS,
+    PromptContext,
+    PromptSections,
+    build_prompt_sections,
+)
 from talos.agent.thinking import thinking_suffix
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.memory import MemoryStore, get_default_memory_store
@@ -47,6 +53,18 @@ STARTUP_WARMUP_ENABLED = env_bool("TALOS_AGENT_STARTUP_WARMUP", True)
 STARTUP_WARMUP_COMMAND = (
     os.getenv("TALOS_AGENT_STARTUP_WARMUP_COMMAND", "").strip()
     or "print a bootup sequence"
+)
+# Startup warmup only covers the first turn. Both GPUs fall to their idle power
+# state within ~10 s of no work, and the clock ramp back is then paid inline by
+# whatever turn comes next: the *same* fully cached prompt measured 17 ms warm
+# and 263 ms after idle on mb-core-v1. Replaying the last prompt while the user
+# is still being transcribed moves that ramp off the turn. See
+# :func:`prewarm_llm`.
+PRERAMP_ENABLED = env_bool("TALOS_AGENT_PRERAMP", True)
+# Below this, a burst of speech would fire redundant pre-ramps; the GPU only
+# needs one to leave its idle state.
+PRERAMP_MIN_INTERVAL_SECONDS = max(
+    0.0, env_float("TALOS_AGENT_PRERAMP_MIN_INTERVAL", 5.0)
 )
 PROMPT_MEMORY_CHAR_LIMIT = max(0, env_int("TALOS_PROMPT_MEMORY_CHAR_LIMIT", 1600))
 CONVERSATION_HISTORY_MESSAGE_LIMIT = max(
@@ -335,6 +353,19 @@ KITCHEN_HINT_PHRASES = (
     "to the list",
 )
 
+# Tool groups whose presence varies between turns: kitchen is scoped by intent,
+# KiCad appears only once its provider is ready, Minecraft only when a server
+# directory is configured, and phone is a gating candidate. They are published
+# after every always-on tool so their coming and going costs the model server
+# only the tail of its cached prefix. See :func:`_order_tools_by_volatility`.
+_VOLATILE_TOOL_PREFIXES = (
+    KITCHEN_TOOL_PREFIX,
+    KICAD_TOOL_PREFIX,
+    MINECRAFT_TOOL_PREFIX,
+    MINECRAFT_FILESYSTEM_TOOL_PREFIX,
+)
+_VOLATILE_TOOL_NAMES = {"phone"}
+
 
 def _resource_tool_definitions() -> list[dict[str, Any]]:
     """Host-side tools published to the model.
@@ -562,6 +593,38 @@ def _reduce_tool_surface(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]
     return reduced
 
 
+def _tool_volatility_rank(name: str) -> int:
+    """0 for a tool that is always published, 1 for one that comes and goes."""
+    if name in _VOLATILE_TOOL_NAMES:
+        return 1
+    return 1 if name.startswith(_VOLATILE_TOOL_PREFIXES) else 0
+
+
+def _order_tools_by_volatility(
+    tool_defs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Sort the tool surface so unstable tools sit at the end of the array.
+
+    The chat template serializes tools in array order, and the model server
+    reuses its evaluated prefix only up to the first token that differs from
+    the cached prompt. A tool that appears or disappears between turns
+    therefore invalidates every tool listed after it: dropping one from the
+    middle of this surface measured ~470 ms of re-evaluation against
+    mb-core-v1, versus ~49 ms for the same tool moved to the end.
+
+    Sorting by name within each rank keeps the order independent of MCP server
+    enumeration order, so a provider restart does not reshuffle the surface and
+    cost a full prefill.
+    """
+    return sorted(
+        tool_defs,
+        key=lambda tool: (
+            _tool_volatility_rank(str(tool.get("name") or "")),
+            str(tool.get("name") or ""),
+        ),
+    )
+
+
 def _build_tool_definitions(
     mcp_client: Any, command: str | None = None
 ) -> list[dict[str, Any]]:
@@ -580,6 +643,8 @@ def _build_tool_definitions(
     scope_tools = os.getenv("TALOS_SCOPE_TOOL_SURFACE", "1").strip().lower()
     if command is not None and scope_tools not in {"0", "false", "no", "off"}:
         tool_defs = _scope_specialized_tools(tool_defs, command)
+
+    tool_defs = _order_tools_by_volatility(tool_defs)
 
     try:
         tool_bytes = len(json.dumps(tool_defs).encode("utf-8"))
@@ -822,7 +887,7 @@ def _domain_overlays_for_command(command: str, tool_defs: list[dict[str, Any]]) 
     return tuple(overlays)
 
 
-def _build_prompt_instructions(
+def _build_prompt_sections(
     command: str,
     session_id: str,
     tool_defs: list[dict[str, Any]],
@@ -830,7 +895,15 @@ def _build_prompt_instructions(
     memory_block: str | None = None,
     interaction_mode: str | None = None,
     extra_context: str | None = None,
-) -> str:
+) -> PromptSections:
+    """Build the system prompt split into its stable and per-request halves.
+
+    Callers send ``stable`` as the first system message and ``volatile`` as a
+    later one. The local chat template renders the first system message ahead of
+    the tool schemas, so keeping request-specific text out of it is what lets the
+    model server reuse its evaluated prefix across turns instead of re-reading
+    the whole tool surface every time.
+    """
     mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
     context = PromptContext(
         interaction_mode=mode,
@@ -838,7 +911,7 @@ def _build_prompt_instructions(
         memory_block=memory_block,
         extra_context=extra_context,
     )
-    return build_instructions(context)
+    return build_prompt_sections(context)
 
 
 def _get_memory_store() -> MemoryStore | None:
@@ -1896,7 +1969,7 @@ def run_command(
             print(f"TALOS memory session write failed: {_truncate_text(str(exc), 300)}")
             memory_store = None
     memory_block = _get_prompt_memory(memory_store, session_id, command)
-    instructions = _build_prompt_instructions(
+    prompt_sections = _build_prompt_sections(
         command,
         session_id,
         tool_defs,
@@ -1904,8 +1977,11 @@ def run_command(
         interaction_mode=mode,
         extra_context=extra_context,
     )
+    instructions = prompt_sections.stable
 
     input_items: list[dict[str, Any]] = []
+    if prompt_sections.volatile:
+        input_items.append({"role": "system", "content": prompt_sections.volatile})
     context_message = _format_context(state_snapshot)
     if context_message:
         input_items.append({"role": "system", "content": context_message})
@@ -2027,16 +2103,135 @@ def run_command(
     return response_text
 
 
+_stream_backend: Any = None
+_stream_backend_lock = threading.Lock()
+
+
 def _get_stream_backend():
-    """Build the configured streaming backend through the shared factory.
+    """Return the configured streaming backend, building it once per process.
 
     The factory owns provider selection and local endpoint defaults. In the
     Ollama profile this never reads ``OPENAI_API_KEY`` or falls back to a hosted
     model when local configuration is incomplete.
-    """
-    from talos.voice.backends.factory import get_llm_backend
 
-    return get_llm_backend()
+    The result is cached because building it is not cheap: constructing the
+    OpenAI SDK client -- which is how this talks to the *local* Ollama endpoint,
+    not a hosted API -- measured ~145 ms, and re-reading the environment another
+    ~7 ms. That was paid on every turn, inside the window reported as
+    ``prompt_assembly_ms``, and it is pure overhead: the backend is immutable and
+    the launcher fixes the environment before the process starts. Caching also
+    lets the client keep its connection pool, so turns stop reopening a socket to
+    Ollama.
+    """
+    global _stream_backend
+
+    if _stream_backend is not None:
+        return _stream_backend
+    with _stream_backend_lock:
+        if _stream_backend is None:
+            from talos.voice.backends.factory import get_llm_backend
+
+            _stream_backend = get_llm_backend()
+    return _stream_backend
+
+
+# The exact (messages, tools) pair of the most recent request, which is also what
+# the model server currently holds in its cached prefix. Replaying *this* is what
+# makes a pre-ramp free; see :func:`prewarm_llm`.
+_preramp_state_lock = threading.Lock()
+_preramp_request_lock = threading.Lock()
+_last_prompt: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None
+_last_preramp_monotonic: float = 0.0
+_active_turns: int = 0
+
+
+def _record_preramp_prompt(
+    messages: list[dict[str, Any]], tool_defs: list[dict[str, Any]]
+) -> None:
+    """Remember what was just sent, so a pre-ramp can replay it byte for byte."""
+    global _last_prompt
+    if not PRERAMP_ENABLED:
+        return
+    # Shallow copies: the caller keeps appending to both lists during the tool
+    # loop, but never mutates the message dicts already in them.
+    with _preramp_state_lock:
+        _last_prompt = (list(messages), list(tool_defs))
+
+
+@contextmanager
+def _turn_in_flight():
+    """Mark a real turn as running so a pre-ramp stands aside."""
+    global _active_turns
+    with _preramp_state_lock:
+        _active_turns += 1
+    try:
+        yield
+    finally:
+        with _preramp_state_lock:
+            _active_turns -= 1
+
+
+def prewarm_llm() -> dict[str, Any]:
+    """Ramp the model server's GPU back up before a turn that is about to arrive.
+
+    The GPU drops to its idle power state within ~10 s of no work, and the ramp
+    back is otherwise paid inline by the next turn. Issuing one throwaway
+    single-token request while the user's speech is still being transcribed
+    overlaps that ramp with work the pipeline was doing anyway.
+
+    Replaying the *exact* last prompt is what makes this cheap rather than
+    counterproductive. A local server keeps one cached sequence per slot, so any
+    other prompt -- including a shorter prefix of this one -- truncates the cache
+    at the first differing token and hands the next real turn a re-evaluation
+    bill larger than the ramp this avoids.
+
+    Best effort throughout: it is skipped rather than queued when a turn is
+    already running, and every failure is swallowed. Returns a small result dict
+    for the caller's telemetry.
+    """
+    global _last_preramp_monotonic
+
+    if not PRERAMP_ENABLED:
+        return {"ok": False, "reason": "disabled"}
+
+    with _preramp_state_lock:
+        if _active_turns > 0:
+            # A real turn already has the model busy and owns the cache.
+            return {"ok": False, "reason": "turn_in_flight"}
+        if _last_prompt is None:
+            return {"ok": False, "reason": "no_prompt"}
+        if (
+            time.monotonic() - _last_preramp_monotonic
+        ) < PRERAMP_MIN_INTERVAL_SECONDS:
+            return {"ok": False, "reason": "debounced"}
+        messages, tool_defs = _last_prompt
+
+    if not _preramp_request_lock.acquire(blocking=False):
+        return {"ok": False, "reason": "already_running"}
+    try:
+        backend = _get_stream_backend()
+        warmup = getattr(backend, "warmup", None)
+        if not callable(warmup):
+            return {"ok": False, "reason": "unsupported_backend"}
+        preramp_ms = warmup(messages, tools=tool_defs)
+        with _preramp_state_lock:
+            _last_preramp_monotonic = time.monotonic()
+        emit_pipeline_event(
+            request_id="llm-preramp",
+            component="agent_runtime",
+            event="llm_preramp",
+            preramp_ms=preramp_ms,
+            message_count=len(messages),
+            tool_count=len(tool_defs),
+        )
+        return {"ok": True, "preramp_ms": preramp_ms}
+    except Exception as exc:
+        # A pre-ramp is pure optimization; a failed one must never surface to the
+        # user or block the turn that follows it.
+        print(f"LLM pre-ramp skipped: {_truncate_text(str(exc), 200)}")
+        return {"ok": False, "reason": "error"}
+    finally:
+        _preramp_request_lock.release()
 
 
 def warm_agent_runtime() -> None:
@@ -2061,7 +2256,7 @@ def warm_agent_runtime() -> None:
         tool_defs = _build_tool_definitions(mcp_client, command)
         tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
 
-        instructions = _build_prompt_instructions(
+        prompt_sections = _build_prompt_sections(
             command,
             # A synthetic session id keeps the warmup out of any real session's
             # stored history.
@@ -2069,8 +2264,12 @@ def warm_agent_runtime() -> None:
             tool_defs,
             interaction_mode="voice",
         )
+        # Warm exactly the prefix a real turn sends: the stable system message
+        # first, then the tools. The volatile half is deliberately left off --
+        # it differs on every turn anyway, and including it here would only warm
+        # a prefix nothing else reuses.
         messages = [
-            {"role": "system", "content": instructions},
+            {"role": "system", "content": prompt_sections.stable},
             {"role": "user", "content": command},
         ]
 
@@ -2079,6 +2278,9 @@ def warm_agent_runtime() -> None:
         if not callable(warmup):
             return
         prefill_ms = warmup(messages, tools=tool_defs)
+        # This prompt is now the model server's cached prefix, so it is also the
+        # right thing for a pre-ramp to replay until the first real turn lands.
+        _record_preramp_prompt(messages, tool_defs)
         total_ms = round((time.perf_counter() - started) * 1000.0, 1)
         print(
             f"Agent runtime warm: {len(tool_defs)} tools in {tool_build_ms:.1f} ms, "
@@ -2296,7 +2498,7 @@ def run_command_stream(
     pipeline_started = time.perf_counter()
     thread_key = _response_thread_key(session_id, runtime_lane)
 
-    with _get_conversation_lock(thread_key):
+    with _get_conversation_lock(thread_key), _turn_in_flight():
         tool_build_started = time.perf_counter()
         mcp_client = get_local_mcp_client()
         tool_defs = _build_tool_definitions(mcp_client, command)
@@ -2324,7 +2526,7 @@ def run_command_stream(
         conversation_history = _get_conversation_history(memory_store, session_id)
         memory_context_ms = round((time.perf_counter() - memory_started) * 1000.0, 1)
         prompt_assembly_started = time.perf_counter()
-        instructions = _build_prompt_instructions(
+        prompt_sections = _build_prompt_sections(
             command,
             session_id,
             tool_defs,
@@ -2333,7 +2535,14 @@ def run_command_stream(
             extra_context=extra_context,
         )
 
-        messages: list[dict[str, Any]] = [{"role": "system", "content": instructions}]
+        # Only the stable half goes first: the chat template folds message 0 in
+        # ahead of the tool schemas, so anything request-specific placed here
+        # would invalidate the model server's cached prefix for every tool.
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": prompt_sections.stable}
+        ]
+        if prompt_sections.volatile:
+            messages.append({"role": "system", "content": prompt_sections.volatile})
         context_message = _format_context(state_snapshot)
         if context_message:
             messages.append({"role": "system", "content": context_message})
@@ -2481,6 +2690,7 @@ def run_command_stream(
                 prompt_tokens_estimated=round_prompt_tokens,
                 prompt_bytes=round_prompt_bytes,
             )
+            _record_preramp_prompt(messages, tool_defs)
             stream_iter = backend.stream(messages, tools=tool_defs)
             try:
                 for event in stream_iter:

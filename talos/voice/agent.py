@@ -21,7 +21,12 @@ import speech_recognition as sr
 
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.telemetry import emit_pipeline_event
-from talos.text.service_client import send_interrupt, send_message, stream_message
+from talos.text.service_client import (
+    send_interrupt,
+    send_message,
+    send_prewarm,
+    stream_message,
+)
 from talos.voice.asr_queue import AsrPriority, BoundedAsrQueue
 from talos.voice.benchmarking import VoiceBenchmarkSession
 from talos.voice.streaming import barge_in as barge_in_module
@@ -56,6 +61,11 @@ REMOTE_STT_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_STT_FALLBACK", False)
 # Keep that failover opt-in so an Ollama outage cannot silently move inference
 # off the machine.
 REMOTE_LLM_FALLBACK_ENABLED = env_bool("TALOS_REMOTE_LLM_FALLBACK", False)
+# The LLM's GPU idles down within ~10 s, and the clock ramp is otherwise paid by
+# the next turn. Transcription gives us a few hundred milliseconds of cover to
+# absorb it, so the agent is nudged awake as soon as there is speech worth
+# transcribing. Shares its flag with the agent-side implementation.
+PRERAMP_ENABLED = env_bool("TALOS_AGENT_PRERAMP", True)
 # Boot phrase: one synthetic command driven through the whole voice pipeline once
 # listening is live, so the first real utterance does not pay the MCP tool build,
 # cold prompt evaluation, and the first Polly connection all at once. It is a
@@ -908,6 +918,28 @@ def _transcribe_remote_with_wake_gate(audio_data, benchmark):
     return text
 
 
+def _request_llm_preramp() -> None:
+    """Nudge the agent's GPU awake while this clip is still being transcribed.
+
+    Fired before STT rather than after the wake word is confirmed, because by the
+    time the transcript exists the window this is trying to use has already
+    passed. That means it also fires for speech that turns out not to be
+    addressed to us; the request is a single token against an already-cached
+    prompt, and the agent debounces repeats, so the cost of guessing wrong is far
+    below the latency it removes when the guess is right.
+
+    Always off the caller's thread: this runs on the audio path.
+    """
+    if not PRERAMP_ENABLED:
+        return
+    threading.Thread(
+        target=send_prewarm,
+        kwargs={"base_url": VOICE_AGENT_URL, "token": VOICE_AGENT_TOKEN},
+        name="talos-voice-preramp",
+        daemon=True,
+    ).start()
+
+
 def _acquire_transcript(audio_data, benchmark):
     """Return the transcript text (or ``None`` if the clip was already handled).
 
@@ -963,6 +995,10 @@ def _process_recognition_audio(audio_data):
             benchmark.add_note("Skipped low-energy or too-short audio clip.")
             benchmark.emit_summary_once("discarded_audio")
             return
+
+        # Past the energy gate this is real speech, so a turn is plausibly a few
+        # hundred milliseconds away. Start the GPU ramp under STT.
+        _request_llm_preramp()
 
         transcript = _acquire_transcript(audio_data, benchmark)
         if transcript is None:

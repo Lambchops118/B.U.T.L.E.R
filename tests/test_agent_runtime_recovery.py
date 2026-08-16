@@ -185,7 +185,25 @@ class AgentRuntimeRecoveryTests(unittest.TestCase):
         self.assertIn("[session:text-session] tone: Keep replies compact.", memory)
 
     def test_runtime_prompt_instructions_include_mode_domain_and_memory(self) -> None:
-        instructions = agent_runtime._build_prompt_instructions(
+        sections = agent_runtime._build_prompt_sections(
+            "Place the KiCad LED on the board.",
+            "voice",
+            [{"name": "kicad_get_backend_state"}],
+            memory_block="User prefers concise KiCad updates.",
+            interaction_mode="voice",
+        )
+        combined = sections.combined()
+
+        self.assertIn("Base Soul Document", combined)
+        self.assertIn("Voice Mode Overlay", combined)
+        self.assertIn("KiCad Domain Overlay", combined)
+        self.assertIn("Memory Context (Runtime Injected)", combined)
+        self.assertIn("concise KiCad updates", combined)
+
+    def test_runtime_prompt_stable_half_excludes_per_request_content(self) -> None:
+        """The stable half is what precedes the tool block, so it must not carry
+        anything that changes turn to turn."""
+        sections = agent_runtime._build_prompt_sections(
             "Place the KiCad LED on the board.",
             "voice",
             [{"name": "kicad_get_backend_state"}],
@@ -193,14 +211,35 @@ class AgentRuntimeRecoveryTests(unittest.TestCase):
             interaction_mode="voice",
         )
 
-        self.assertIn("Base Soul Document", instructions)
-        self.assertIn("Voice Mode Overlay", instructions)
-        self.assertIn("KiCad Domain Overlay", instructions)
-        self.assertIn("Memory Context (Runtime Injected)", instructions)
-        self.assertIn("concise KiCad updates", instructions)
+        self.assertIn("Base Soul Document", sections.stable)
+        self.assertIn("Voice Mode Overlay", sections.stable)
+        self.assertNotIn("KiCad Domain Overlay", sections.stable)
+        self.assertNotIn("concise KiCad updates", sections.stable)
+        self.assertIsNotNone(sections.volatile)
+        self.assertIn("KiCad Domain Overlay", sections.volatile or "")
+        self.assertIn("concise KiCad updates", sections.volatile or "")
+
+    def test_runtime_prompt_stable_half_is_identical_across_requests(self) -> None:
+        first = agent_runtime._build_prompt_sections(
+            "Place the KiCad LED on the board.",
+            "voice",
+            [{"name": "kicad_get_backend_state"}],
+            memory_block="User prefers concise KiCad updates.",
+            interaction_mode="voice",
+        )
+        second = agent_runtime._build_prompt_sections(
+            "Turn on the living room lights.",
+            "voice",
+            [{"name": "turn_on_lights"}],
+            memory_block="Unrelated remembered fact.",
+            interaction_mode="voice",
+        )
+
+        self.assertEqual(first.stable, second.stable)
+        self.assertNotEqual(first.volatile, second.volatile)
 
     def test_runtime_prompt_instructions_include_extra_context(self) -> None:
-        instructions = agent_runtime._build_prompt_instructions(
+        sections = agent_runtime._build_prompt_sections(
             "What is the status?",
             "main-pc",
             [],
@@ -208,8 +247,8 @@ class AgentRuntimeRecoveryTests(unittest.TestCase):
             interaction_mode="text",
         )
 
-        self.assertIn("Additional Runtime Context", instructions)
-        self.assertIn("Latest job: job_123 succeeded.", instructions)
+        self.assertIn("Additional Runtime Context", sections.volatile or "")
+        self.assertIn("Latest job: job_123 succeeded.", sections.volatile or "")
 
 
 if __name__ == "__main__":

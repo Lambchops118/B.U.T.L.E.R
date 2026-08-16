@@ -77,5 +77,53 @@ class ScopeSpecializedToolsTests(unittest.TestCase):
         self.assertEqual(scoped, surface)
 
 
+class ToolOrderingTests(unittest.TestCase):
+    """Ordering keeps the model server's cached prompt prefix intact: a tool
+    that comes and goes must not sit ahead of one that is always published."""
+
+    def test_volatile_groups_are_ordered_last(self):
+        ordered = runtime._order_tools_by_volatility(SURFACE)
+        names = [t["name"] for t in ordered]
+        first_kitchen = min(names.index(n) for n in KITCHEN_NAMES)
+        stable_names = [n for n in names if n not in KITCHEN_NAMES]
+        self.assertTrue(
+            all(names.index(n) < first_kitchen for n in stable_names),
+            f"kitchen tools should trail every stable tool: {names}",
+        )
+
+    def test_phone_and_provider_gated_tools_are_volatile(self):
+        surface = _tools(
+            "phone",
+            "kicad_get_backend_state",
+            "minecraft_search_logs",
+            "mcp_admin",
+            "turn_on_lights",
+        )
+        names = [t["name"] for t in runtime._order_tools_by_volatility(surface)]
+        self.assertEqual(names[:2], ["mcp_admin", "turn_on_lights"])
+        self.assertEqual(
+            set(names[2:]), {"phone", "kicad_get_backend_state", "minecraft_search_logs"}
+        )
+
+    def test_ordering_is_independent_of_input_order(self):
+        forward = runtime._order_tools_by_volatility(SURFACE)
+        reversed_input = runtime._order_tools_by_volatility(list(reversed(SURFACE)))
+        self.assertEqual(
+            [t["name"] for t in forward], [t["name"] for t in reversed_input]
+        )
+
+    def test_ordering_preserves_the_tool_set(self):
+        ordered = runtime._order_tools_by_volatility(SURFACE)
+        self.assertEqual(
+            sorted(t["name"] for t in ordered), sorted(t["name"] for t in SURFACE)
+        )
+
+    def test_dropping_a_scoped_group_leaves_the_stable_prefix_untouched(self):
+        full = [t["name"] for t in runtime._order_tools_by_volatility(SURFACE)]
+        scoped = runtime._scope_specialized_tools(SURFACE, "turn off the lights")
+        without = [t["name"] for t in runtime._order_tools_by_volatility(scoped)]
+        self.assertEqual(full[: len(without)], without)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -244,6 +244,26 @@ def send_interrupt(
     return body
 
 
+def send_prewarm(
+    *,
+    base_url: str = DEFAULT_URL,
+    token: str = DEFAULT_TOKEN,
+    timeout: float | None = 2.0,
+) -> bool:
+    """Ask the agent to ramp the model server's GPU for an imminent turn.
+
+    Purely an optimization, so unlike the other helpers here this one reports
+    failure by returning ``False`` rather than raising: callers fire it from the
+    speech path, where a warmup that did not happen must never disturb the turn
+    that follows. The server answers before doing the work.
+    """
+    try:
+        body = request_json(base_url, "/prewarm", {}, token=token, timeout=timeout)
+    except Exception:
+        return False
+    return bool(body.get("ok"))
+
+
 def get_job(
     job_id: str,
     *,
