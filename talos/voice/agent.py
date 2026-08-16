@@ -4,6 +4,7 @@ import io
 import os
 import time
 import wave
+import random
 import audioop
 import tempfile
 import boto3
@@ -149,6 +150,15 @@ PROACTIVE_SESSION_ID = os.getenv("TALOS_VOICE_PROACTIVE_SESSION", "voice")
 VOICE_INTERRUPT_TIMEOUT = env_float("TALOS_VOICE_INTERRUPT_TIMEOUT", 15.0)
 # 20 ms of 16 kHz mono 16-bit PCM.
 PLAYBACK_SLICE_BYTES = 640
+# Audible acknowledgement that the wake word landed, played the moment the
+# transcript is confirmed to address us. It exists to distinguish "did not hear
+# you" from "still working", which is otherwise indistinguishable silence until
+# the reply speaks.
+WAKE_CUE_ENABLED = env_bool("TALOS_WAKE_CUE", True)
+WAKE_CUE_DIR = Path(
+    os.getenv("TALOS_WAKE_CUE_DIR")
+    or (Path(__file__).resolve().parent / "assets")
+)
 
 _BARGE_IN_CONFIG = BargeInConfig(
     floor_rms=env_int("TALOS_BARGE_IN_FLOOR_RMS", 550),
@@ -381,6 +391,174 @@ def _write_pcm(stream, session: SpeechSession, pcm: bytes) -> bool:
         elif BARGE_IN_BACKEND == "heuristic_diagnostic":
             _barge_in.observe_output(chunk)
     return not session.is_cancelled
+
+
+_wake_cue_pcms: list[bytes] = []
+_wake_cue_stream = None
+_wake_cue_event = threading.Event()
+_wake_cue_started = False
+_wake_cue_lock = threading.Lock()
+
+
+def _read_wake_cue(path: Path) -> tuple[tuple[int, int, int], bytes] | None:
+    """Return ``((channels, width, rate), pcm)`` for one cue, or None if unusable."""
+    try:
+        with wave.open(str(path), "rb") as cue:
+            spec = (cue.getnchannels(), cue.getsampwidth(), cue.getframerate())
+            pcm = cue.readframes(cue.getnframes())
+    except Exception as exc:
+        print(f"Skipping unreadable wake cue '{path.name}': {exc}")
+        return None
+    if not pcm:
+        print(f"Skipping empty wake cue '{path.name}'.")
+        return None
+    return spec, pcm
+
+
+def _load_wake_cue() -> bool:
+    """Decode every cue in the directory and open one shared output stream.
+
+    Everything expensive happens here so the trigger path is a bare
+    ``Event.set()``. The stream is deliberately separate from the reply's:
+    ``_playback_lock`` is held for a whole reply, so a cue sharing it would
+    either block the reply behind itself or, worse, queue behind a reply that is
+    still unwinding and sound after the answer it was meant to precede.
+
+    One stream serves every cue, so they must agree on format. The first file in
+    sorted order sets it and any file that disagrees is skipped rather than
+    played at the wrong rate, which would be audible garbage rather than a
+    missing sound. Re-recording the whole set at a different rate or channel
+    count still needs no code change.
+    """
+    global _wake_cue_pcms, _wake_cue_stream
+    paths = sorted(WAKE_CUE_DIR.glob("*.wav"))
+    if not paths:
+        print(f"No wake cues found in '{WAKE_CUE_DIR}'; continuing without them.")
+        return False
+
+    spec: tuple[int, int, int] | None = None
+    pcms: list[bytes] = []
+    names: list[str] = []
+    for path in paths:
+        loaded = _read_wake_cue(path)
+        if loaded is None:
+            continue
+        cue_spec, pcm = loaded
+        if spec is None:
+            spec = cue_spec
+        elif cue_spec != spec:
+            print(
+                f"Skipping wake cue '{path.name}': {cue_spec[0]}ch/"
+                f"{cue_spec[1] * 8}bit/{cue_spec[2]}Hz does not match the "
+                f"{spec[0]}ch/{spec[1] * 8}bit/{spec[2]}Hz stream."
+            )
+            continue
+        pcms.append(pcm)
+        names.append(path.name)
+
+    if spec is None or not pcms:
+        print("No usable wake cues; continuing without them.")
+        return False
+
+    channels, sample_width, frame_rate = spec
+    try:
+        stream = audio_interface.open(
+            format=audio_interface.get_format_from_width(sample_width),
+            channels=channels,
+            rate=frame_rate,
+            output=True,
+            output_device_index=_resolve_output_device_index(),
+        )
+    except Exception as exc:
+        # A cue that will not play must never cost a turn; the pipeline is fully
+        # functional without it.
+        print(f"Wake cue output unavailable, continuing without it: {exc}")
+        return False
+
+    _wake_cue_pcms = pcms
+    _wake_cue_stream = stream
+    bytes_per_ms = frame_rate * channels * sample_width / 1000.0
+    spread = "/".join(f"{len(pcm) / bytes_per_ms:.0f}" for pcm in pcms)
+    print(
+        f"Wake cues ready: {len(pcms)} of {len(paths)} "
+        f"({', '.join(names)}) -- {spread} ms, "
+        f"{channels}ch, {frame_rate} Hz"
+    )
+    return True
+
+
+def _play_wake_cue() -> None:
+    """Write the cue in slices, declaring it as render output while it plays.
+
+    The declaration matters more than it looks. Idle capture is live the whole
+    time this is playing, so without telling the duplex pipeline we are emitting
+    audio, ``select_vad_lane`` keeps the idle Silero gate armed and any echo the
+    system AEC fails to cancel can be captured as a fresh utterance. Marking it
+    as render moves the lane to barge-in, which is where the echo-rejection
+    machinery lives.
+    """
+    pcms = _wake_cue_pcms
+    stream = _wake_cue_stream
+    if not pcms or stream is None:
+        return
+    # Chosen here rather than in the trigger so the caller -- the serialized ASR
+    # worker -- does no work at all beyond setting the event.
+    pcm = random.choice(pcms)
+    declared = _duplex is not None and _barge_in_available() and BARGE_IN_BACKEND == "aec"
+    try:
+        for start in range(0, len(pcm), PLAYBACK_SLICE_BYTES):
+            chunk = pcm[start : start + PLAYBACK_SLICE_BYTES]
+            stream.write(chunk)
+            if declared:
+                _duplex.note_render_submitted(chunk)
+    except Exception as exc:
+        print(f"Wake cue playback error: {exc}")
+    finally:
+        # Only hand back the speaking flag if the reply has not already claimed
+        # it. Clearing it underneath a reply in progress would drop the lane back
+        # to idle mid-utterance and arm the idle gate against our own voice.
+        if declared and _barge_in.session is None:
+            _duplex.finish_speaking()
+
+
+def _wake_cue_loop() -> None:
+    while True:
+        _wake_cue_event.wait()
+        _wake_cue_event.clear()
+        _play_wake_cue()
+
+
+def _ensure_wake_cue_worker() -> None:
+    global _wake_cue_started
+    if not WAKE_CUE_ENABLED:
+        return
+    with _wake_cue_lock:
+        if _wake_cue_started:
+            return
+        if not _load_wake_cue():
+            # Mark started anyway: a cue that failed to load will not load on the
+            # next utterance either, and retrying per turn would put file I/O on
+            # the latency path.
+            _wake_cue_started = True
+            return
+        threading.Thread(
+            target=_wake_cue_loop,
+            name="talos-wake-cue",
+            daemon=True,
+        ).start()
+        _wake_cue_started = True
+
+
+def _signal_wake_cue() -> None:
+    """Fire the cue without blocking the caller.
+
+    Called from the single serialized ASR worker, where the command dispatch
+    that follows is directly on the latency path and anything queued behind this
+    turn -- including barge-in confirmations -- waits on it. So this must never
+    touch the audio device itself: it sets an event and returns.
+    """
+    if _wake_cue_stream is not None:
+        _wake_cue_event.set()
 
 
 def _silence_like(frame: bytes) -> bytes:
@@ -1017,6 +1195,9 @@ def _process_recognition_audio(audio_data):
         if text_spoken.startswith(WAKE_WORD):
             # Intentional, wake-word-directed interaction: this is the only path
             # (besides barge-in) that should ever be benchmarked/logged.
+            # Acknowledge audibly before anything else on this branch, so the
+            # cue is not queued behind the dispatch it is meant to announce.
+            _signal_wake_cue()
             benchmark.mark_wake_word_detected()
             command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
             print(f"Command received: {command}")
@@ -1246,7 +1427,12 @@ def _on_clean_aec_frame(frame: bytes) -> None:
         elif desired_lane == "idle":
             if _idle_vad_gate is None or _idle_probability_vad is None:
                 return
-            _idle_vad_gate.reset()
+            # Keep the lead-in this gate buffered while barge-in owned
+            # detection. A follow-up command spoken shortly after a reply ends
+            # arrives right at this switch, and against an emptied ring its
+            # capture would start at the trigger frame -- mid-wake-word, which
+            # fails the startswith(WAKE_WORD) check and silently drops the turn.
+            _idle_vad_gate.reset(preserve_preroll=True)
             _idle_probability_vad.reset()
         else:
             if _vad_lane == "barge_in":
@@ -1261,6 +1447,10 @@ def _on_clean_aec_frame(frame: bytes) -> None:
 
     if _vad_lane == "barge_in":
         _barge_vad_gate.observe(frame)
+        if _idle_vad_gate is not None:
+            # Buffering costs no inference, so the idle ring stays warm through
+            # the whole reply and is full the moment the lane switches back.
+            _idle_vad_gate.buffer_only(frame)
     elif _vad_lane == "idle" and _idle_vad_gate is not None:
         _idle_vad_gate.observe(frame)
 
@@ -1350,6 +1540,11 @@ def run_voice_recognition():
     global _barge_in_runtime_ready, _vad_endpointing_active
     _ensure_asr_worker()
     _ensure_stt_preload_worker()
+    # Ahead of both return paths below, and before any listening starts: the
+    # decode and the device open are the whole cost of the cue, and neither
+    # belongs on the first utterance. Opening the stream emits no audio, so it
+    # cannot colour the ambient-noise calibration further down.
+    _ensure_wake_cue_worker()
     if IDLE_VAD_ENDPOINTING_REQUESTED and not IDLE_VAD_CORPUS_ACCEPTED:
         print(
             "Idle VAD endpointing was requested but remains disabled until "

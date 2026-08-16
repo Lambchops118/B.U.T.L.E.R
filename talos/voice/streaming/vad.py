@@ -104,11 +104,24 @@ class BargeInVadGate:
         self._total_ms = 0.0
         self._probabilities: list[float] = []
 
-    def reset(self) -> None:
+    def reset(self, *, preserve_preroll: bool = False) -> None:
+        """Clear detection state, optionally keeping the buffered lead-in.
+
+        ``preserve_preroll`` retains the raw-audio buffers -- the pre-roll ring
+        and any partial quantum -- so a gate entering a lane starts with the
+        lead-in :meth:`buffer_only` accumulated while another lane owned
+        detection. Without it, a gate always enters a lane deaf to everything
+        before its first trigger frame, which costs the wake word on any
+        utterance that begins near the switch.
+
+        Detection state is cleared either way: probabilities and partial
+        captures from a previous lane must never carry into a new utterance.
+        """
         with self._lock:
-            self._bytes.clear()
-            self._preroll.clear()
-            self._preroll_ms = 0.0
+            if not preserve_preroll:
+                self._bytes.clear()
+                self._preroll.clear()
+                self._preroll_ms = 0.0
             self._active = False
             self._capture.clear()
             self._hot.clear()
@@ -126,6 +139,27 @@ class BargeInVadGate:
             vad_frame = bytes(self._bytes[:quantum])
             del self._bytes[:quantum]
             self._observe_vad_frame(vad_frame)
+
+    def buffer_only(self, frame: bytes) -> None:
+        """Accumulate lead-in without running detection.
+
+        The pre-roll ring holds raw audio and is never fed through the
+        probability function -- :meth:`_observe_vad_frame` only ever copies it
+        into a capture. A gate can therefore keep its ring warm while another
+        lane owns detection at no inference cost, and the retained audio is
+        identical to what it would hold had it been active the whole time.
+
+        Only meaningful while inactive; ignored once the gate is capturing.
+        """
+        if self.active:
+            return
+        quantum = int(round(self.config.sample_rate * 2 * self._frame_ms / 1000.0))
+        self._bytes.extend(frame)
+        while len(self._bytes) >= quantum:
+            vad_frame = bytes(self._bytes[:quantum])
+            del self._bytes[:quantum]
+            with self._lock:
+                self._push_preroll(vad_frame)
 
     @property
     def active(self) -> bool:
