@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import inspect
 import json
 import os
 import re
@@ -1242,8 +1243,10 @@ class LocalMcpClient:
     def _decorate_openai_tool_schema(
         cls, name: str, description: str, parameters: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
-        description_text = str(description or "").strip()
-        schema = json.loads(json.dumps(parameters or {"type": "object", "properties": {}}))
+        description_text = _clean_tool_description(description)
+        schema = _strip_schema_annotations(
+            json.loads(json.dumps(parameters or {"type": "object", "properties": {}}))
+        )
 
         if not name.startswith("kicad_"):
             return description_text, schema
@@ -1435,6 +1438,59 @@ def _default_local_server_config() -> McpServerConfig:
         command=sys.executable,
         args=["-m", "talos.mcp_server"],
     )
+
+
+def _clean_tool_description(description: str) -> str:
+    """Normalise a tool description for the prompt.
+
+    FastMCP takes descriptions straight from Python docstrings, so every
+    continuation line arrives carrying the source file's indentation. That
+    whitespace is re-sent with every tool on every round and means nothing to
+    the model. ``cleandoc`` removes the common leading indent while preserving
+    paragraph breaks.
+    """
+    return inspect.cleandoc(str(description or "")).strip()
+
+
+# JSON Schema keys whose values are themselves schemas (recurse into them), and
+# keys whose values are *maps of name -> schema* (recurse into the values only,
+# never treating the map's own keys as schema keywords).
+_SCHEMA_VALUE_KEYS = ("items", "additionalProperties", "not")
+_SCHEMA_LIST_KEYS = ("anyOf", "oneOf", "allOf", "prefixItems")
+_SCHEMA_MAP_KEYS = ("properties", "$defs", "definitions", "patternProperties")
+
+
+def _strip_schema_annotations(node: Any) -> Any:
+    """Drop generator-added ``title`` annotations from a parameter schema.
+
+    FastMCP derives each schema from the Python signature and adds a title for
+    the synthetic argument model (``get_current_weatherArguments``) plus one per
+    field. They are pure JSON Schema annotations -- nothing validates or routes
+    on them -- but they are re-sent with every tool on every round.
+
+    The walk is schema-aware on purpose: a tool may legitimately declare a
+    parameter *named* ``title`` (``kitchen_screen_set_recipe_header`` does), and
+    a blind key-delete would silently remove that parameter from the surface.
+    """
+    if isinstance(node, list):
+        return [_strip_schema_annotations(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    cleaned: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "title":
+            continue
+        if key in _SCHEMA_MAP_KEYS and isinstance(value, dict):
+            cleaned[key] = {
+                sub_key: _strip_schema_annotations(sub_value)
+                for sub_key, sub_value in value.items()
+            }
+        elif key in _SCHEMA_VALUE_KEYS or key in _SCHEMA_LIST_KEYS:
+            cleaned[key] = _strip_schema_annotations(value)
+        else:
+            cleaned[key] = value
+    return cleaned
 
 
 def _apply_disabled_providers(configs: list[McpServerConfig]) -> None:

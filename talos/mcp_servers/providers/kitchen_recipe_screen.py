@@ -1,175 +1,131 @@
+"""Kitchen recipe screen tools, published as one action-keyed dispatcher.
+
+The screen exposes 28 distinct operations. Registered individually they cost
+~9.6 KB of JSON schema, which is re-sent with every tool on every round for a
+capability that only matters while the user is actually cooking. They are
+collapsed into a single ``kitchen_screen_control`` tool whose ``action`` selects
+the operation; the underlying service calls are unchanged.
+
+The ``kitchen_screen_`` prefix is deliberate: the agent runtime scopes this
+group out of the tool surface unless a request shows cooking intent, and that
+check matches on the prefix.
+"""
+
 from __future__ import annotations
+
+import json
+from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 
 from talos.services import kitchen_recipe_screen as screen
 
 
+# action -> service callable. Every callable takes keyword arguments only, so
+# the JSON ``arguments`` object maps straight through.
+_ACTIONS: dict[str, Callable[..., str]] = {
+    # status
+    "health": lambda: screen.get_screen_health(),
+    "get_state": lambda: screen.get_screen_state(),
+    # header / servings / link
+    "set_recipe_header": lambda title="", subtitle="": screen.set_recipe_header(
+        title=title, subtitle=subtitle
+    ),
+    "clear_recipe_header": lambda: screen.clear_recipe_header(),
+    "set_servings": lambda servings: screen.set_servings(servings),
+    "reset_servings": lambda: screen.reset_servings(),
+    "set_link_status": lambda link_status: screen.set_link_status(link_status),
+    "read_link_status": lambda: screen.read_link_status(),
+    # whole recipe
+    "replace_recipe_content": lambda title="", subtitle="", servings="", ingredients=None, steps=None, notes=None: screen.replace_recipe_content(
+        title=title,
+        subtitle=subtitle,
+        servings=servings,
+        ingredients=ingredients,
+        steps=steps,
+        notes=notes,
+    ),
+    "clear_recipe_screen": lambda: screen.clear_recipe_screen(),
+    # ingredients
+    "read_ingredients": lambda: screen.read_ingredients(),
+    "replace_ingredients": lambda ingredients: screen.replace_ingredients(ingredients),
+    "remove_ingredients": lambda indices=None, matching_texts=None, clear_all=False: screen.remove_ingredients(
+        indices=indices, matching_texts=matching_texts, clear_all=clear_all
+    ),
+    "clear_ingredients": lambda: screen.clear_ingredients(),
+    # steps
+    "read_steps": lambda: screen.read_steps(),
+    "replace_steps": lambda steps: screen.replace_steps(steps),
+    "remove_steps": lambda indices=None, matching_texts=None, clear_all=False: screen.remove_steps(
+        indices=indices, matching_texts=matching_texts, clear_all=clear_all
+    ),
+    "clear_steps": lambda: screen.clear_steps(),
+    # notes
+    "read_notes": lambda: screen.read_notes(),
+    "add_notes": lambda notes: screen.add_notes(notes),
+    "replace_notes": lambda notes: screen.replace_notes(notes),
+    "remove_notes": lambda indices=None, matching_texts=None, clear_all=False: screen.remove_notes(
+        indices=indices, matching_texts=matching_texts, clear_all=clear_all
+    ),
+    "clear_notes": lambda: screen.clear_notes(),
+    # timer
+    "set_timer": lambda duration_seconds, label="Recipe timer", auto_start=False: screen.set_timer(
+        duration_seconds=duration_seconds, label=label, auto_start=auto_start
+    ),
+    "read_timer": lambda: screen.read_timer(),
+    "start_timer": lambda: screen.start_timer(),
+    "stop_timer": lambda: screen.stop_timer(),
+    "reset_timer": lambda: screen.reset_timer(),
+}
+
+
+def _error(message: str) -> str:
+    return json.dumps({"success": False, "message": message}, ensure_ascii=False)
+
+
 def register(server: FastMCP) -> None:
-    """Register kitchen recipe screen tools on a FastMCP server."""
+    """Register the kitchen recipe screen dispatcher on a FastMCP server."""
 
     @server.tool()
-    def kitchen_screen_health() -> str:
-        """Check whether the kitchen recipe screen HTTP app is reachable and healthy."""
-        return screen.get_screen_health()
+    def kitchen_screen_control(action: str, arguments: str = "{}") -> str:
+        """Control the kitchen recipe screen. `arguments` is a JSON object string
+        holding that action's parameters, e.g. '{"steps": ["Preheat oven"]}'.
 
-    @server.tool()
-    def kitchen_screen_get_state() -> str:
-        """Read the full current kitchen recipe screen state as JSON."""
-        return screen.get_screen_state()
+        Read: health, get_state, read_ingredients, read_steps, read_notes,
+        read_timer, read_link_status.
 
-    @server.tool()
-    def kitchen_screen_set_recipe_header(title: str = "", subtitle: str = "") -> str:
-        """Set the visible recipe title and subtitle shown on the kitchen recipe screen."""
-        return screen.set_recipe_header(title=title, subtitle=subtitle)
+        Recipe: replace_recipe_content (title, subtitle, servings, ingredients,
+        steps, notes - sets a whole recipe in one call), set_recipe_header
+        (title, subtitle), clear_recipe_header, clear_recipe_screen.
 
-    @server.tool()
-    def kitchen_screen_clear_recipe_header() -> str:
-        """Clear the visible recipe title and subtitle on the kitchen recipe screen."""
-        return screen.clear_recipe_header()
+        Lists: replace_ingredients (ingredients), replace_steps (steps),
+        add_notes (notes), replace_notes (notes), and remove_ingredients /
+        remove_steps / remove_notes (indices as 1-based ints, matching_texts, or
+        clear_all), plus clear_ingredients / clear_steps / clear_notes.
 
-    @server.tool()
-    def kitchen_screen_replace_recipe_content(
-        title: str = "",
-        subtitle: str = "",
-        servings: str = "",
-        ingredients: list[str] | None = None,
-        steps: list[str] | None = None,
-        notes: list[str] | None = None,
-    ) -> str:
-        """Replace the main recipe content in one call: title, subtitle, servings, ingredients, steps, and notes."""
-        return screen.replace_recipe_content(
-            title=title,
-            subtitle=subtitle,
-            servings=servings,
-            ingredients=ingredients,
-            steps=steps,
-            notes=notes,
-        )
+        Timer: set_timer (duration_seconds, optional label and auto_start),
+        start_timer, stop_timer, reset_timer.
 
-    @server.tool()
-    def kitchen_screen_read_ingredients() -> str:
-        """Read the current ingredient list from the kitchen recipe screen as JSON."""
-        return screen.read_ingredients()
+        Other: set_servings (servings), reset_servings, set_link_status
+        (link_status, e.g. LINK NOMINAL).
+        """
+        handler = _ACTIONS.get(str(action or "").strip().lower())
+        if handler is None:
+            return _error(
+                f"Unknown kitchen_screen_control action '{action}'. "
+                f"Valid actions: {', '.join(sorted(_ACTIONS))}."
+            )
 
-    @server.tool()
-    def kitchen_screen_replace_ingredients(ingredients: list[str]) -> str:
-        """Replace the full ingredient list shown on the kitchen recipe screen."""
-        return screen.replace_ingredients(ingredients)
+        try:
+            parsed: Any = json.loads(arguments or "{}")
+        except json.JSONDecodeError as exc:
+            return _error(f"arguments must be a JSON object: {exc}")
+        if not isinstance(parsed, dict):
+            return _error("arguments must be a JSON object")
 
-    @server.tool()
-    def kitchen_screen_remove_ingredients(
-        indices: list[int] | None = None,
-        matching_texts: list[str] | None = None,
-        clear_all: bool = False,
-    ) -> str:
-        """Remove ingredients by 1-based index, exact text match, or clear them all."""
-        return screen.remove_ingredients(indices=indices, matching_texts=matching_texts, clear_all=clear_all)
-
-    @server.tool()
-    def kitchen_screen_clear_ingredients() -> str:
-        """Clear all ingredients from the kitchen recipe screen."""
-        return screen.clear_ingredients()
-
-    @server.tool()
-    def kitchen_screen_read_steps() -> str:
-        """Read the current recipe step list from the kitchen recipe screen as JSON."""
-        return screen.read_steps()
-
-    @server.tool()
-    def kitchen_screen_replace_steps(steps: list[str]) -> str:
-        """Replace the full recipe step list shown on the kitchen recipe screen."""
-        return screen.replace_steps(steps)
-
-    @server.tool()
-    def kitchen_screen_remove_steps(
-        indices: list[int] | None = None,
-        matching_texts: list[str] | None = None,
-        clear_all: bool = False,
-    ) -> str:
-        """Remove recipe steps by 1-based index, exact text match, or clear them all."""
-        return screen.remove_steps(indices=indices, matching_texts=matching_texts, clear_all=clear_all)
-
-    @server.tool()
-    def kitchen_screen_clear_steps() -> str:
-        """Clear all recipe steps from the kitchen recipe screen."""
-        return screen.clear_steps()
-
-    @server.tool()
-    def kitchen_screen_read_notes() -> str:
-        """Read the current note list from the kitchen recipe screen as JSON."""
-        return screen.read_notes()
-
-    @server.tool()
-    def kitchen_screen_add_notes(notes: list[str]) -> str:
-        """Append one or more notes to the kitchen recipe screen."""
-        return screen.add_notes(notes)
-
-    @server.tool()
-    def kitchen_screen_replace_notes(notes: list[str]) -> str:
-        """Replace the full note list shown on the kitchen recipe screen."""
-        return screen.replace_notes(notes)
-
-    @server.tool()
-    def kitchen_screen_remove_notes(
-        indices: list[int] | None = None,
-        matching_texts: list[str] | None = None,
-        clear_all: bool = False,
-    ) -> str:
-        """Remove notes by 1-based index, exact text match, or clear them all."""
-        return screen.remove_notes(indices=indices, matching_texts=matching_texts, clear_all=clear_all)
-
-    @server.tool()
-    def kitchen_screen_clear_notes() -> str:
-        """Clear all notes from the kitchen recipe screen."""
-        return screen.clear_notes()
-
-    @server.tool()
-    def kitchen_screen_set_timer(duration_seconds: int, label: str = "Recipe timer", auto_start: bool = False) -> str:
-        """Set the kitchen recipe screen timer duration and label, optionally starting it immediately."""
-        return screen.set_timer(duration_seconds=duration_seconds, label=label, auto_start=auto_start)
-
-    @server.tool()
-    def kitchen_screen_read_timer() -> str:
-        """Read the current timer state from the kitchen recipe screen as JSON."""
-        return screen.read_timer()
-
-    @server.tool()
-    def kitchen_screen_start_timer() -> str:
-        """Start or resume the kitchen recipe screen timer."""
-        return screen.start_timer()
-
-    @server.tool()
-    def kitchen_screen_stop_timer() -> str:
-        """Stop or pause the kitchen recipe screen timer without resetting it."""
-        return screen.stop_timer()
-
-    @server.tool()
-    def kitchen_screen_reset_timer() -> str:
-        """Reset the kitchen recipe screen timer back to its configured duration."""
-        return screen.reset_timer()
-
-    @server.tool()
-    def kitchen_screen_set_link_status(link_status: str) -> str:
-        """Set the top-row link indicator text, for example LINK NOMINAL or LINK DEGRADED."""
-        return screen.set_link_status(link_status)
-
-    @server.tool()
-    def kitchen_screen_read_link_status() -> str:
-        """Read the current top-row link indicator text as JSON."""
-        return screen.read_link_status()
-
-    @server.tool()
-    def kitchen_screen_set_servings(servings: str) -> str:
-        """Set the servings text shown on the kitchen recipe screen."""
-        return screen.set_servings(servings)
-
-    @server.tool()
-    def kitchen_screen_reset_servings() -> str:
-        """Reset the servings text to the default kitchen recipe screen value."""
-        return screen.reset_servings()
-
-    @server.tool()
-    def kitchen_screen_clear_recipe_screen() -> str:
-        """Clear title, subtitle, ingredients, steps, notes, servings, link status, and timer back to defaults."""
-        return screen.clear_recipe_screen()
+        try:
+            return handler(**parsed)
+        except TypeError as exc:
+            # Wrong/missing parameters for this action: report it back to the
+            # model instead of raising through the MCP transport.
+            return _error(f"invalid arguments for '{action}': {exc}")

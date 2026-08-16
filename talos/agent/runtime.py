@@ -128,7 +128,7 @@ _last_response_ids: dict[str, str] = {}
 # barge-in can stop generation that nobody is listening to any more.
 _cancel_registry_lock = threading.Lock()
 _cancel_registry: dict[str, threading.Event] = {}
-HOST_TOOL_NAMES = {
+_LEGACY_HOST_TOOL_NAMES = {
     "list_mcp_resources",
     "list_mcp_resource_templates",
     "read_mcp_resource",
@@ -143,6 +143,36 @@ HOST_TOOL_NAMES = {
     "recent_phone_calls",
     "summarize_phone_call",
 }
+
+# Those thirteen tools cost ~6.7 KB of schema on every prompt, on every round,
+# for capabilities a home-automation turn almost never reaches for. They are
+# published to the model as three meta-tools keyed by an ``action`` field, which
+# dispatches back to the original implementations below. The legacy names stay
+# executable: the finetune has seen them, and a leaked/older tool call should
+# still work rather than fail as unknown.
+_HOST_META_TOOL_ACTIONS: dict[str, dict[str, str]] = {
+    "mcp_admin": {
+        "list_resources": "list_mcp_resources",
+        "list_resource_templates": "list_mcp_resource_templates",
+        "read_resource": "read_mcp_resource",
+        "server_status": "list_mcp_server_status",
+        "list_tools": "list_mcp_tools",
+        "retry_server": "retry_mcp_server",
+        "start_server": "start_mcp_server",
+    },
+    "memory_admin": {
+        "remember": "remember_memory_fact",
+        "list": "list_memory_facts",
+    },
+    "phone": {
+        "place_call": "place_phone_call",
+        "call_status": "phone_call_status",
+        "recent_calls": "recent_phone_calls",
+        "summarize_call": "summarize_phone_call",
+    },
+}
+
+HOST_TOOL_NAMES = _LEGACY_HOST_TOOL_NAMES | set(_HOST_META_TOOL_ACTIONS)
 
 KICAD_PREFERRED_TOOL_SUFFIXES = {
     "list_tool_categories",
@@ -307,187 +337,134 @@ KITCHEN_HINT_PHRASES = (
 
 
 def _resource_tool_definitions() -> list[dict[str, Any]]:
+    """Host-side tools published to the model.
+
+    Three ``action``-keyed meta-tools stand in for thirteen individual ones.
+    See :data:`_HOST_META_TOOL_ACTIONS` for the dispatch table; every action
+    below maps to an original implementation in :func:`_invoke_host_tool`, so
+    behaviour and arguments are unchanged.
+    """
     return [
         {
             "type": "function",
-            "name": "list_mcp_resources",
-            "description": "List read-only MCP resources exposed by connected servers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "refresh": {
-                        "type": "boolean",
-                        "description": "Refresh the cached MCP resource list before returning it.",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "list_mcp_resource_templates",
-            "description": "List MCP resource templates exposed by connected servers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "refresh": {
-                        "type": "boolean",
-                        "description": "Refresh the cached MCP resource template list before returning it.",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "read_mcp_resource",
-            "description": "Read a specific MCP resource URI. Use the server field when more than one server exposes the same URI.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "uri": {
-                        "type": "string",
-                        "description": "The MCP resource URI to read.",
-                    },
-                    "server": {
-                        "type": "string",
-                        "description": "Optional server name for disambiguation when duplicate URIs exist.",
-                    },
-                },
-                "required": ["uri"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "list_mcp_server_status",
-            "description": "List configured MCP servers and their current health, failure, and retry state. This is read-only and does not retry degraded servers.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "list_mcp_tools",
-            "description": "List currently available MCP tools and configured server health. Use this when asked what tools are available. This does not retry degraded servers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "refresh": {
-                        "type": "boolean",
-                        "description": "Refresh the available tool list from currently healthy servers without retrying degraded servers.",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "retry_mcp_server",
-            "description": "Explicitly retry starting one degraded MCP server, or all degraded servers when server is omitted.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "server": {
-                        "type": "string",
-                        "description": "Optional MCP server name to retry, such as kicad.",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "start_mcp_server",
+            "name": "mcp_admin",
             "description": (
-                "Explicitly start or warm a heavyweight MCP provider (such as kicad) without restarting TALOS. "
-                "By default this returns immediately while the provider warms in the background, so use "
-                "list_mcp_server_status to check when it becomes ready. Its tools appear only after it is ready."
+                "Inspect and manage the MCP tool layer itself: which tools and servers exist, "
+                "whether a server is healthy, and starting or retrying a degraded one. "
+                "Use this when asked what tools or capabilities are available, or when a provider "
+                "looks unavailable. Actions: list_tools (available tools and server health; the "
+                "usual answer to 'what can you do'), server_status (health, failure, and retry "
+                "state, read-only), start_server (start or warm a heavyweight provider such as "
+                "kicad; returns immediately and warms in the background unless wait is true), "
+                "retry_server (retry one degraded server, or all when server is omitted), "
+                "list_resources, list_resource_templates, read_resource (requires uri)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list_tools",
+                            "server_status",
+                            "start_server",
+                            "retry_server",
+                            "list_resources",
+                            "list_resource_templates",
+                            "read_resource",
+                        ],
+                        "description": "Which MCP administration action to run.",
+                    },
                     "server": {
                         "type": "string",
-                        "description": "MCP server name to start, such as kicad.",
+                        "description": "MCP server name, such as kicad. Required by start_server; optional for retry_server and for read_resource disambiguation.",
+                    },
+                    "uri": {
+                        "type": "string",
+                        "description": "Resource URI to read. Required by read_resource.",
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "Refresh the cached list before returning it. Applies to the list actions.",
                     },
                     "wait": {
                         "type": "boolean",
-                        "description": "Wait for the provider to finish starting instead of warming in the background. Defaults to false.",
+                        "description": "For start_server: wait for startup instead of warming in the background. Defaults to false.",
                     },
                 },
-                "required": ["server"],
+                "required": ["action"],
                 "additionalProperties": False,
             },
         },
         {
             "type": "function",
-            "name": "remember_memory_fact",
+            "name": "memory_admin",
             "description": (
-                "Persist a stable user, project, environment, or session fact for future TALOS prompt context. "
-                "Use this when the user explicitly asks you to remember something durable."
+                "Durable TALOS memory. Use 'remember' when the user explicitly asks you to "
+                "remember a stable user, project, environment, or session fact, and 'list' to "
+                "look up facts already stored. This is long-term preference and project memory, "
+                "not current device state."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {
+                    "action": {
                         "type": "string",
-                        "description": "Memory scope: user, project, global, or session. Defaults to user.",
+                        "enum": ["remember", "list"],
+                        "description": "remember stores a fact; list retrieves relevant facts.",
                     },
                     "key": {
                         "type": "string",
-                        "description": "Short stable key for the fact, such as preferred_response_style.",
+                        "description": "Short stable key for the fact, such as preferred_response_style. Required by remember.",
                     },
                     "value": {
                         "type": "string",
-                        "description": "The durable fact to remember.",
+                        "description": "The durable fact to remember. Required by remember.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Memory scope: user, project, global, or session. Defaults to user.",
                     },
                     "salience": {
                         "type": "integer",
                         "description": "Importance from 1 to 10. Defaults to 5.",
                     },
-                },
-                "required": ["key", "value"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "list_memory_facts",
-            "description": "List compact durable memory facts relevant to a query.",
-            "parameters": {
-                "type": "object",
-                "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Optional search text for relevant facts.",
+                        "description": "Optional search text for the list action.",
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum facts to return. Defaults to 8.",
+                        "description": "Maximum facts to return for the list action. Defaults to 8.",
                     },
                 },
+                "required": ["action"],
                 "additionalProperties": False,
             },
         },
         {
             "type": "function",
-            "name": "place_phone_call",
+            "name": "phone",
             "description": (
-                "Place an outbound phone call through the configured ElevenLabs/Twilio phone agent. "
-                "Use this only when the user directly asks you to make the call now. "
-                "The target must be either a configured contact name or an allowlisted E.164 number. "
-                "If the user wants you to report weather, KiCad status, or any other result, gather that information first, "
-                "then pass the exact spoken report in message_to_deliver."
+                "Outbound phone calls through the configured ElevenLabs/Twilio phone agent, and "
+                "the status of past calls. Only use place_call when the user directly asks you to "
+                "make a call now; the target must be a configured contact name or an allowlisted "
+                "E.164 number. If the user wants a result reported on the call (weather, KiCad "
+                "status, anything else), gather that information first and pass the exact spoken "
+                "report in message_to_deliver. Actions: place_call, call_status, recent_calls, "
+                "summarize_call."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["place_call", "call_status", "recent_calls", "summarize_call"],
+                        "description": "Which phone action to run.",
+                    },
                     "contact_or_number": {
                         "type": "string",
-                        "description": "Configured contact name or allowlisted E.164 number to call.",
+                        "description": "Configured contact name or allowlisted E.164 number. Required by place_call.",
                     },
                     "purpose": {
                         "type": "string",
@@ -499,69 +476,22 @@ def _resource_tool_definitions() -> list[dict[str, Any]]:
                     },
                     "message_to_deliver": {
                         "type": "string",
-                        "description": "The exact report or message the phone agent should deliver on the call after introducing itself as TALOS.",
+                        "description": "The exact report the phone agent should deliver after introducing itself as TALOS.",
                     },
-                },
-                "required": ["contact_or_number"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "phone_call_status",
-            "description": "Read the current status, transcript, and metadata for one phone call by call id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
                     "call_id": {
                         "type": "string",
-                        "description": "The TALOS phone call id, usually the ElevenLabs conversation id.",
+                        "description": "TALOS phone call id, usually the ElevenLabs conversation id. Required by call_status and summarize_call.",
                     },
-                    "refresh": {
-                        "type": "boolean",
-                        "description": "Refresh from the configured phone bridge before reading the status. Defaults to true.",
-                    },
-                },
-                "required": ["call_id"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "recent_phone_calls",
-            "description": "List recent phone calls known to TALOS, including inbound and outbound calls.",
-            "parameters": {
-                "type": "object",
-                "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum calls to return. Defaults to 10.",
+                        "description": "Maximum calls to return for recent_calls. Defaults to 10.",
                     },
                     "refresh": {
                         "type": "boolean",
-                        "description": "Refresh from the configured phone bridge before listing calls. Defaults to true.",
+                        "description": "Refresh from the phone bridge before reading. Defaults to true.",
                     },
                 },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "summarize_phone_call",
-            "description": "Return a compact TALOS summary of a phone call by call id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "call_id": {
-                        "type": "string",
-                        "description": "The TALOS phone call id, usually the ElevenLabs conversation id.",
-                    },
-                    "refresh": {
-                        "type": "boolean",
-                        "description": "Refresh from the configured phone bridge before summarizing the call. Defaults to true.",
-                    },
-                },
-                "required": ["call_id"],
+                "required": ["action"],
                 "additionalProperties": False,
             },
         },
@@ -1692,6 +1622,33 @@ def _invoke_host_tool(
     runtime_lane: str = "foreground",
 ) -> str:
     parsed_arguments = _parse_function_arguments(arguments)
+
+    actions = _HOST_META_TOOL_ACTIONS.get(name)
+    if actions is not None:
+        # Unwrap a meta-tool call into the original host tool. Copy first:
+        # parse_tool_arguments returns dict inputs unchanged, so popping would
+        # mutate the caller's dict.
+        meta_arguments = dict(parsed_arguments)
+        action = str(meta_arguments.pop("action", "") or "").strip().lower()
+        legacy_name = actions.get(action)
+        if legacy_name is None:
+            return json.dumps(
+                {
+                    "success": False,
+                    "message": (
+                        f"Unknown {name} action '{action}'. "
+                        f"Valid actions: {', '.join(sorted(actions))}."
+                    ),
+                }
+            )
+        return _invoke_host_tool(
+            mcp_client,
+            legacy_name,
+            meta_arguments,
+            session_id=session_id,
+            runtime_lane=runtime_lane,
+        )
+
     if name == "list_mcp_resources":
         return json.dumps({"resources": mcp_client.list_resources(refresh=bool(parsed_arguments.get("refresh")))})
     if name == "list_mcp_resource_templates":

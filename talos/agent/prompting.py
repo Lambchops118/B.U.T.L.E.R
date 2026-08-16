@@ -21,6 +21,11 @@ DEFAULT_OVERLAY_PATHS: dict[str, Path] = {
 }
 DEFAULT_DOMAIN_OVERLAYS: tuple[str, ...] = ("filesystem", "tool_usage")
 
+# Every turn rebuilds the system prompt, and each rebuild re-read the persona
+# plus every overlay from disk. Cache on the file's (mtime, size) so a live edit
+# to a personality file is still picked up on the next turn without a restart.
+_TEXT_CACHE: dict[Path, tuple[tuple[float, int], str]] = {}
+
 
 @dataclass(frozen=True)
 class PromptContext:
@@ -84,7 +89,21 @@ class PromptAssembler:
 
     @staticmethod
     def _read_text(path: Path) -> str:
-        return path.read_text(encoding="utf-8").strip()
+        try:
+            stat = path.stat()
+        except OSError:
+            # Unreadable stat: fall through to the read so the original error
+            # surfaces from read_text rather than from the cache layer.
+            return path.read_text(encoding="utf-8").strip()
+
+        signature = (stat.st_mtime, stat.st_size)
+        cached = _TEXT_CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+
+        text = path.read_text(encoding="utf-8").strip()
+        _TEXT_CACHE[path] = (signature, text)
+        return text
 
     @staticmethod
     def _section(title: str, body: str) -> str:
