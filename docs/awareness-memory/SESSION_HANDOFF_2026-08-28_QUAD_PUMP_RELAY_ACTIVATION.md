@@ -37,26 +37,35 @@ Tests passed:
 Tests failed:
 None after the updates. Both failures above were pre-existing on entry to this session.
 
+Deployment performed:
+`qp_config.py` and `qp_hardware.py` were copied to the Pico on COM6 with `mpremote` 1.28.0 and the board was reset. On-device SHA-256 of `qp_config.py`, `qp_hardware.py`, `main.py` and `qp_controller.py` matches the repository byte-for-byte; `qp_ledger.py`, `qp_net.py` and `qp_protocol.py` match after line-ending normalisation. The board confirmed the corrected map in RAM: relay `[(1, 6), (2, 7), (3, 8), (4, 9)]`, fuse `[(1, 0), (2, 1), (3, 2), (4, 3)]`. The pre-existing on-device config was verified as the broken `{1: 9, 2: 10, 3: 11, 4: 12}` before overwriting, confirming the diagnosis against live hardware.
+
+Second blocker found and fixed during deployment:
+After the reset the board booted cleanly but published no telemetry. `network.WLAN.status()` returned `-2` (`CYW43_LINK_NONET`, no matching AP) and `ifconfig` showed `0.0.0.0`. An on-device scan found `Verizon_4VLXXY` at -36 dBm and no `Verizon_4LXXY` at all: the `WIFI_SSID` in `qp_secrets.py` was missing a `V`. Corrected in both the repository copy and on the device. The stored password was already correct for that SSID. The board now reports `wifi_connected: true`, `mqtt_connected: true`, `rssi: -41`, `reconnects: 1`, `last_error: null`, watchdog enabled, all four relays off at boot, and 30 s heartbeats.
+
 Commands not run:
-No physical command was issued. The corrected firmware has not been copied to the Pico.
+No pump was activated. Physical relay verification on GP6-GP9 is still outstanding and needs the owner present, since it moves water.
+
+Security finding (not acted on):
+`Firmware/qp_secrets.py` is **tracked in git** and carries the live Wi-Fi SSID/password and the broker credential field, despite its own header stating the file is git-ignored and must never be committed. The submodule remote is a GitHub repository, so these values should be treated as disclosed: rotate the Wi-Fi password and any broker credential, then `git rm --cached` the file and add it to `.gitignore`. Deleting it from the current tree does not remove it from history.
 
 Known limitations:
-The correction is netlist-derived, not bench-measured. It is only in the repository until `qp_config.py` and `qp_hardware.py` are copied to the Pico root and the board restarts. Fuse sensing remains unavailable (ADR-019, OQ-D). Firmware state reports remain commanded software state, not electrical feedback.
+The correction is netlist-derived, not bench-measured; no relay has been observed to click. Fuse sensing remains unavailable (ADR-019, OQ-D). Firmware state reports remain commanded software state, not electrical feedback.
 
 Security implications:
 None. No credentials, raw MQTT bypass, or authorization changes. All physical commands still traverse the registered action boundary and firmware safety limits.
 
 Deployment implications:
-Copy `Peripherals/Pump-Power-Controller/Firmware/qp_config.py` and `qp_hardware.py` over `/qp_config.py` and `/qp_hardware.py` on the Pico, ensure the application file is `/main.py`, and restart the board. Confirm a fresh boot heartbeat, then issue one observed command per channel and watch for a relay click on each of GP6-GP9. The submodule change also needs a submodule commit and a parent-repo pointer bump.
+Done for the device. Remaining: issue one observed command per channel and watch for a relay click on each of GP6-GP9 before trusting unattended watering. The submodule changes (`qp_config.py`, `qp_hardware.py`, `qp_secrets.py`) are uncommitted, and the submodule already carries commit `25e3fd2` that the parent repository does not record, so both a submodule commit and a parent pointer bump are still needed. Do not commit `qp_secrets.py` further — see the security finding.
 
 Unresolved questions:
 OQ-D (fuse hardware) remains open. OQ-E is resolved.
 
 Current repository state:
-The `Peripherals/Pump-Power-Controller` submodule carries a local commit (`25e3fd2`) that the parent repository does not yet record, plus the uncommitted `qp_config.py` / `qp_hardware.py` edits from this session. Nothing was committed.
+The `Peripherals/Pump-Power-Controller` submodule carries a local commit (`25e3fd2`) that the parent repository does not yet record, plus uncommitted `qp_config.py`, `qp_hardware.py` and `qp_secrets.py` edits from this session. Nothing was committed.
 
 Next permitted task:
-Owner-executed flash and physical verification of GP6-GP9, one channel at a time.
+Owner-observed physical verification of GP6-GP9, one channel at a time, then credential rotation for the disclosed `qp_secrets.py` values.
 
 Required reading for next session:
 `IMPLEMENTATION_STATUS.md`; this handoff; `Peripherals/Pump-Power-Controller/Firmware/plan.md`; ADR-028 and ADR-029.
