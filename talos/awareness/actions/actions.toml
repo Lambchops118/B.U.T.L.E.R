@@ -14,14 +14,17 @@ version = 2
 
 [[actions]]
 name = "water_plants"
-description = "Run the pump for one pot (fixed 8s firmware cycle)"
+description = "Run the pump for one pot (30s firmware cycle)"
 target_entity_id = "quad_pump"
 permission_level = "standard"
 allowed_actors = ["llm", "operator"]
 confirmation_required = false
 safety_checks = []              # no trustworthy pre-command sensor exists
-cooldown_seconds = 60.0        # firmware blocks ~8s per run; avoid stacking
-timeout_seconds = 20.0
+cooldown_seconds = 60.0        # firmware blocks ~30s per run; avoid stacking
+# Must exceed the firmware run (DEFAULT_RUN_SECONDS = 30) plus dispatch and
+# state-confirmation latency: the legacy device publishes status/{pin} = 0 only
+# after the cycle finishes, so a shorter timeout fails a run that succeeded.
+timeout_seconds = 45.0
 idempotency_behavior = "at_most_once" # legacy firmware cannot dedupe command IDs
 command_topic = "quad_pump/{pot_pin}"
 payload = "1"
@@ -29,7 +32,7 @@ ack_mode = "state_confirmation"
 ack_semantics = "state_result"
 ack_source_id = "quad_pump_pico"
 confirm_property = "pin_{pot_pin}"
-confirm_value = false           # firmware publishes only after the 8s cycle, when off
+confirm_value = false           # firmware publishes only after the cycle, when off
 allowed_prior_values = []       # any/unknown prior state; firmware owns fixed-duration safety
 rollback = "none"
 
@@ -82,7 +85,7 @@ type = "integer"
 required = false
 minimum = 1
 maximum = 30
-description = "Run time in seconds; firmware default is 8 and its hard cap is 30"
+description = "Run time in seconds; firmware default is 30 and its hard cap is 30"
 
 # --- canonical quad pump: stop --------------------------------------------------
 

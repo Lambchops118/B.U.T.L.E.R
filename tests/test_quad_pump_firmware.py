@@ -164,8 +164,11 @@ def _states(messages):
 
 class HardwareMappingTest(unittest.TestCase):
     def test_confirmed_channel_map_is_explicit_and_disjoint(self):
-        self.assertEqual(config.CHANNEL_RELAY_GPIO, {1: 9, 2: 10, 3: 11, 4: 12})
-        self.assertEqual(config.CHANNEL_FUSE_GPIO, {1: 1, 2: 2, 3: 4, 4: 5})
+        # Netlist-derived from Controller_Board_mk2: GP6-GP9 drive Q1/Q4/Q3/Q2
+        # into K4/K3/K2/K1 (outputs J2-J5); GP0-GP3 read the fuse dividers.
+        # GP10-GP12 are unconnected on the board and must never appear here.
+        self.assertEqual(config.CHANNEL_RELAY_GPIO, {1: 6, 2: 7, 3: 8, 4: 9})
+        self.assertEqual(config.CHANNEL_FUSE_GPIO, {1: 0, 2: 1, 3: 2, 4: 3})
         relay_pins = set(config.CHANNEL_RELAY_GPIO.values())
         fuse_pins = set(config.CHANNEL_FUSE_GPIO.values())
         self.assertEqual(len(relay_pins), 4)
@@ -425,19 +428,29 @@ class RunControlTest(unittest.TestCase):
         self.assertIs(acks[0]["payload"]["ok"], True)
         self.assertEqual(harness["pins"][config.CHANNEL_RELAY_GPIO[4]].level, 0)
 
-    def test_concurrency_limit_rejects_a_second_pump(self):
+    def test_concurrency_limit_queues_a_second_pump(self):
         harness = _build()
         controller = harness["controller"]
+        clock = harness["clock"]
         controller.initialize()
         controller.handle_command(protocol.parse_command(_command(UUID_A, channel=1)))
         messages = controller.handle_command(
             protocol.parse_command(_command(UUID_B, channel=2))
         )
+        # Deferred, not discarded: no relay moves and no final ack is emitted
+        # while channel 1 still owns the supply budget.
         self.assertFalse(controller.is_running(2))
         self.assertEqual(harness["pins"][config.CHANNEL_RELAY_GPIO[2]].level, 0)
-        acks = _acks(messages)
-        self.assertIs(acks[0]["payload"]["ok"], False)
-        self.assertEqual(acks[0]["payload"]["result"], config.RESULT_POWER_LIMIT)
+        self.assertEqual(controller.pending_channels(), (2,))
+        self.assertEqual(_acks(messages), [])
+
+        # It starts on its own once the first run hits its deadline.
+        clock.advance(config.DEFAULT_RUN_SECONDS * 1000)
+        controller.tick()
+        self.assertFalse(controller.is_running(1))
+        self.assertTrue(controller.is_running(2))
+        self.assertEqual(controller.pending_channels(), ())
+        self.assertEqual(harness["pins"][config.CHANNEL_RELAY_GPIO[2]].level, 1)
 
     def test_stop_all_drives_every_relay_off(self):
         harness = _build()
@@ -859,7 +872,8 @@ class SafetyPolicyTest(unittest.TestCase):
     def test_confirmed_owner_policy_is_encoded_in_config(self):
         self.assertEqual(config.MAX_CONCURRENT_PUMPS, 1)
         self.assertEqual(config.MAX_RUN_SECONDS, 30)
-        self.assertEqual(config.DEFAULT_RUN_SECONDS, 8)
+        self.assertEqual(config.DEFAULT_RUN_SECONDS, 30)
+        self.assertLessEqual(config.DEFAULT_RUN_SECONDS, config.MAX_RUN_SECONDS)
         self.assertTrue(config.RELAY_ACTIVE_HIGH)
         self.assertTrue(config.FUSE_FAULT_INHIBITS_START)
         self.assertTrue(config.FUSE_FAULT_STOPS_RUN)
