@@ -50,9 +50,17 @@ _SOURCES: list[dict[str, Any]] = [
         "location_id": "home",
         "clock_quality": "server_received",  # firmware has no clock sync
         "allowed_topics": ["status/16"],
+        # The fan firmware publishes only when a command changes the pin: it
+        # has no heartbeat, so silence means "nobody touched the fan", not
+        # "the board is gone". Zero disables silence-based offline detection.
+        "offline_after_seconds": 0,
         "metadata": {"legacy": "pin_status", "pin": 16, "value_inverted": True},
     },
     {
+        # Retired: the board this described was reflashed with the canonical
+        # firmware (quad_pump-2.0.0), which publishes nothing on status/17-19.
+        # Left disabled rather than deleted so its history keeps a valid
+        # foreign key and a legacy reflash only needs the flag flipped back.
         "source_id": "quad_pump_pico",
         "source_type": "microcontroller",
         "display_name": "Quad pump Pico W (legacy status topics)",
@@ -61,6 +69,8 @@ _SOURCES: list[dict[str, Any]] = [
         "location_id": "home",
         "clock_quality": "server_received",
         "allowed_topics": ["status/17", "status/18", "status/19"],
+        "enabled": False,
+        "offline_after_seconds": 0,
         "metadata": {"legacy": "pin_status"},
     },
     {
@@ -82,6 +92,13 @@ _SOURCES: list[dict[str, Any]] = [
         # The firmware implements no clock synchronization, so ordering uses
         # the server receive time. Raise this only if NTP is added and proven.
         "clock_quality": "server_received",
+        # Deadlines derived from the firmware's own cadences
+        # (qp_config.HEARTBEAT_INTERVAL_MS = 30 s,
+        # STATE_SNAPSHOT_INTERVAL_MS = 300 s): offline after six missed
+        # heartbeats, and state rows stale after three missed snapshots so a
+        # snapshot arriving exactly on its own period does not flap.
+        "offline_after_seconds": 180,
+        "stale_after_seconds": 900,
         "allowed_topics": [
             "home/irrigation/quad_pump/state",
             "home/irrigation/quad_pump/event",
@@ -114,6 +131,45 @@ _SOURCE_MIGRATIONS: list[dict[str, Any]] = [
         "column": "display_name",
         "expected": "Quad pump Pico W (legacy status topics)",
         "value": "Quad pump Pico W (legacy status topics; superseded by quad_pump_canonical)",
+    },
+    # The legacy pump source outlived its firmware: the board now runs
+    # quad_pump-2.0.0 and publishes only on home/irrigation/quad_pump/*, so
+    # this row's last_received_at froze at the reflash and the freshness
+    # worker has been reporting the (working) quad pump as offline ever
+    # since. Disabling it retires the row; the freshness worker resolves the
+    # incident it left open.
+    {
+        "source_id": "quad_pump_pico",
+        "column": "enabled",
+        "expected": True,
+        "value": False,
+    },
+    {
+        "source_id": "quad_pump_pico",
+        "column": "offline_after_seconds",
+        "expected": None,
+        "value": 0,
+    },
+    # The fan Pico publishes only when commanded — no heartbeat, so silence
+    # is not evidence of failure.
+    {
+        "source_id": "fan_pico",
+        "column": "offline_after_seconds",
+        "expected": None,
+        "value": 0,
+    },
+    # Canonical pump deadlines from the firmware cadences (see _SOURCES).
+    {
+        "source_id": "quad_pump_canonical",
+        "column": "offline_after_seconds",
+        "expected": None,
+        "value": 180,
+    },
+    {
+        "source_id": "quad_pump_canonical",
+        "column": "stale_after_seconds",
+        "expected": None,
+        "value": 900,
     },
 ]
 

@@ -93,9 +93,9 @@ deployment is seeded idempotently at startup (`registry/bootstrap.py`):
 
 | Source | Topics | Notes |
 |---|---|---|
-| `fan_pico` | `status/16` | Legacy pin status; `metadata.value_inverted` (fan relay is active-low) |
-| `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
-| `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
+| `fan_pico` | `status/16` | Legacy pin status; `metadata.value_inverted` (fan relay is active-low). Publishes only when commanded, so `offline_after_seconds = 0` (silence is not evidence) |
+| `quad_pump_pico` | `status/17-19` | **Retired** (`enabled = false`): the board was reflashed with the canonical firmware and publishes nothing here. Kept as a disabled row so its history stays valid and a legacy reflash only needs the flag flipped back |
+| `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/Pump-Power-Controller/Firmware`](../../Peripherals/Pump-Power-Controller/Firmware)). `offline_after_seconds = 180` (six missed 30 s heartbeats) and `stale_after_seconds = 900` (three missed 300 s state snapshots) |
 | `sim_device` | `home/sim/#` | Simulator for development and tests |
 
 Seed rows are inserted with `ON CONFLICT DO NOTHING`, so editing a seed never
@@ -195,9 +195,21 @@ deadlines (`stale_after_seconds`/`offline_after_seconds`) or the configured
 defaults, anchored on server receipt time — untrusted device clocks never
 extend freshness. Every change is recorded once (`state_transitions`,
 `source_health_history`); re-runs and restarts are idempotent. Sources that
-never reported stay `unknown`. A first accepted message flips the source back
-to `healthy` and the state to `current` (`recovered`), both with history. The
-alert hook is a Phase 4 interface and currently does nothing. Reads qualify
+never reported stay `unknown`. Any accepted message — including a duplicate
+redelivery, which still proves the device is talking — flips the source back
+to `healthy` and the state to `current` (`recovered`), both with history.
+
+Silence is only evidence for a source that is expected to keep reporting. Two
+registry facts suppress offline detection entirely: `offline_after_seconds`
+of `0` marks a source that publishes only on change (the command-driven
+legacy Picos), and `enabled = false` marks a retired source — its health and
+its state rows return to `unknown` (no claim either way) and any open silence
+incident is resolved, so a superseded registry row cannot keep reporting
+hardware its replacement is happily publishing as dead. `python -m talos.awareness
+sources` prints each source's health, silence, effective deadline, and open
+silence incident.
+
+The alert hook is a Phase 4 interface and currently does nothing. Reads qualify
 overdue rows as `stale` even before the worker's next pass, and every read
 carries `as_of`, age, source, and confidence.
 
@@ -523,6 +535,15 @@ outbox (7), resolved/expired alerts (90; open/acknowledged never eligible),
 state transitions (90), source health history (90), rejected/deleted
 memories (30; active and superseded memories — the supersession history —
 are never deleted by retention).
+
+### Source liveness diagnostics
+
+`python -m talos.awareness sources`: read-only JSON listing every registered
+source with `health_status`, `last_received_at`, the silence the freshness
+worker sees, the deadline it is judged against (`null` when liveness is not
+monitored), and any open `source_offline` incident. This is the first thing
+to run when Butler reports a device offline that is visibly working — it
+names the source behind the announcement.
 
 ### Consolidation
 

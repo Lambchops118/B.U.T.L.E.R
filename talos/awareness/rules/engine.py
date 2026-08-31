@@ -155,12 +155,14 @@ class RuleEngine:
                 now=now,
             )
 
-    async def apply_source_recovered(self, connection, *, source_id: str) -> int:
+    async def apply_source_recovered(
+        self, connection, *, source_id: str, reason: str = "source reported again"
+    ) -> int:
         return await self._alerts.resolve_by_key(
             connection,
             deduplication_key=f"source_offline:{source_id}",
             now=datetime.now(timezone.utc),
-            reason="source reported again",
+            reason=reason,
         )
 
     async def _apply_attention(

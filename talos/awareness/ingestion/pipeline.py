@@ -368,13 +368,45 @@ class IngestionPipeline:
         return None
 
     async def _touch_source(self, source_id: str, received_at: datetime) -> None:
-        """A duplicate still proves the source is alive."""
+        """A duplicate still proves the source is alive.
+
+        Liveness is the whole point of this path, so a source the freshness
+        worker had already given up on is brought back to ``healthy`` and its
+        silence incident resolved — exactly as a first-delivery message does.
+        Without that, a device whose messages arrive as redeliveries (a
+        retained replay, a QoS-1 repeat) stays reported as offline while it
+        is demonstrably talking.
+        """
         async with self._engine.begin() as connection:
+            previous_health = (
+                await connection.execute(
+                    sa.select(Source.health_status)
+                    .where(Source.source_id == source_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
             await connection.execute(
                 sa.update(Source)
                 .where(Source.source_id == source_id)
-                .values(last_received_at=received_at, updated_at=datetime.now(timezone.utc))
+                .values(
+                    last_received_at=received_at,
+                    health_status="healthy",
+                    updated_at=datetime.now(timezone.utc),
+                )
             )
+            if previous_health is not None and previous_health != "healthy":
+                await record_source_health_change(
+                    connection,
+                    source_id=source_id,
+                    new_status="healthy",
+                    previous_status=previous_health,
+                    changed_at=received_at,
+                    reason="duplicate_message_received",
+                )
+                if self._rule_engine is not None:
+                    await self._rule_engine.apply_source_recovered(
+                        connection, source_id=source_id
+                    )
 
     async def _reject(
         self,

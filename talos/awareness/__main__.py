@@ -7,6 +7,7 @@
     python -m talos.awareness retention [--execute]   # dry-run plan by default
     python -m talos.awareness consolidate             # memory consolidation pass
     python -m talos.awareness backup [--verify]       # pg_dump + prune (+ restore check)
+    python -m talos.awareness sources    # per-source liveness and open silence alerts
 
 Check exit codes: 0 healthy, 1 degraded, 2 unavailable, 3 configuration error.
 """
@@ -113,6 +114,101 @@ def _cmd_consolidate(settings: AwarenessSettings) -> int:
     return 0
 
 
+def _cmd_sources(settings: AwarenessSettings) -> int:
+    """Print why each source is (or is not) considered offline.
+
+    The answer to "which source is Butler complaining about?" — every
+    registered source with its health, the silence the freshness worker sees,
+    the deadline it is judged against, and any open ``source_offline``
+    incident. Read-only.
+    """
+    from datetime import datetime, timezone
+
+    import sqlalchemy as sa
+
+    from talos.awareness.db.models import Alert, Source
+    from talos.awareness.db.session import build_engine
+    from talos.awareness.state.freshness import offline_deadline
+
+    async def _run() -> list[dict]:
+        engine = build_engine(settings)
+        try:
+            async with engine.connect() as connection:
+                sources = (
+                    await connection.execute(
+                        sa.select(
+                            Source.source_id,
+                            Source.display_name,
+                            Source.enabled,
+                            Source.health_status,
+                            Source.last_received_at,
+                            Source.offline_after_seconds,
+                            Source.stale_after_seconds,
+                        ).order_by(Source.source_id)
+                    )
+                ).all()
+                alerts = {
+                    row.deduplication_key: row
+                    for row in (
+                        await connection.execute(
+                            sa.select(
+                                Alert.deduplication_key,
+                                Alert.alert_id,
+                                Alert.opened_at,
+                                Alert.occurrence_count,
+                                Alert.status,
+                            ).where(
+                                Alert.alert_type == "source_offline",
+                                Alert.status.in_(("open", "acknowledged")),
+                            )
+                        )
+                    ).all()
+                }
+        finally:
+            await engine.dispose()
+
+        now = datetime.now(timezone.utc)
+        report = []
+        for row in sources:
+            deadline = offline_deadline(
+                row.offline_after_seconds, settings.default_offline_after_seconds
+            )
+            silence = (
+                (now - row.last_received_at).total_seconds()
+                if row.last_received_at is not None
+                else None
+            )
+            alert = alerts.get(f"source_offline:{row.source_id}")
+            report.append(
+                {
+                    "source_id": row.source_id,
+                    "display_name": row.display_name,
+                    "enabled": row.enabled,
+                    "health_status": row.health_status,
+                    "last_received_at": row.last_received_at,
+                    "silence_seconds": round(silence, 1) if silence is not None else None,
+                    "offline_after_seconds": deadline,
+                    "liveness_monitored": bool(row.enabled and deadline is not None),
+                    "stale_after_seconds": row.stale_after_seconds
+                    or settings.default_stale_after_seconds,
+                    "open_offline_alert": (
+                        None
+                        if alert is None
+                        else {
+                            "alert_id": str(alert.alert_id),
+                            "status": alert.status,
+                            "opened_at": alert.opened_at,
+                            "occurrence_count": alert.occurrence_count,
+                        }
+                    ),
+                }
+            )
+        return report
+
+    print(json.dumps(asyncio.run(_run()), indent=2, default=str))
+    return 0
+
+
 def _cmd_backup(settings: AwarenessSettings, verify: bool) -> int:
     from talos.awareness import backup as backup_module
 
@@ -143,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
         "--execute", action="store_true", help="delete per policy (default is dry run)"
     )
     subparsers.add_parser("consolidate", help="run one memory consolidation pass")
+    subparsers.add_parser(
+        "sources", help="print per-source liveness, deadlines, and open silence alerts"
+    )
     backup_parser = subparsers.add_parser(
         "backup", help="pg_dump to the backup directory and prune old backups"
     )
@@ -166,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_retention(settings, args.execute)
     if command == "consolidate":
         return _cmd_consolidate(settings)
+    if command == "sources":
+        return _cmd_sources(settings)
     if command == "backup":
         return _cmd_backup(settings, args.verify)
     return _cmd_check(settings)

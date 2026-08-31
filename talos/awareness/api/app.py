@@ -75,12 +75,21 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                     extra={"component": "ingestion"},
                 )
         async def offline_alert_hook(connection, transition: dict) -> None:
-            if transition.get("kind") == "source_offline":
+            kind = transition.get("kind")
+            if kind == "source_offline":
                 await rule_engine.apply_source_offline(
                     connection,
                     source_id=transition["source_id"],
                     source_type=transition.get("source_type", ""),
                     silence_seconds=transition.get("silence_seconds", 0.0),
+                )
+            elif kind == "source_retired":
+                # The deployment no longer expects this source to report, so
+                # its silence incident is no longer a true statement.
+                await rule_engine.apply_source_recovered(
+                    connection,
+                    source_id=transition["source_id"],
+                    reason="source retired in the registry",
                 )
 
         freshness = FreshnessWorker(engine, settings, alert_hook=offline_alert_hook)

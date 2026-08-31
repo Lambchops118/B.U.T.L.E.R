@@ -13,6 +13,17 @@ device clocks never extend freshness. Sources that have never reported stay
 ``unknown`` rather than becoming ``offline`` — silence since *when* would be
 a fabricated fact.
 
+Two registry facts suppress silence detection entirely, because for those
+sources silence is not evidence of failure:
+
+- ``offline_after_seconds <= 0`` marks a source that only publishes when
+  something changes (the command-driven legacy Picos). It has no heartbeat,
+  so a quiet hour means "nothing happened", not "the device is gone".
+- ``enabled = False`` marks a retired source. Its health and its state rows
+  are returned to ``unknown`` — no claim either way — and any open silence
+  incident is handed to the alert hook for resolution, so a superseded
+  registry entry cannot keep reporting its replacement's hardware as dead.
+
 Alert policy belongs to Phase 4: ``alert_hook`` is an interface that receives
 each transition and defaults to doing nothing.
 """
@@ -56,6 +67,21 @@ async def record_source_health_change(
             reason=reason,
         )
     )
+
+
+def offline_deadline(configured: float | None, default_seconds: float) -> float | None:
+    """Silence deadline for one source, or ``None`` when it has none.
+
+    ``None`` in the registry means "unset" and falls back to the configured
+    default. A value of zero or less is the registry's explicit statement
+    that the source publishes only on change, so no amount of silence makes
+    it offline.
+    """
+    if configured is None:
+        return default_seconds
+    if configured <= 0:
+        return None
+    return configured
 
 
 class FreshnessWorker:
@@ -112,9 +138,105 @@ class FreshnessWorker:
         now = now or datetime.now(timezone.utc)
         transitions = 0
         async with self._engine.begin() as connection:
+            transitions += await self._retire_disabled_sources(connection, now)
             transitions += await self._mark_stale_state(connection, now)
             transitions += await self._mark_offline_sources(connection, now)
         return transitions
+
+    async def _retire_disabled_sources(
+        self, connection: AsyncConnection, now: datetime
+    ) -> int:
+        """Return retired sources from ``offline`` to ``unknown``.
+
+        A source disabled in the registry is one the deployment no longer
+        expects to hear from — a superseded firmware entry, a board that was
+        reflashed onto a different topic scheme. Leaving such a row at
+        ``offline`` (or at a ``healthy`` frozen in the past) keeps a claim
+        alive about hardware that may be working perfectly under its
+        replacement's source, so the row is returned to ``unknown`` and the
+        hook is told to resolve any incident it left open. Its state rows follow: a property last reported by a source
+        the deployment has retired is not "offline" (a claim about hardware),
+        it is simply unknown. Idempotent: the predicates stop matching after
+        the update.
+        """
+        rows = (
+            await connection.execute(
+                sa.select(Source.source_id, Source.source_type, Source.health_status)
+                .where(Source.enabled.is_(False), Source.health_status != "unknown")
+                .with_for_update()
+            )
+        ).all()
+
+        count = 0
+        for row in rows:
+            count += 1
+            await connection.execute(
+                sa.update(Source)
+                .where(Source.source_id == row.source_id)
+                .values(health_status="unknown", updated_at=now)
+            )
+            await record_source_health_change(
+                connection,
+                source_id=row.source_id,
+                new_status="unknown",
+                previous_status=row.health_status,
+                changed_at=now,
+                reason="source retired in the registry; silence is not evidence",
+            )
+            count += await self._mark_source_state_unknown(
+                connection, row.source_id, now
+            )
+            await self._notify(
+                connection,
+                {
+                    "kind": "source_retired",
+                    "source_id": row.source_id,
+                    "source_type": row.source_type,
+                },
+            )
+        return count
+
+    async def _mark_source_state_unknown(
+        self, connection: AsyncConnection, source_id: str, now: datetime
+    ) -> int:
+        rows = (
+            await connection.execute(
+                sa.select(
+                    CurrentState.entity_id,
+                    CurrentState.property_name,
+                    CurrentState.value_json,
+                    CurrentState.state_status,
+                )
+                .where(
+                    CurrentState.source_id == source_id,
+                    CurrentState.state_status != "unknown",
+                )
+                .with_for_update()
+            )
+        ).all()
+        for row in rows:
+            await connection.execute(
+                sa.update(CurrentState)
+                .where(
+                    CurrentState.entity_id == row.entity_id,
+                    CurrentState.property_name == row.property_name,
+                )
+                .values(state_status="unknown")
+            )
+            await connection.execute(
+                sa.insert(StateTransition).values(
+                    entity_id=row.entity_id,
+                    property_name=row.property_name,
+                    occurred_at=now,
+                    from_value=row.value_json,
+                    to_value=row.value_json,
+                    from_status=row.state_status,
+                    to_status="unknown",
+                    reason="retired",
+                    metadata_json={"source_id": source_id},
+                )
+            )
+        return len(rows)
 
     async def _mark_stale_state(self, connection: AsyncConnection, now: datetime) -> int:
         default_stale = self._settings.default_stale_after_seconds
@@ -198,7 +320,9 @@ class FreshnessWorker:
 
         count = 0
         for row in rows:
-            deadline = row.offline_after_seconds or default_offline
+            deadline = offline_deadline(row.offline_after_seconds, default_offline)
+            if deadline is None:
+                continue  # publishes only on change: silence proves nothing
             silence = (now - row.last_received_at).total_seconds()
             if silence <= deadline:
                 continue

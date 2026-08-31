@@ -324,7 +324,10 @@ cooldown, confirmation, and idempotency before durable outbox dispatch.
 3. Inspect `/health/components` if the result is degraded.
 4. Confirm MQTT is connected if live devices are expected.
 5. Check outbox backlog and oldest pending age in `/metrics`.
-6. Check active alerts and stale/offline sources.
+6. Check active alerts and stale/offline sources
+   (`.venv-awareness/bin/python -m talos.awareness sources` says which source
+   an "X is offline" announcement comes from, and whether that source is even
+   expected to report).
 7. Confirm the most recent backup age in `/metrics`.
 8. Start the awareness process before or alongside main TALOS.
 

@@ -97,6 +97,140 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
     def test_state_and_telemetry_end_to_end(self) -> None:
         asyncio.run(self._run_flow())
 
+    def test_source_liveness_expectations(self) -> None:
+        asyncio.run(self._run_liveness_flow())
+
+    async def _run_liveness_flow(self) -> None:
+        """Silence is only reported for sources expected to keep reporting.
+
+        Covers the quad-pump false-offline defect: a retired legacy source
+        must not keep an incident open about hardware its replacement is
+        happily reporting, a source that publishes only on change must never
+        be called offline, and a duplicate message must restore health.
+        """
+        import sqlalchemy as sa
+
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from talos.awareness.registry.bootstrap import seed_registry
+        from talos.awareness.registry.sources import SourceRepository
+        from talos.awareness.state.freshness import FreshnessWorker
+
+        engine = build_engine(self.settings)
+        try:
+            await seed_registry(engine)
+
+            async def query(sql: str, **params):
+                async with engine.connect() as connection:
+                    return (await connection.execute(sa.text(sql), params)).all()
+
+            seeded = {
+                row.source_id: row
+                for row in await query(
+                    "SELECT source_id, enabled, offline_after_seconds, "
+                    "stale_after_seconds FROM sources"
+                )
+            }
+            self.assertFalse(seeded["quad_pump_pico"].enabled)
+            self.assertEqual(seeded["fan_pico"].offline_after_seconds, 0)
+            self.assertEqual(seeded["quad_pump_canonical"].offline_after_seconds, 180)
+            self.assertEqual(seeded["quad_pump_canonical"].stale_after_seconds, 900)
+
+            now = datetime.now(timezone.utc)
+            long_ago = now - timedelta(hours=6)
+            # The state this deployment was actually in: the legacy pump
+            # source enabled and already marked offline, the fan silent since
+            # its last command.
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "UPDATE sources SET enabled = true, health_status = 'offline', "
+                        "last_received_at = :moment WHERE source_id = 'quad_pump_pico'"
+                    ),
+                    {"moment": long_ago},
+                )
+                await connection.execute(
+                    sa.text(
+                        "UPDATE sources SET health_status = 'healthy', "
+                        "last_received_at = :moment WHERE source_id = 'fan_pico'"
+                    ),
+                    {"moment": long_ago},
+                )
+
+            transitions: list[dict] = []
+
+            async def hook(connection, transition: dict) -> None:
+                transitions.append(transition)
+
+            worker = FreshnessWorker(engine, self.settings, alert_hook=hook)
+
+            # Re-running bootstrap retires the superseded legacy source...
+            await seed_registry(engine)
+            retired = await query(
+                "SELECT enabled FROM sources WHERE source_id = 'quad_pump_pico'"
+            )
+            self.assertFalse(retired[0].enabled)
+
+            # ...and the next freshness pass clears the incident it left open.
+            self.assertGreaterEqual(await worker.tick(now=now), 1)
+            self.assertIn(
+                ("source_retired", "quad_pump_pico"),
+                [(item["kind"], item["source_id"]) for item in transitions],
+            )
+            health = await query(
+                "SELECT health_status FROM sources WHERE source_id = 'quad_pump_pico'"
+            )
+            self.assertEqual(health[0].health_status, "unknown")
+
+            # The fan has been silent for six hours and is still not offline:
+            # it only publishes when commanded.
+            fan = await query(
+                "SELECT health_status FROM sources WHERE source_id = 'fan_pico'"
+            )
+            self.assertEqual(fan[0].health_status, "healthy")
+            self.assertNotIn(
+                "fan_pico", [item.get("source_id") for item in transitions]
+            )
+
+            # Neither pass repeats itself.
+            before = len(transitions)
+            await worker.tick(now=now)
+            self.assertEqual(len(transitions), before)
+
+            # A duplicate redelivery proves liveness and restores health.
+            sources = SourceRepository(engine)
+            await sources.refresh(force=True)
+            pipeline = IngestionPipeline(engine, sources, self.settings)
+            boot_id = f"boot-{uuid.uuid4().hex[:8]}"
+            message = InboundMessage(
+                topic="home/sim/greenhouse/heartbeat",
+                payload=json.dumps(
+                    {"event_id": str(uuid.uuid4()), "sequence": 7, "boot_id": boot_id}
+                ).encode(),
+            )
+            self.assertEqual(await pipeline.handle(message), "accepted")
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "UPDATE sources SET health_status = 'offline' "
+                        "WHERE source_id = 'sim_device'"
+                    )
+                )
+            await sources.refresh(force=True)
+            self.assertEqual(await pipeline.handle(message), "duplicate")
+            recovered = await query(
+                "SELECT health_status FROM sources WHERE source_id = 'sim_device'"
+            )
+            self.assertEqual(recovered[0].health_status, "healthy")
+            history = await query(
+                "SELECT health_status, reason FROM source_health_history "
+                "WHERE source_id = 'sim_device' ORDER BY id DESC LIMIT 1"
+            )
+            self.assertEqual(history[0].health_status, "healthy")
+            self.assertEqual(history[0].reason, "duplicate_message_received")
+        finally:
+            await engine.dispose()
+
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
