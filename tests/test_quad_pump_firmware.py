@@ -44,6 +44,9 @@ class FakeClock(object):
     def ticks_diff(self, later, earlier):
         return later - earlier
 
+    def ticks_add(self, ticks, delta):
+        return ticks + delta
+
     def advance(self, milliseconds):
         self.now += milliseconds
 
@@ -866,6 +869,295 @@ class BackoffTest(unittest.TestCase):
     def test_attempt_zero_and_huge_attempts_stay_bounded(self):
         self.assertEqual(net.backoff_delay_ms(0, rand=0), config.RECONNECT_BASE_MS)
         self.assertEqual(net.backoff_delay_ms(9999, rand=0), config.RECONNECT_MAX_MS)
+
+
+# --- network supervision fakes ------------------------------------------------
+
+
+class FakeWatchdog(object):
+    def __init__(self):
+        self.feeds = 0
+
+    def feed(self):
+        self.feeds += 1
+
+
+class FakeWLAN(object):
+    def __init__(self):
+        self.joined = False
+        self.connect_calls = 0
+        self.active_calls = []
+        self.deinit_calls = 0
+
+    def active(self, value=None):
+        if value is None:
+            return True
+        self.active_calls.append(value)
+
+    def isconnected(self):
+        return self.joined
+
+    def connect(self, ssid, password):
+        self.connect_calls += 1
+
+    def disconnect(self):
+        self.joined = False
+
+    def deinit(self):
+        self.deinit_calls += 1
+
+    def status(self, name=None):
+        return -50
+
+
+class FakeMQTTClient(object):
+    def __init__(self):
+        self.published = []
+        self.pings = 0
+        self.disconnects = 0
+        self.check_msg_error = None
+        self.publish_error = None
+        self.ping_error = None
+
+    def check_msg(self):
+        if self.check_msg_error is not None:
+            raise self.check_msg_error
+
+    def ping(self):
+        if self.ping_error is not None:
+            raise self.ping_error
+        self.pings += 1
+
+    def publish(self, topic, payload, retain=False, qos=0):
+        if self.publish_error is not None:
+            raise self.publish_error
+        self.published.append((topic, payload, retain, qos))
+
+    def disconnect(self):
+        self.disconnects += 1
+
+
+class StubSupervisor(net.NetworkSupervisor):
+    """The real supervisor with only its two MicroPython-only steps stubbed.
+
+    Everything under test - staging, backoff, escalation, liveness - is the
+    production code path.
+    """
+
+    def __init__(self, clock, watchdog=None):
+        self.wlan = FakeWLAN()
+        self.mqtt_error = None
+        self.mqtt_connect_calls = 0
+        net.NetworkSupervisor.__init__(
+            self, "cid", "broker", lambda *a: None, clock, watchdog=watchdog
+        )
+        self._wlan = self.wlan
+
+    def _start_wifi(self):
+        # Reattaches the same fake radio after a reset_radio(), the way the real
+        # one reconstructs network.WLAN.
+        self._wlan = self.wlan
+        self.wlan.active(True)
+        if not self.wlan.isconnected():
+            self.wlan.connect("ssid", "password")
+
+    def _connect_mqtt(self):
+        self.mqtt_connect_calls += 1
+        if self.mqtt_error is not None:
+            raise self.mqtt_error
+        self._client = FakeMQTTClient()
+
+
+def _connect(supervisor, clock):
+    """Drive the state machine through a successful connection."""
+    supervisor.ensure_connected()          # starts the association
+    supervisor.wlan.joined = True
+    return supervisor.ensure_connected()   # handshake
+
+
+class NetworkSupervisorTest(unittest.TestCase):
+    def test_watchdog_budget_covers_the_worst_blocking_step(self):
+        # The regression that caused the 2026-09-01 reset loop: connect and
+        # CONNACK are the only blocking work left in one watchdog interval, and
+        # together they must fit under the watchdog with room to spare.
+        worst_blocking_ms = 2 * config.SOCKET_TIMEOUT_SECONDS * 1000
+        self.assertLess(worst_blocking_ms, config.WATCHDOG_TIMEOUT_MS)
+        # The Wi-Fi join is polled, not blocked on, so it is allowed to take
+        # longer than a socket timeout.
+        self.assertGreater(
+            config.WIFI_JOIN_TIMEOUT_MS, config.SOCKET_TIMEOUT_SECONDS * 1000
+        )
+
+    def test_wifi_join_is_staged_across_ticks_instead_of_blocking(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+
+        self.assertFalse(supervisor.ensure_connected())
+        self.assertEqual(supervisor.wlan.connect_calls, 1)
+        # No handshake is attempted while the association is still pending.
+        self.assertEqual(supervisor.mqtt_connect_calls, 0)
+
+        for _ in range(5):
+            clock.advance(100)
+            self.assertFalse(supervisor.ensure_connected())
+        self.assertEqual(supervisor.mqtt_connect_calls, 0)
+        self.assertEqual(supervisor.wlan.connect_calls, 1)
+
+        supervisor.wlan.joined = True
+        self.assertTrue(supervisor.ensure_connected())
+        self.assertEqual(supervisor.mqtt_connect_calls, 1)
+        self.assertTrue(supervisor.connected)
+
+    def test_wifi_join_timeout_backs_off_rather_than_retrying_immediately(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        supervisor.ensure_connected()
+
+        clock.advance(config.WIFI_JOIN_TIMEOUT_MS)
+        self.assertFalse(supervisor.ensure_connected())
+        self.assertEqual(supervisor.consecutive_failures, 1)
+        self.assertEqual(supervisor.last_error, "OSError")
+
+        # Still inside the backoff: no new association attempt.
+        self.assertFalse(supervisor.ensure_connected())
+        self.assertEqual(supervisor.wlan.connect_calls, 1)
+
+        clock.advance(config.RECONNECT_BASE_MS + config.RECONNECT_JITTER_MS + 1)
+        self.assertFalse(supervisor.ensure_connected())
+        self.assertEqual(supervisor.wlan.connect_calls, 2)
+
+    def test_handshake_failure_is_recorded_and_backed_off(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        supervisor.mqtt_error = OSError(110)
+        supervisor.ensure_connected()
+        supervisor.wlan.joined = True
+
+        self.assertFalse(supervisor.ensure_connected())
+        self.assertFalse(supervisor.connected)
+        self.assertEqual(supervisor.consecutive_failures, 1)
+        self.assertEqual(supervisor.last_error, "OSError")
+        # The failure is registered as backoff, which is exactly what the reset
+        # loop prevented from ever happening.
+        self.assertIsNotNone(supervisor._next_attempt_ms)
+
+    def test_radio_is_power_cycled_after_repeated_failures(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        supervisor.mqtt_error = OSError(110)
+
+        for _ in range(config.RECONNECT_RADIO_RESET_ATTEMPTS):
+            clock.advance(config.RECONNECT_MAX_MS)
+            supervisor.ensure_connected()
+            supervisor.wlan.joined = True
+            supervisor.ensure_connected()
+
+        self.assertEqual(supervisor.radio_resets, 1)
+        self.assertEqual(supervisor.wlan.deinit_calls, 1)
+        self.assertIn(False, supervisor.wlan.active_calls)
+
+    def test_successful_connection_clears_the_escalation_counter(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        supervisor.mqtt_error = OSError(110)
+        supervisor.ensure_connected()
+        supervisor.wlan.joined = True
+        supervisor.ensure_connected()
+        self.assertEqual(supervisor.consecutive_failures, 1)
+
+        supervisor.mqtt_error = None
+        clock.advance(config.RECONNECT_MAX_MS)
+        self.assertTrue(_connect(supervisor, clock))
+        self.assertEqual(supervisor.consecutive_failures, 0)
+        self.assertEqual(supervisor.reconnects, 1)
+
+    def test_half_open_connection_is_detected_and_dropped(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        self.assertTrue(_connect(supervisor, clock))
+
+        # Nothing ever comes back: no PINGRESP, no PUBLISH. Writes into a
+        # half-open socket keep "succeeding", so silence is the only signal.
+        clock.advance(config.MQTT_INACTIVITY_TIMEOUT_MS - 1)
+        supervisor.poll()
+        self.assertTrue(supervisor.connected)
+
+        clock.advance(2)
+        supervisor.poll()
+        self.assertFalse(supervisor.connected)
+        self.assertEqual(supervisor.last_error, "OSError")
+
+    def test_received_traffic_keeps_the_connection_alive(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        self.assertTrue(_connect(supervisor, clock))
+
+        for _ in range(10):
+            clock.advance(config.MQTT_INACTIVITY_TIMEOUT_MS - 1)
+            # What the client reports for any received packet, PINGRESP included.
+            supervisor._note_activity()
+            supervisor.poll()
+            self.assertTrue(supervisor.connected)
+
+    def test_pings_are_sent_on_the_configured_interval(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        self.assertTrue(_connect(supervisor, clock))
+        client = supervisor._client
+
+        supervisor.poll()
+        self.assertEqual(client.pings, 0)
+        clock.advance(config.MQTT_PING_INTERVAL_MS)
+        supervisor._note_activity()
+        supervisor.poll()
+        self.assertEqual(client.pings, 1)
+
+    def test_poll_survives_client_errors_that_are_not_oserror(self):
+        # The vendored client asserts on malformed packets; that must never
+        # escape into the main loop and stop the relay deadline checks.
+        for error in (AssertionError(), IndexError(), MemoryError()):
+            clock = FakeClock()
+            supervisor = StubSupervisor(clock)
+            self.assertTrue(_connect(supervisor, clock))
+            supervisor._client.check_msg_error = error
+            supervisor.poll()
+            self.assertFalse(supervisor.connected)
+
+    def test_a_dropped_session_counts_toward_escalation(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        self.assertTrue(_connect(supervisor, clock))
+        supervisor.drop(OSError("gone"))
+        self.assertFalse(supervisor.connected)
+        self.assertEqual(supervisor.consecutive_failures, 1)
+
+    def test_blocking_paths_feed_the_watchdog(self):
+        clock = FakeClock()
+        watchdog = FakeWatchdog()
+        supervisor = StubSupervisor(clock, watchdog=watchdog)
+
+        supervisor.ensure_connected()
+        supervisor.wlan.joined = True
+        supervisor.ensure_connected()
+        self.assertGreater(watchdog.feeds, 0)
+
+        before = watchdog.feeds
+        supervisor.publish("t", b"{}", qos=1)
+        self.assertGreater(watchdog.feeds, before)
+
+    def test_a_missing_watchdog_never_breaks_the_network_path(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock, watchdog=None)
+        self.assertTrue(_connect(supervisor, clock))
+        self.assertTrue(supervisor.publish("t", b"{}", qos=1))
+
+    def test_publish_failure_drops_the_session(self):
+        clock = FakeClock()
+        supervisor = StubSupervisor(clock)
+        self.assertTrue(_connect(supervisor, clock))
+        supervisor._client.publish_error = OSError(104)
+        self.assertFalse(supervisor.publish("t", b"{}", qos=1))
+        self.assertFalse(supervisor.connected)
 
 
 class SafetyPolicyTest(unittest.TestCase):
