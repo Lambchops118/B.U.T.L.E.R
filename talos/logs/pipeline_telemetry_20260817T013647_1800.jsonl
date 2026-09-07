@@ -1,0 +1,4 @@
+{"timestamp":"2026-08-17T01:36:47.857+00:00","request_id":"d1f2fc558fdb","component":"text_server","event":"awareness_snapshot_completed","awareness_snapshot_ms":0.0}
+{"timestamp":"2026-08-17T01:36:47.858+00:00","request_id":"d1f2fc558fdb","component":"text_server","event":"text_stream_completed","text_stream_total_ms":1.1}
+{"timestamp":"2026-08-17T01:36:52.971+00:00","request_id":"b0e8e9149741","component":"text_server","event":"awareness_snapshot_completed","awareness_snapshot_ms":0.0}
+{"timestamp":"2026-08-17T01:36:52.971+00:00","request_id":"b0e8e9149741","component":"text_server","event":"text_stream_failed","text_stream_total_ms":0.6,"error_type":"RuntimeError"}

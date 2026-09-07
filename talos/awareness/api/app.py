@@ -16,6 +16,7 @@ from talos.awareness.api.routes import actions as action_routes
 from talos.awareness.api.routes import alerts as alert_routes
 from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
+from talos.awareness.api.routes import ingest as ingest_routes
 from talos.awareness.api.routes import memory as memory_routes
 from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.api.routes import reminders as reminder_routes
@@ -58,11 +59,46 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         action_service = ActionService(engine, settings, action_registry)
         app.state.action_service = action_service
 
+        # One pipeline and one registry snapshot serve both ingress paths: the
+        # MQTT broker and the internal /ingest endpoint. Building it here
+        # rather than inside IngestionService means internal ingestion still
+        # works with the broker disabled (TALOS_AWARENESS_MQTT_ENABLED=0), and
+        # that both paths share the same metrics and sequence state.
+        from talos.awareness.ingestion.pipeline import IngestionPipeline
+        from talos.awareness.registry.bootstrap import seed_registry
+        from talos.awareness.registry.sources import SourceRepository
+
+        sources = SourceRepository(engine)
+        pipeline = IngestionPipeline(
+            engine,
+            sources,
+            settings,
+            rule_engine=rule_engine,
+            action_service=action_service,
+        )
+        app.state.ingest_pipeline = pipeline
+        try:
+            await seed_registry(engine)
+            await sources.refresh(force=True)
+        except Exception:
+            # Self-healing: the pipeline refreshes the registry on a TTL, so a
+            # temporarily unreachable database only delays authorization.
+            logger.exception(
+                "registry bootstrap failed; API continues and will retry",
+                extra={"component": "ingestion"},
+            )
+
         if settings.mqtt_enabled:
             from talos.awareness.ingestion.service import IngestionService
 
             ingestion = IngestionService(
-                settings, engine, rule_engine=rule_engine, action_service=action_service
+                settings,
+                engine,
+                rule_engine=rule_engine,
+                action_service=action_service,
+                pipeline=pipeline,
+                sources=sources,
+                seed_on_start=False,
             )
             try:
                 await ingestion.start()
@@ -151,6 +187,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="TALOS Awareness", version=__version__, lifespan=lifespan)
     app.include_router(health_routes.router)
+    app.include_router(ingest_routes.router)
     app.include_router(read_routes.router)
     app.include_router(alert_routes.router)
     app.include_router(context_routes.router)

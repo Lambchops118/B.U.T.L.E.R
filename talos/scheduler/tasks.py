@@ -148,13 +148,15 @@ def start_scheduler(gui_queue, central_queue=None):
     )
 
     #Debug Job
-    scheduler.add_job( 
-        debug_job,
-        trigger  = CronTrigger(hour=13, minute=31), # Daily at 7:30 AM
-        args     = [gui_queue, central_queue],
-        id       = "debug_task",
-        replace_existing = True,
-    )
+    # Disabled: fired at 1:31 PM daily (the "7:30 AM" comment was wrong) and
+    # only printed to stdout.
+    #scheduler.add_job(
+    #    debug_job,
+    #    trigger  = CronTrigger(hour=13, minute=31),
+    #    args     = [gui_queue, central_queue],
+    #    id       = "debug_task",
+    #    replace_existing = True,
+    #)
 
     scheduler.add_job(
         wake_display,
@@ -180,13 +182,18 @@ def start_scheduler(gui_queue, central_queue=None):
         replace_existing = True,
     )
 
-    scheduler.add_job(
-        morning_report_job,
-        trigger  = CronTrigger(hour=7, minute=30), 
-        args     = [gui_queue, central_queue],
-        id       = "morning_report_job",
-        replace_existing = True,
-    )
+    # Disabled: the morning wake-up report moves to the awareness subsystem.
+    # This job pushed a "Generate a morning report..." voice_cmd, which the
+    # request classifier matched on "generate" and routed to a background job,
+    # so 7:30 AM only ever spoke the background acknowledgement
+    # ("I can do that. I'm working on it now.") and never the report itself.
+    #scheduler.add_job(
+    #    morning_report_job,
+    #    trigger  = CronTrigger(hour=7, minute=30),
+    #    args     = [gui_queue, central_queue],
+    #    id       = "morning_report_job",
+    #    replace_existing = True,
+    #)
 
     #scheduler.add_job(
     #    get_crypto_prices,

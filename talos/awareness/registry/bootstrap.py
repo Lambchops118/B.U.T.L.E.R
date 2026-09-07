@@ -38,6 +38,13 @@ _ENTITIES: list[dict[str, Any]] = [
     {"entity_id": "plant_pot_1", "display_name": "Plant pot 1", "entity_type": "plant", "location_id": "home"},
     {"entity_id": "plant_pot_2", "display_name": "Plant pot 2", "entity_type": "plant", "location_id": "home"},
     {"entity_id": "sim_greenhouse", "display_name": "Simulated greenhouse device", "entity_type": "device", "location_id": "home"},
+    # The human and the agent are first-class entities: presence, interaction,
+    # and agent-side outcomes attach to them exactly like device state attaches
+    # to a pump. Without these rows nothing about the people in the house can
+    # be recorded, because state and telemetry only bind to registered
+    # entities (see IngestionPipeline._resolve_entity).
+    {"entity_id": "owner", "display_name": "Owner", "entity_type": "person", "location_id": "home"},
+    {"entity_id": "talos", "display_name": "TALOS agent", "entity_type": "agent", "location_id": "home"},
 ]
 
 _SOURCES: list[dict[str, Any]] = [
@@ -101,6 +108,50 @@ _SOURCES: list[dict[str, Any]] = [
         "clock_quality": "device_synced",
         "allowed_topics": ["home/sim/#"],
         "metadata": {"simulator": True},
+    },
+    {
+        # The main agent process reporting on the human and on itself. Its
+        # topics live under home/ so the existing canonical normalizer handles
+        # them unchanged, but metadata.allowed_transports pins the source to
+        # the internal (loopback API) transport: the MQTT ingress subscribes
+        # home/#, so without that pin anyone on the LAN broker could publish
+        # fabricated presence or interaction events.
+        #
+        # clock_quality is gateway_stamped, not device_synced: the agent runs
+        # on the same host as this backend and stamps observed_at from that
+        # host clock, so the time is trustworthy for ordering but is still a
+        # stamp applied by an intermediary rather than by a synchronized
+        # device.
+        #
+        # Freshness: presence state goes stale after 15 minutes (a person
+        # detected a quarter-hour ago is evidence, not a current fact), so a
+        # person seen a while ago is never read as "here now".
+        #
+        # Offline detection is switched off entirely. Every other source is a
+        # device that reports on a schedule, so silence means a fault. This
+        # source reports only when a human interacts, so silence means nobody
+        # was home — normal, not a fault. Without the opt-out, leaving the
+        # machine off for a day would make TALOS announce that TALOS is
+        # offline on the next startup.
+        "source_id": "talos_agent",
+        "source_type": "agent",
+        "display_name": "TALOS main agent (internal signals)",
+        "transport": "internal",
+        "entity_id": "talos",
+        "location_id": "home",
+        "clock_quality": "gateway_stamped",
+        "stale_after_seconds": 900.0,
+        "allowed_topics": [
+            "home/presence/owner/state",
+            "home/interaction/owner/event",
+            "home/agent/talos/event",
+            "home/agent/talos/state",
+        ],
+        "metadata": {
+            "internal": True,
+            "allowed_transports": ["internal"],
+            "offline_detection": False,
+        },
     },
 ]
 

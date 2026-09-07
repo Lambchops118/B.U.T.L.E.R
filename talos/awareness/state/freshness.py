@@ -191,6 +191,21 @@ class FreshnessWorker:
                     Source.enabled.is_(True),
                     Source.health_status.notin_(("offline", "misconfigured", "unauthorized", "unknown")),
                     Source.last_received_at.is_not(None),
+                    # Silence is only evidence of a fault for a source that is
+                    # *expected* to report on a schedule. A source may opt out
+                    # with metadata.offline_detection = false; the agent's own
+                    # internal signal source does, because it reports only when
+                    # a human interacts. Going quiet overnight is normal there,
+                    # and announcing "TALOS is offline" on the next startup
+                    # would be both alarming and false.
+                    # Written as an explicit NULL check: in SQL, a missing key
+                    # compared to 'false' yields NULL, not TRUE, so a bare
+                    # NOT(...) would drop every source that does not carry the
+                    # key -- silently disabling offline detection fleet-wide.
+                    sa.or_(
+                        Source.metadata_json["offline_detection"].astext.is_(None),
+                        Source.metadata_json["offline_detection"].astext != "false",
+                    ),
                 )
                 .with_for_update()
             )

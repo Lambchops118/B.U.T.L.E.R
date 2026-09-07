@@ -727,6 +727,7 @@ def _emit_tool_call_telemetry(
     after :func:`_shape_tool_output` so truncation/summarisation savings are
     visible, and result *text* is never emitted -- only its length.
     """
+    failed = _tool_result_indicates_failure(raw_result)
     _emit_runtime_telemetry(
         callback,
         request_id=request_id,
@@ -737,8 +738,28 @@ def _emit_tool_call_telemetry(
         tool_ms=tool_ms,
         raw_result_bytes=len(raw_result.encode("utf-8", "replace")),
         shaped_output_bytes=len(shaped_output.encode("utf-8", "replace")),
-        failed=_tool_result_indicates_failure(raw_result),
+        failed=failed,
     )
+    # The JSONL telemetry above is for humans reading logs after the fact.
+    # A *failed* tool call is also a fact about the world the system should be
+    # able to recall and raise later ("the watering you asked for did not go
+    # through"), so failures — and only failures, to keep the event store
+    # signal-dense — are additionally recorded in awareness. Result text is
+    # never sent, only its shape.
+    if failed:
+        from talos.services import awareness_signals
+
+        awareness_signals.record_agent_event(
+            "agent.tool.failed",
+            {
+                "tool_name": name,
+                "transport": "host" if name in HOST_TOOL_NAMES else "mcp",
+                "round": round_number,
+                "tool_ms": round(tool_ms, 1),
+                "request_id": request_id,
+            },
+            severity="warning",
+        )
 
 
 def _normalize_interaction_mode(mode: str | None) -> str:

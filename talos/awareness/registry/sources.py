@@ -5,6 +5,13 @@ exact topics or MQTT-style patterns with ``+`` and trailing ``#``). Messages
 on unowned topics are dead-lettered by the pipeline, and a payload claiming a
 ``source_id`` other than the topic owner's is rejected as spoofing.
 
+A source may additionally restrict which *transports* may speak for it via
+``metadata.allowed_transports``. An absent or empty list means unrestricted
+(the pre-existing behavior for every device source). Internal sources — the
+main agent's presence/interaction/agent signals — list ``["internal"]`` so a
+message arriving over MQTT can never forge them, even though their topics sit
+under the ``home/`` tree the broker ingress subscribes to.
+
 The repository keeps a snapshot in memory and refreshes it on a TTL so the
 hot ingestion path never queries PostgreSQL per message.
 """
@@ -51,6 +58,18 @@ class SourceRecord:
     last_sequence: int | None
     last_boot_id: str | None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def allowed_transports(self) -> tuple[str, ...]:
+        """Transports permitted to speak for this source; empty = unrestricted."""
+        raw = self.metadata.get("allowed_transports")
+        if not isinstance(raw, list):
+            return ()
+        return tuple(str(item) for item in raw if isinstance(item, str) and item)
+
+    def permits_transport(self, transport: str) -> bool:
+        allowed = self.allowed_transports
+        return not allowed or transport in allowed
 
 
 class SourceRepository:

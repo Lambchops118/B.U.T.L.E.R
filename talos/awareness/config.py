@@ -103,6 +103,17 @@ class AwarenessSettings(BaseSettings):
     # --- ingestion bounds ---------------------------------------------------
     max_event_payload_bytes: int = Field(default=65536, ge=1024)
 
+    # --- internal (non-MQTT) ingestion ---------------------------------------
+    # The loopback /ingest endpoint accepts one message on behalf of an
+    # internal source: the main agent's presence/interaction/agent signals and
+    # manual injection while debugging. It reuses the identical pipeline as
+    # the broker ingress — same registry authorization, normalization,
+    # sequence assessment, state effects, and rules — and adds no bypass:
+    # a topic no registered source owns is still dead-lettered. Set to 0 to
+    # refuse internal ingestion entirely (the agent then degrades to
+    # read-only, which it reports truthfully).
+    ingest_api_enabled: bool = True
+
     # --- state freshness (Phase 3) -------------------------------------------
     # Per-source values in the registry override these defaults.
     default_stale_after_seconds: float = Field(default=300.0, gt=0)
@@ -223,6 +234,7 @@ class AwarenessSettings(BaseSettings):
             "mqtt_tls": self.mqtt_tls,
             "mqtt_client_id": self.mqtt_client_id,
             "max_event_payload_bytes": self.max_event_payload_bytes,
+            "ingest_api_enabled": self.ingest_api_enabled,
         }
 
 

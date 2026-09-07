@@ -13,6 +13,9 @@ The implementation follows the phase-gated plan in
 (Phase 0 discovery → Phase 8 hardening).
 
 **Status: Phase 8 (Retention, Security, and Hardening) complete — all phases implemented.**
+**Follow-on (2026-09-06): human context — presence, interaction, and agent
+outcomes now enter the subsystem, and `POST /ingest` accepts internal and
+manual messages. See "Human context" below.**
 
 ## Setup
 
@@ -70,6 +73,8 @@ Secrets never appear in logs or health output.
 | `TALOS_AWARENESS_MQTT_HOST` / `_MQTT_PORT` | falls back to legacy `MQTT_BROKER` / `MQTT_PORT`, then `192.168.1.160:1883` | Existing Raspberry Pi Mosquitto broker (used from Phase 2) |
 | `TALOS_AWARENESS_MQTT_TLS` / `_MQTT_USERNAME` / `_MQTT_PASSWORD` / `_MQTT_CLIENT_ID` / … | see `config.py` | Broker security/session options |
 | `TALOS_AWARENESS_MAX_EVENT_PAYLOAD_BYTES` | `65536` | Ingestion payload bound |
+| `TALOS_AWARENESS_INGEST_API_ENABLED` | `1` | Accept internal/manual messages on `POST /ingest` (same pipeline, no bypass) |
+| `TALOS_AWARENESS_SIGNALS_ENABLED` | `1` | Read by the **main/voice** processes: emit presence, interaction, and agent-outcome signals |
 
 ## MQTT ingestion (Phase 2)
 
@@ -97,6 +102,7 @@ deployment is seeded idempotently at startup (`registry/bootstrap.py`):
 | `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
 | `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
 | `sim_device` | `home/sim/#` | Simulator for development and tests |
+| `talos_agent` | `home/presence/owner/state`, `home/interaction/owner/event`, `home/agent/talos/{event,state}` | The main agent reporting on the human and on itself. Pinned to the `internal` transport (`metadata.allowed_transports`) so the LAN broker cannot forge it — see "Human context" |
 
 Seed rows are inserted with `ON CONFLICT DO NOTHING`, so editing a seed never
 reaches a database that has already booted. `bootstrap.apply_source_migrations`
@@ -588,6 +594,116 @@ backlog/oldest-age, data-directory disk usage, last backup. Component health
 (DB/extensions/migration revision, MQTT, workers, rules) stays at
 `GET /health/components` with truthful degradation.
 
+## Human context: presence, interaction, and agent outcomes
+
+Phases 1-8 built a *device* backend: it knew a great deal about pumps, fans,
+and pin states and nothing about the person in the room or about the agent's
+own work. This section covers the producer side that closes that gap. No
+schema migration was required — `entity_type` already permitted `person` and
+`agent`, and `attention_items` already carried `conversation_relevance`,
+`interruptibility`, `preferred_channel`, and `cooldown_key`. The sockets
+existed; nothing was plugged into them.
+
+### Internal ingestion (`POST /ingest`)
+
+The main agent and a human debugging the subsystem both need to put a message
+into the pipeline without publishing to the broker. `POST /ingest` takes
+`{topic, payload, retained?, transport?}`, builds the identical
+`InboundMessage` the MQTT ingress builds, and hands it to the same
+`IngestionPipeline.handle`. It is **not** a bypass: registry topic ownership,
+transport authorization, payload bounds, normalization, sequence assessment,
+state effects, and rule evaluation all apply unchanged, and a topic no
+registered source owns is dead-lettered exactly as it would be from MQTT.
+
+Its advantage over publishing to the broker is that the disposition comes back
+**synchronously** — `accepted`, `duplicate`, or `dead_letter:{reason}` — so a
+rejected message explains itself immediately instead of only in
+`dead_letter_events`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8600/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"topic":"home/sim/greenhouse/telemetry/temperature",
+       "payload":{"value":71.2,"unit":"F"}}'
+# {"topic":"...","transport":"internal","disposition":"accepted","accepted":true}
+```
+
+Bearer-gated like every other mutation (`TALOS_AWARENESS_API_TOKEN` when set),
+and disabled entirely with `TALOS_AWARENESS_INGEST_API_ENABLED=0`. The
+pipeline is built at startup regardless of `TALOS_AWARENESS_MQTT_ENABLED`, so
+internal ingestion still works with the broker switched off.
+
+### Transport authorization
+
+A source may now pin itself to a set of transports via
+`metadata.allowed_transports`; absent or empty means unrestricted, which is
+every device source's existing behavior. `talos_agent` lists `["internal"]`.
+This matters because its topics live under `home/`, which the broker ingress
+subscribes to — without the pin, anyone on the LAN broker could publish
+fabricated presence. Violations are dead-lettered as `unauthorized_transport`.
+
+### What the agent reports
+
+| Topic | Source | Becomes |
+|---|---|---|
+| `home/presence/owner/state` | `talos_agent` | `present` / `modality` / `detail` state on the `owner` person entity |
+| `home/interaction/owner/event` | `talos_agent` | `person.interaction.started` / `.ended` events (history only) |
+| `home/agent/talos/event` | `talos_agent` | `agent.job.*` / `agent.tool.failed` events on the `talos` agent entity |
+
+Emission lives in [`talos/services/awareness_signals.py`](../services/awareness_signals.py)
+(main venv, stdlib only, so the voice worker can import it too). Three
+properties it must keep, because it sits on the voice hot path: it never
+blocks the caller (one bounded daemon thread), it never raises (a failure to
+record that someone spoke must not stop them being answered), and the queue is
+hard-capped at 256 with dropped signals **counted** and reported by
+`awareness_signals.stats()` rather than hidden.
+
+Wake word and barge-in are treated as what they are: timestamped observations
+that a person is in the room, from a source of known reliability. They decay
+through the existing freshness worker (`stale_after_seconds = 900` on
+`talos_agent`), so "detected 40 minutes ago" can never read as "here now".
+
+Deliberately **not** recorded: utterance text. Awareness stores what happened,
+not what was said. A transcript would drown the situation broker's token
+budget and turn an event store into a chat log. Failed *tool* calls are
+recorded as history but raise nothing (they are often retried within the same
+turn); a failed background *job* the user explicitly asked for does raise a
+deferred, non-notifying attention item (`agent-job-failed` in `rules.toml`,
+policy version 2).
+
+### Human context in the situation snapshot
+
+`/situation` gained a `PRESENCE` section directly below alerts, plus two
+deterministic effects on attention selection:
+
+- **`interruptibility` is honored.** `passive` items ("mention it if we are
+  already talking") are withheld while nobody is present, and stay pending for
+  a later read.
+- **`conversation_relevance` is scored** against the entities named by recent
+  interaction/agent events. A match sorts an item earlier *within its priority
+  band*; bands never change, so a critical alert can never be reordered behind
+  small talk. Every decision is in the existing audit, now carrying a
+  `relevance` field and a reason such as
+  `pending_attention+matches_conversation_entity`.
+
+The `limitations` string is now computed per-request and reports exactly which
+human signals were available: whether presence has ever been recorded, whether
+any recent interaction named an entity (if none did, relevance contributed
+nothing and ordering is plain priority), and that user location within the
+home is still not modeled. That last one remains genuinely absent — it is
+reported, not invented.
+
+### Memory candidates
+
+`POST /memory/candidates` existed with zero callers; nothing ever proposed a
+memory for review. The `propose_memory_candidate` MCP tool now feeds it, for
+facts the agent *inferred* rather than being told to store. Candidates land
+with lower confidence (0.55 vs 0.85 for explicit user confirmation) and
+model-attributed provenance, and go through the existing duplicate and
+contradiction checks, so a wrong guess is supersedable rather than becoming a
+permanent false fact. `remember_memory_fact` still writes the deterministic
+path for facts the user explicitly asked to keep.
+
 ## Tests
 
 ```bash
@@ -596,7 +712,8 @@ backlog/oldest-age, data-directory disk usage, last backup. Component health
   tests.test_awareness_config tests.test_awareness_event_schema \
   tests.test_awareness_health tests.test_awareness_ingestion_unit \
   tests.test_awareness_state_unit tests.test_awareness_rules_unit \
-  tests.test_awareness_context_unit tests.test_awareness_actions_unit
+  tests.test_awareness_context_unit tests.test_awareness_actions_unit \
+  tests.test_awareness_signals_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
@@ -606,7 +723,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
   tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
   tests.test_awareness_context_integration tests.test_awareness_memory_integration \
   tests.test_awareness_actions_integration tests.test_awareness_hardening_integration \
-  tests.test_awareness_actions_integration
+  tests.test_awareness_presence_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
 .venv-main/bin/python -m unittest tests.test_text_server_notify \

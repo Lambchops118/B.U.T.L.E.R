@@ -21,6 +21,7 @@ import numpy as np
 import speech_recognition as sr
 
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
+from talos.services import awareness_signals
 from talos.telemetry import emit_pipeline_event
 from talos.text.service_client import (
     send_interrupt,
@@ -793,6 +794,9 @@ def _report_then_redispatch(
         return
     benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
     benchmark.mark_wake_word_detected()
+    awareness_signals.record_presence(
+        modality="wake_word", confidence=0.95, detail="barge_in", force=True
+    )
     benchmark.set_transcript(transcript.lower())
     benchmark.set_command(command)
     benchmark.set_dimension("barge_in", True)
@@ -1199,6 +1203,14 @@ def _process_recognition_audio(audio_data):
             # cue is not queued behind the dispatch it is meant to announce.
             _signal_wake_cue()
             benchmark.mark_wake_word_detected()
+            # A wake word is a timestamped observation that a person is in the
+            # room, from a source of known reliability -- structurally the same
+            # kind of fact as a pin status, and previously discarded. force=True
+            # because a deliberate wake is always worth recording, even inside
+            # the presence rate-limit window.
+            awareness_signals.record_presence(
+                modality="wake_word", confidence=0.95, force=True
+            )
             command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
             print(f"Command received: {command}")
             if command:

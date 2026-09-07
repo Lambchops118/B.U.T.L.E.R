@@ -511,6 +511,28 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             self._send_sse({"type": "error", "error": str(exc)})
         finally:
             agent_runtime.release_cancel(request_id)
+            # The streaming lane runs the agent directly instead of going through
+            # the router, so it also has to publish the turn to the GUI itself --
+            # otherwise the voice lane never reaches the panel at all. In the
+            # finally block so barge-in, client disconnect, and mid-turn errors
+            # still show whatever was said and heard.
+            self._publish_turn_banner(command, "".join(full_parts).strip())
+
+    def _publish_turn_banner(self, command: str, response: str) -> None:
+        """Show one completed turn on the pygame panel via the router's ui lane.
+
+        Best-effort by design: the banner is an add-on to a turn the user has
+        already heard, so a queue that is missing or full must never surface as
+        a failed voice command.
+        """
+        if not command:
+            return
+        try:
+            self.server.central_queue.put_nowait(
+                Message(type="ui", payload=("VOICE_CMD", command, response))
+            )
+        except Exception as exc:  # noqa: BLE001 - display is never load-bearing
+            print(f"[text-agent] could not publish turn to GUI: {exc}")
 
     def _send_sse(self, payload: dict[str, Any]) -> None:
         data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")

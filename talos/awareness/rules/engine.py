@@ -173,6 +173,7 @@ class RuleEngine:
         entity_id: str | None,
         severity: str,
         now: datetime,
+        conversation_relevance: dict[str, Any] | None = None,
     ) -> int:
         reason = render_template(action.reason, fields) or "attention"
         attention_id = await self._alerts.raise_attention(
@@ -195,5 +196,14 @@ class RuleEngine:
             notify=action.notify,
             notification_payload={"severity": severity, "reason": reason},
             now=now,
+            # What this item is about, recorded deterministically from the
+            # rule that fired. The situation broker uses it to order items
+            # against what the human was just discussing.
+            conversation_relevance=conversation_relevance
+            or {
+                "entity_id": entity_id,
+                "source_id": fields.get("source_id"),
+                "event_type": fields.get("event_type"),
+            },
         )
         return 1 if attention_id is not None else 0

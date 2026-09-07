@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import re
+import time
 import urllib.request
 from typing import Optional
 
@@ -12,7 +13,7 @@ from talos.config import env_bool
 from talos.jobs import TERMINAL_STATUSES, JobManager, JobRecord, get_default_job_store
 from talos.messages import Message, StatusPayload, TextPayload, VoicePayload
 from talos.request_classifier import RequestClassification, classify_request
-from talos.services import awareness_client
+from talos.services import awareness_client, awareness_signals
 from talos.state_store import StateStore
 
 
@@ -274,37 +275,60 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     allow_model_route=VOICE_MODEL_ROUTING_ENABLED,
                 )
                 decision = _enforce_foreground_for_sensitive_actions(vp.command, decision)
-                if decision.mode == "status":
-                    response_text = _run_agent_command(
-                        vp.command,
-                        gui_queue,
-                        snapshot,
+                # Someone spoke: that is an observation of presence and the
+                # start of an interaction. Recorded as bounded facts (never
+                # the utterance), non-blocking, and it cannot fail this turn.
+                _interaction_start = time.monotonic()
+                awareness_signals.record_presence(modality="voice")
+                awareness_signals.record_interaction_started(
+                    session_id="voice",
+                    modality="voice",
+                    source="voice",
+                    routing_mode=decision.mode,
+                )
+                try:
+                    _voice_ok = True
+                    if decision.mode == "status":
+                        response_text = _run_agent_command(
+                            vp.command,
+                            gui_queue,
+                            snapshot,
+                            session_id="voice",
+                            interaction_mode="voice",
+                            extra_context=runtime_context,
+                        )
+                        _speak_via_voice_worker(response_text)
+                    elif decision.mode == "background":
+                        job = job_manager.submit(
+                            session_id="voice",
+                            source="voice",
+                            request_text=vp.command,
+                            state_snapshot=snapshot,
+                            interaction_mode="voice",
+                            classification_reason=decision.reason,
+                        )
+                        ack_text = decision.response.strip() or BACKGROUND_ACK
+                        gui_queue.put(("VOICE_CMD", vp.command, f"{ack_text} Job ID: {job.job_id}"))
+                        _speak_via_voice_worker(ack_text)
+                    else:
+                        response_text = _run_agent_command(
+                            vp.command,
+                            gui_queue,
+                            snapshot,
+                            session_id="voice",
+                            interaction_mode="voice",
+                        )
+                        _speak_via_voice_worker(response_text)
+                except Exception:
+                    _voice_ok = False
+                    raise
+                finally:
+                    awareness_signals.record_interaction_ended(
                         session_id="voice",
-                        interaction_mode="voice",
-                        extra_context=runtime_context,
+                        modality="voice",
+                        duration_seconds=time.monotonic() - _interaction_start,
+                        ok=_voice_ok,
                     )
-                    _speak_via_voice_worker(response_text)
-                elif decision.mode == "background":
-                    job = job_manager.submit(
-                        session_id="voice",
-                        source="voice",
-                        request_text=vp.command,
-                        state_snapshot=snapshot,
-                        interaction_mode="voice",
-                        classification_reason=decision.reason,
-                    )
-                    ack_text = decision.response.strip() or BACKGROUND_ACK
-                    gui_queue.put(("VOICE_CMD", vp.command, f"{ack_text} Job ID: {job.job_id}"))
-                    _speak_via_voice_worker(ack_text)
-                else:
-                    response_text = _run_agent_command(
-                        vp.command,
-                        gui_queue,
-                        snapshot,
-                        session_id="voice",
-                        interaction_mode="voice",
-                    )
-                    _speak_via_voice_worker(response_text)
 
             elif msg.type == "text_cmd":
                 tp: TextPayload = msg.payload
@@ -320,6 +344,20 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     allow_model_route=VOICE_MODEL_ROUTING_ENABLED or interaction_mode != "voice",
                 )
                 decision = _enforce_foreground_for_sensitive_actions(tp.command, decision)
+                # A typed command is presence evidence too, just a weaker one:
+                # it proves someone is at a keyboard, not that they are in the
+                # room, so it is reported with its own modality.
+                _interaction_start = time.monotonic()
+                _text_ok = True
+                awareness_signals.record_presence(
+                    modality="text", detail=f"source:{tp.source}"
+                )
+                awareness_signals.record_interaction_started(
+                    session_id=tp.session_id,
+                    modality="text",
+                    source=tp.source,
+                    routing_mode=decision.mode,
+                )
                 try:
                     if decision.mode == "status":
                         response_text = _run_agent_command(
@@ -380,6 +418,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                             }
                         )
                 except Exception as exc:
+                    _text_ok = False
                     if tp.reply_queue is not None:
                         tp.reply_queue.put(
                             {
@@ -389,6 +428,13 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                                 "source": tp.source,
                             }
                         )
+                finally:
+                    awareness_signals.record_interaction_ended(
+                        session_id=tp.session_id,
+                        modality="text",
+                        duration_seconds=time.monotonic() - _interaction_start,
+                        ok=_text_ok,
+                    )
 
             elif msg.type == "event":
                 if msg.needs_llm:

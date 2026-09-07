@@ -2,7 +2,7 @@
 # Validated against talos/awareness/rules/policy.py; the version is recorded
 # with every derived alert. "hard" rules take precedence over classification.
 
-version = 1
+version = 2
 
 # --- overflow: the canonical critical scenario -------------------------------
 
@@ -53,6 +53,40 @@ value = false
 
 [rules.actions.resolve]
 deduplication_key = "overflow:{entity_id}"
+
+# --- the agent's own failed work ---------------------------------------------
+# Background work the user explicitly asked for, which then failed, is a fact
+# about the world worth surfacing later -- not just a log line. Deliberately
+# conservative: classification (never hard), warning severity, one item per
+# job, next_interaction rather than an interruption, and an hour-long cooldown
+# per session so a repeatedly failing job cannot become nagging. Failed *tool*
+# calls (agent.tool.failed) are recorded as history but raise nothing: they
+# are frequently retried and recovered from within the same turn.
+
+[[rules]]
+id = "agent-job-failed"
+description = "A background job the user asked for failed; mention it next time we speak"
+kind = "classification"
+
+[rules.match]
+event_type = "agent.job.failed"
+
+[rules.actions.alert]
+alert_type = "agent_job_failed"
+severity = "warning"
+title = "Background work failed"
+description = "Job {payload.job_id} ({payload.source}) failed: {payload.error}"
+deduplication_key = "agent_job_failed:{payload.job_id}"
+recommended_actions = ["Ask the user whether to retry"]
+
+[rules.actions.attention]
+priority = 5
+interruptibility = "next_interaction"
+reason = "A background job failed: {payload.error}"
+preferred_channel = "voice"
+cooldown_key = "agent_job_failed:{payload.session_id}"
+cooldown_seconds = 3600
+notify = false
 
 # --- worker-detected source silence ------------------------------------------
 

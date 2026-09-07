@@ -149,6 +149,51 @@ def register(server: FastMCP) -> None:
         )
 
     @server.tool()
+    def propose_memory_candidate(
+        statement: str,
+        scope: str = "general",
+        memory_type: str = "semantic",
+        session_id: str = "",
+        importance: float = 0.5,
+        sensitivity: str = "normal",
+    ) -> str:
+        """Propose something worth remembering that the user did NOT ask you
+        to remember explicitly — an observation from the conversation such as
+        a preference, a habit, or a fact about their setup.
+
+        Use this instead of remember_memory_fact when you inferred the fact
+        rather than being told to store it. Candidates are recorded with lower
+        confidence and a model-attributed provenance trail, are checked
+        against existing memories for duplication and contradiction, and can
+        be superseded later — so a wrong guess is recoverable rather than
+        becoming a permanent false 'fact'. Do not use it for current device
+        state or numeric readings; those are events, not memories."""
+        try:
+            return _dumps(
+                awareness_client.post_json(
+                    "/memory/candidates",
+                    {
+                        "statement": statement,
+                        "memory_type": memory_type or "semantic",
+                        "scope": scope or "general",
+                        "importance": max(0.0, min(1.0, float(importance))),
+                        "sensitivity": sensitivity or "normal",
+                        "evidence": [
+                            {
+                                "kind": "conversation",
+                                "reference": f"session:{session_id or 'unknown'}",
+                                "metadata": {"tool": "propose_memory_candidate"},
+                            }
+                        ],
+                        "proposing_model": "talos-agent",
+                        "prompt_version": "candidate-v1",
+                    },
+                )
+            )
+        except RuntimeError as exc:
+            return _dumps({"error": str(exc)})
+
+    @server.tool()
     def request_device_action(
         action: str,
         parameters: str = "{}",
