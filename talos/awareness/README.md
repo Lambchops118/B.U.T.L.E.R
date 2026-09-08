@@ -283,20 +283,34 @@ Channels (existing transports only):
 
 | Channel | Transport | "Confirmed" means | Limitation |
 |---|---|---|---|
-| `voice` | authenticated `POST /speak` on the text server (:8420) → router `voice_cmd` lane → agent phrases it → router hands the text to the **voice worker's** `/speak` (127.0.0.1:8610) → Polly TTS + audio out | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent + Ollama + the voice worker running |
+| `voice` | authenticated `POST /speak` on the text server (:8420) → typed router announcement → existing **voice worker's** `/speak` (127.0.0.1:8610) → Polly TTS + audio out | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent and voice worker; no downstream Ollama phrasing |
 | `gui` | authenticated `POST /notify` on the text server (:8420) → router `ui` lane → pygame GUI | text server accepted and enqueued the banner | not proof a human saw the screen |
 | `log` | structured awareness log | log record emitted | passive; always-available fallback |
 
 The default preferred channel for the seeded rules is `voice` (owner decision:
 maximize spoken presence): the awareness backend still **detects and renders
-factual wording deterministically** (no Ollama in the backend), and the LLM
-only phrases the sentence spoken aloud on the main-agent side. `voice` is built
+factual wording deterministically**. The main agent speaks supplied announcements
+directly without an LLM rewrite. Briefings keep diagnostic `text` in their audit
+and use bounded `spoken_text` for delivery (`briefing-speech-v1`). Presence metadata
+is silent; legacy queued diagnostics receive safe category summaries. Optional
+briefing model selection chooses IDs only. `voice` is built
 whenever `TALOS_AWARENESS_NOTIFY_URL` is set and `TALOS_AWARENESS_NOTIFY_VOICE_ENABLED`
 is true (default); the fallback order after a failed preferred channel is
 `voice → gui → log`, so a wedged agent still degrades to a banner and the log.
 
 Delivery evidence per alert: `GET /alerts/{id}/deliveries`. Backlog and
 oldest-pending age appear under `outbox_worker` in `/health/components`.
+
+Awareness notification and briefing receipts retain the rendered announcement
+title/text and source references, with `playback_confirmed: false`. Situation
+context includes the latest three accepted voice announcements within 24 hours,
+under the existing token budget and below alerts. This supports conversational
+recall without treating TALOS's own words as new facts. Failed attempts and GUI/log
+deliveries are excluded. Briefing history (`/briefings`, `list_recent_briefings`)
+also exposes saved wording; legacy receipts without wording are not reconstructed.
+Manual-test provenance remains in source events. Restart awareness and the MCP
+provider/main agent to load the change. Other direct speech callers outside the
+awareness ledger are not recorded by this mechanism.
 
 ### Reminders and the due-time worker
 
@@ -703,6 +717,127 @@ model-attributed provenance, and go through the existing duplicate and
 contradiction checks, so a wrong guess is supersedable rather than becoming a
 permanent false fact. `remember_memory_fact` still writes the deterministic
 path for facts the user explicitly asked to keep.
+
+## Proactive briefings (Phase 9A–9D)
+
+`talos.awareness.context.briefing.BriefingAssembler(engine, settings).build(kind)`
+returns a deterministic candidate set. When explicitly enabled, a clock/arrival
+worker queues durable briefing work; a dedicated outbox worker assembles,
+optionally ranks, and delivers it through the existing notification adapters.
+The model selects content, never the moment, detection, severity, or actions.
+No model call was added to ingestion or the conversational reply path.
+
+Candidates share the situation broker's `Candidate` vocabulary (`item_id`,
+`priority`, `text`, `reason`, `relevance`) and temporal helpers, adding `category`,
+`entity_id`, `source_id`, `timestamp`, `query`, `evidence`, and `novelty_score`.
+Categories: `alert`, `transition`, `agent_outcome`, `novelty`, `interaction`,
+`reminder`. Versioned query identifiers refer to the typed storage methods in
+`talos/awareness/history/briefing.py`. The `queries` audit records their time
+ranges, limits, counts, and truncation; per-candidate `audit` records selection
+under the assembly bound. Event rendering excludes raw payloads/transcripts.
+Unknown source attribution is explicit. Only exact structured briefing
+preferences from normal/personal active memories are read, never unrestricted
+memory statements or restricted memories.
+
+Windows use the last confirmed delivery's recorded `window.end` for the same
+`metadata.briefing_kind`, preserving events received during selection/deferral.
+Older receipts lacking that field use their confirmation/attempt timestamp.
+Failed delivery and outbox completion never advance the window. First run uses
+the configured lookback and reports `configured_first_run_window`. Confirmed
+item ids are excluded across briefing kinds, and ordinary pending notifications
+retain ownership of their alerts/reminders. Notification receipts remain after
+completed outbox retention. No migration was necessary.
+
+| Setting (`TALOS_AWARENESS_` prefix) | Default | Effect |
+|---|---:|---|
+| `BRIEFING_DEFAULT_WINDOW_HOURS` | 24 | First-run lookback |
+| `BRIEFING_MAX_CANDIDATES` | 100 | Total candidate cap and per-source limit |
+| `BRIEFING_NOVELTY_BASELINE_DAYS` | 7 | Prior hourly aggregate lookback |
+| `BRIEFING_NOVELTY_Z_THRESHOLD` | 3.0 | Minimum absolute z-score |
+| `BRIEFING_ENABLED` | false | Opt in to proactive delivery on backend restart |
+| `BRIEFING_SCHEDULE_TIME` | 08:00 | Daily morning briefing, host local time |
+| `BRIEFING_ARRIVAL_ENABLED` | true | Include absent/stale/offline → present transitions |
+| `BRIEFING_ARRIVAL_LOOKBACK_MINUTES` | 60 | Bounded arrival catch-up window |
+| `BRIEFING_INTERVAL_SECONDS` | 15 | Deterministic moment poll interval |
+| `BRIEFING_MAX_ITEMS` | 3 | Hard cap per delivery batch |
+| `BRIEFING_CHANNEL` | voice | Existing voice, gui, or log adapter |
+| `BRIEFING_MODEL_ENABLED` | false | Optional Ollama ranking; requires `CHAT_MODEL` |
+| `BRIEFING_MODEL_TIMEOUT_SECONDS` | 5 | Overall ranking timeout |
+| `BRIEFING_PROMPT_MAX_CHARS` | 24000 | Maximum model prompt size |
+
+`MAX_QUERY_RANGE_DAYS`, `MAX_QUERY_POINTS`, and `MAX_EVENT_PAGE_SIZE` impose
+additional bounds. Baseline and candidate data together stay within the maximum
+query range. Reads share a repeatable-read snapshot; count/window truncations
+are audited. Potential critical-item truncation fails assembly rather than
+returning an incomplete safety summary. Query errors return no partial result
+and log only error type and briefing kind. Empty windows return no candidates.
+
+SQL pools sample counts, means, and sample variances from `measurements_1h`
+over complete hours preceding the candidate window: no self-baseline. Units
+remain separate; the existing aggregate combines sources within an entity.
+Missing, constant, nonfinite, or over-bound baselines remain unscored and are
+counted in the audit. Refresh lag can reduce coverage. Bounded retained history
+cannot prove a first-ever observation, so no such claim is made.
+
+For a future numeric source, register its entity/source and topic ownership,
+set deadbands/staleness, then ingest timestamped measurements normally. Existing
+hourly aggregates supply this same novelty calculation. No finance poller,
+credentials, external integration, or unsorted-data store is introduced here.
+
+Scheduled work is idempotent per local date; arrivals are idempotent per stored
+transition id. Repeated true→true presence signals cannot trigger briefings.
+Only today's scheduled moment is caught up after downtime; arrival catch-up is
+bounded by the setting above. Presence remains the existing single-owner,
+interaction-based signal, not proof of physical arrival or identity. The old
+commented-out `morning_report_job` schedule is unchanged; do not enable both.
+
+The selector uses prompt version `briefing-selection-v1`. Its strict result is
+`chosen: [{item_id, reason}]`. Unknown/duplicate ids and malformed responses
+are rejected; model phrasing is not accepted. Delivery uses the stored candidate
+text. Dismissed classes/items are filtered before prompting, and explicit
+interest affects deterministic ranking within priority bands. Critical items
+are added regardless of model output or dismissals. The cap applies after
+ranking; critical overflow creates durable continuation batches, each capped.
+Quiet hours defer noncritical batches through the existing quiet-hours helper,
+without spending the outbox retry budget.
+
+Timeout, unavailable/unset model, invalid output, or disabled ranking selects
+deterministically and records `selection_mode: deterministic_fallback` plus
+the reason. Valid model decisions record `model_selection`, model name, prompt
+version, offered/chosen ids, and reasons. Prompts are bounded and sent only to
+loopback Ollama, with environment proxies and redirects disabled. A separate
+outbox claim lane prevents briefing inference from blocking ordinary alerts.
+Local GPU contention remains a deployment consideration; no new voice latency
+benchmark has been run.
+
+Selections are frozen in the outbox before delivery; retries reuse them.
+Confirmed receipt, attention delivery status, and any continuation commit
+together. Before each send, receipt/attention status and preferences are
+rechecked. A failed configured channel is recorded and retried, never replaced
+with a successful log receipt masquerading as speech. Empty or wholly dismissed
+briefings remain silent. `GET /briefings?limit=10` exposes bounded receipt
+summaries; full selection/query provenance remains in the ledger. Worker state
+and queue counts appear in `/health/components` and `/metrics`.
+
+`POST /briefings/feedback` accepts exactly one `category` or `item_id`, plus
+`value: dismiss|interest|neutral`. It writes a personal semantic memory in
+`briefing_preferences`, with explicit-user provenance and normal supersession.
+No transcript is stored. Example: `{"category":"novelty","value":"dismiss"}`.
+Both receipt reads and feedback honor configured bearer auth. MCP tools
+`list_recent_briefings` and `set_briefing_preference` expose these operations;
+feedback requires an explicit owner request and cannot suppress critical items.
+There is no remotely invocable briefing-trigger endpoint.
+
+Delivery semantics remain **adapter acceptance**, not proof of speech or human
+receipt. The owner-reported acknowledgement bug was fixed by routing `/speak`
+as a typed announcement: supplied text goes to the existing voice worker,
+without request classification, background jobs, model phrasing, or human
+presence/interaction signals. User commands retain their existing routing.
+A crash or timeout after enqueue but before receipt
+commit can cause duplicate transport delivery: the existing adapters offer no
+end-to-end idempotency or playback acknowledgement. Confirmed committed item
+receipts prevent subsequent briefing re-offering; exactly-once speech is not
+claimed. Production speech/latency acceptance remains to be measured.
 
 ## Tests
 

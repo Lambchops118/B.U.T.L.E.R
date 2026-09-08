@@ -21,6 +21,8 @@ tv_control.cpython-39.pyc
 db/*.sqlite
 db/*.sqlite3
 db/*.sqlite3-*
+# Runtime sleep-mode flag: machine state, not configuration.
+db/talos_sleep_state.json
 
 # Project-specific ignores
 tests/persistent_convo.py

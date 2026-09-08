@@ -134,6 +134,38 @@ class AwarenessSettings(BaseSettings):
     max_query_points: int = Field(default=10000, ge=1)
     max_event_page_size: int = Field(default=500, ge=1)
 
+    # Phase 9A: read-only briefing assembly; does not enable proactive output.
+    briefing_default_window_hours: int = Field(default=24, ge=1, le=744)
+    briefing_max_candidates: int = Field(default=100, ge=1, le=500)
+    briefing_novelty_baseline_days: int = Field(default=7, ge=1, le=31)
+    briefing_novelty_z_threshold: float = Field(default=3.0, gt=0)
+    # Proactive delivery is opt-in; enabling it starts both deterministic moments.
+    briefing_enabled: bool = False
+    briefing_schedule_time: str = "08:00"
+    briefing_arrival_enabled: bool = True
+    briefing_arrival_lookback_minutes: int = Field(default=60, ge=1, le=1440)
+    briefing_interval_seconds: float = Field(default=15.0, ge=1, le=300)
+    briefing_max_items: int = Field(default=3, ge=1, le=20)
+    briefing_channel: str = "voice"
+    briefing_model_enabled: bool = False
+    briefing_model_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    briefing_prompt_max_chars: int = Field(default=24000, ge=2000, le=64000)
+
+    @field_validator("briefing_schedule_time")
+    @classmethod
+    def _briefing_time(cls, value: str) -> str:
+        import re
+        if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value):
+            raise ValueError("must be HH:MM in host local time")
+        return value
+
+    @field_validator("briefing_channel")
+    @classmethod
+    def _briefing_channel(cls, value: str) -> str:
+        if value not in {"voice", "gui", "log"}:
+            raise ValueError("must be voice, gui, or log")
+        return value
+
     # --- rules / alerts / notifications (Phase 4) -----------------------------
     rules_path: Path | None = None  # default: talos/awareness/rules/rules.toml
     quiet_hours: str = ""  # "HH:MM-HH:MM" local; noncritical only; empty = off
@@ -235,6 +267,10 @@ class AwarenessSettings(BaseSettings):
             "mqtt_client_id": self.mqtt_client_id,
             "max_event_payload_bytes": self.max_event_payload_bytes,
             "ingest_api_enabled": self.ingest_api_enabled,
+            "briefing_enabled": self.briefing_enabled,
+            "briefing_model_enabled": self.briefing_model_enabled,
+            "briefing_schedule_time": self.briefing_schedule_time,
+            "briefing_max_items": self.briefing_max_items,
         }
 
 

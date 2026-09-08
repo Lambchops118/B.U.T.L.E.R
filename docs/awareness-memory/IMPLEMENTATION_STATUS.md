@@ -2,6 +2,99 @@
 
 This file reports implementation state, not documentation availability.
 
+## Documentation task — awareness block diagram (2026-09-08)
+
+Added `AWARENESS_BLOCK_DIAGRAM.md` with four linked views covering ingestion,
+conversational retrieval and memory, proactive delivery, and physical-action
+safety. Checked against current composition, ingestion, context and selection
+code plus the latest status and subsystem contracts. Runtime state is unchanged;
+no runtime tests or live acceptance checks were run. Session handoff:
+`SESSION_HANDOFF_2026-09-08_BLOCK_DIAGRAM.md`. Stop at this explanation task.
+
+## Latest bounded repair — announcement recall (2026-09-07)
+
+Owner authorized saving proactive output for later voice recall. Briefing and
+ordinary awareness notification receipts now store exact rendered title/body
+with playback explicitly unconfirmed. Existing source IDs remain attached.
+Situation context includes up to three accepted voice announcements from 24 hours,
+subject to its existing budget and alert priorities. `/briefings` and its MCP tool
+return stored briefing wording, including failed status when applicable. Legacy
+receipts are not backfilled with invented text. No migration or model call.
+Validation: 16 focused delivery/context/alert tests passed; see
+`SESSION_HANDOFF_2026-09-07_ANNOUNCEMENT_RECALL.md`. Restart awareness backend and
+the awareness MCP provider/main agent to load code and tool guidance. Live voice
+recall and latency remain untested. Stop at this bounded repair (ADR-040).
+
+## Previous bounded repair — concise briefing speech (2026-09-06)
+
+Owner reported diagnostic logs being spoken after the announcement routing fix.
+Briefing candidates now retain diagnostic `text` separately from `spoken_text`.
+The worker renders short factual sentences, suppresses presence metadata, and
+handles legacy prepared payloads without reading their raw diagnostic strings.
+Selection, critical protection, triggers and delivery bookkeeping remain intact.
+ADR-039; no migrations or additional model calls. **46 focused tests passed**;
+five changed Python files compile. Initial unittest discovery failed before
+running tests (tests is a namespace package); explicit module loading succeeded.
+Full suite and live audio/latency not run. Restart awareness backend to apply.
+See `SESSION_HANDOFF_2026-09-06_BRIEFING_SPEECH.md`. Stop at this repair.
+
+## Previous bounded repair — spoken announcements (2026-09-06)
+
+The owner reported both injection tests speaking "I can do that. I'm working on
+it now." Root cause: `/speak` wrapped output as `voice_cmd`, causing background
+request classification and false human activity signals. Fixed with a typed
+announcement message routed directly through the existing speech helper.
+User-command routing and the voice worker are unchanged. ADR-038 records this
+owner-requested repair beyond the original Phase 9 voice-path exclusion.
+
+Validation: **18 focused tests passed**, including HTTP-to-router exact-text,
+no-job/no-model/no-presence regression coverage and existing voice/phone/job
+routing tests. Five touched Python files compile; whitespace checks pass.
+No live process restart, audio playback, latency benchmark, or full-suite rerun.
+Restart the main agent/text server before repeating the arrival test. Enqueue
+still is not playback confirmation. See
+`SESSION_HANDOFF_2026-09-06_ANNOUNCEMENT_FIX.md`. Stop at this bounded repair.
+
+## Previous snapshot — Phase 9A–9D implementation complete (2026-09-06)
+
+Owner continuation authorization: **"continue on through 9D without pausing
+unless theres a critical reason to ask for input."** This authorized all
+remaining sub-phases and resolved OQ-M. No further sub-phase pause was taken.
+
+| Field | Current value |
+|---|---|
+| Current phase | Phase 9A–9D implemented; production acceptance/review pending. |
+| Completed | Assembler; idempotent daily/arrival moments; dedicated briefing outbox lane; capped delivery with durable critical-overflow continuations; confirmed receipt and attention bookkeeping; cross-kind item exclusion; optional bounded local model ranking with critical overrides/fallback; durable dismissal/interest/neutral feedback and API/MCP tools. |
+| Migration | None. Outbox JSON stores frozen selections; existing notification ledger stores receipts/query-selection provenance; existing memories store feedback. Schema/autogenerate test passes unchanged. |
+| Configuration | Opt-in: `TALOS_AWARENESS_BRIEFING_ENABLED=1`. Default schedule 08:00 host local, arrival enabled, cap 3, channel voice. Optional model ranking defaults off; enabling it requires configured `CHAT_MODEL` and loopback Ollama. No live settings were changed. |
+| Files | 19 changed/new Python files across briefing service/worker/selection/feedback, assembler/history, config, API/health/capabilities, outbox, MCP, and tests. Full inventory in `SESSION_HANDOFF_2026-09-06_PHASE_09_COMPLETE.md`. |
+| Tests | Final awareness discovery: **194 passed / 195 total; one existing broker-dependent skip; zero failures/errors**. All 35 briefing tests pass. Seven MCP/client tests pass. All 19 changed Python files compile; `git diff --check` passes. |
+| Environment | Bundled Python 3.12.14 with awareness packages and main-site `.pth` initialization. Preload MCP provider then remove the inherited API token in the test subprocess only, because existing unauthenticated-mode tests require it unset. Auth tests still verify configured-token enforcement. Exact command and intermediate failures in handoff. No package installation or persistent environment changes. |
+| Decisions | ADR-035: independent outbox lane and existing durable ledgers. ADR-036: critical overflow uses individually capped batches, source text only, and honest adapter receipts. ADR-037: exact structured feedback before prompt, critical protection, and local bounded ranking. OQ-N resolved at implementation level. |
+| Latency | No new measured voice values. Prior baseline p50 1238 ms / p95 2541 ms remains reference only. No new hot-path model call; router/voice worker unchanged. Two new MCP tool definitions and possible local inference contention mean a live comparison remains necessary. |
+| Limitations | Existing `/speak` acknowledges enqueue and performs downstream LLM phrasing. No exactly-once or playback guarantee; an ambiguous enqueue/receipt crash can duplicate transport. GUI is the existing deterministic model-independent display lane. Aggregate lag/missing or constant baselines remain explicit. Presence is interaction-based and single-owner. |
+| Next proposed work | Owner rollout/acceptance: configure opt-in settings, verify scheduled/arrival delivery and user feedback on the deployed host, and compare voice latency. No future phase or external integration is started. |
+| Stop | Stop at the completed Phase 9 implementation boundary. Unsorted/unmodeled data, finance/external integrations, transcript capture, and reply/voice behavior changes remain excluded. |
+
+## Historical sub-phase snapshot — Phase 9A (2026-09-06)
+
+| Field | Current value |
+|---|---|
+| Current phase | Phase 9A — deterministic briefing assembler — implemented; owner review pending. Phases 9B, 9C, and 9D are unstarted. |
+| Authorization | Owner requested implementation of `PHASE_09_PROACTIVE_BRIEFING.md`. Its explicit sub-phase gate is preserved: clarification whether this authorizes all four was requested and remains unanswered; this session implements 9A only. |
+| Completed work | Read-only assembler with six candidate categories, repeatable-read snapshot, versioned query provenance, delivery-derived/explicit first-run windows, count/time bounds and truncation audit, SQL pooled novelty scores, and critical-overflow/query-failure rejection. |
+| Files | Added `talos/awareness/context/briefing.py`, `talos/awareness/history/briefing.py`, two briefing test modules, and `SESSION_HANDOFF_2026-09-06_PHASE_09A.md`; updated config, subsystem README, decisions, questions, and this status. |
+| Migration | None. Existing `notification_deliveries` can supply the read-side watermark; no current producer writes `metadata.briefing_kind`. No triggers, API route, model call, or delivery writes were added. |
+| Decisions/questions | ADR-033/034; OQ-M (authorization), OQ-N (critical overflow under the delivery cap and enqueue-vs-playback evidence). Existing notification handling already marks attention delivered, contrary to the plan's stale statement. |
+| Tests | 14 new tests pass, including live PostgreSQL/TimescaleDB scratch-database coverage. Full awareness discovery: **171 passed / 174 total**, two pre-existing missing-`mcp` errors, one broker-dependent skip. Baseline: 157 passed / 160 total, same errors/skip. Existing migration/autogenerate test passes in that suite. Compilation of five touched Python files and `git diff --check` pass. |
+| Test environment | `.venv-awareness/Scripts/python.exe` could not start its configured Python executable. Tests ran using bundled Python 3.12.14 with existing `.venv-awareness/Lib/site-packages` inserted into `sys.path`; exact commands in the handoff. No environment/package changes. |
+| Latency | Not measured. Existing recorded baseline is p50 1238 ms / p95 2541 ms; no new comparable voice evidence. No conversational, voice, scheduler, ingestion, or outbox code was modified. |
+| Limitations | Candidate generation only. Missing/constant/over-bound baselines are unscored; aggregate refresh lag can reduce novelty coverage. Source attribution can be unknown for derived records. Full cross-kind item deduplication, scheduled/arrival triggers, model guard/fallback, and feedback are 9B–9D work. |
+| Next permitted task | Review 9A; explicitly authorize 9B (or all remaining sub-phases) and resolve OQ-N before delivery implementation. |
+| Explicit stop | Stop at 9A. Do not begin 9B–9D without authorization, unsorted/unmodeled data, finance/external integrations, transcript capture, or conversational-path model work. |
+
+## Previous snapshot — human-context follow-on (historical)
+
 | Field | Current value |
 |---|---|
 | Current phase | Phase 8 — Retention, Security, and Hardening — **complete**. All phases 0-8 implemented. |
@@ -17,7 +110,7 @@ This file reports implementation state, not documentation availability.
 | Tests last run | 2026-09-06: `.venv-awareness` unittest discovery over `tests/test_awareness_*.py` — **157 passed of 160**, against a baseline of 141/144 by the same command before this session, so the 16 new tests pass and nothing regressed. 2 errors are pre-existing and unrelated (`test_awareness_client_and_provider` cannot import `mcp` in that venv; it belongs to `.venv-main`), 1 skip is the test Mosquitto not running. `py_compile` passes on all touched modules, and every main-agent module changed here (`awareness_signals`, `jobs`, `router`, `agent/runtime`) imports cleanly in `.venv-main`, with `voice/agent` importing cleanly in `.venv-voice`. **Not run:** the main-venv suite — `.venv-main` lacks sqlalchemy/fastapi/mcp — so the router, jobs, runtime, voice, and MCP-provider edits are syntax-checked only and have not executed in a live agent process. No live voice session and no run against the production broker. Earlier 2026-08-09 dashboard/voice results are unchanged. |
 | Known failures | Live "Butler" recall, false wakes, real command-pause behavior, and endpoint p95 for the independent idle VAD are unmeasured because they require an owner-visible room session. Incremental faster-whisper decoding is not implemented because the backend is finished-utterance/batch and speculative chunk decoding would reintroduce redundant passes without accuracy evidence. Existing Phase F barge-in live limitations remain. Additionally, interaction events carry `entity_ids` only when the caller knows them and the router currently cannot attribute an utterance to an entity, so conversation relevance usually scores zero in practice; the snapshot reports this in its `limitations` rather than implying a judgment was made. User location within the home remains unmodeled and presence is single-occupant. |
 | Files recently modified | New `talos/awareness/api/routes/ingest.py`, `talos/services/awareness_signals.py`, two test modules, and the 2026-09-06 handoff. Modified: awareness registry bootstrap/sources, ingestion pipeline/service, API app, context broker, alerts service, rules engine + `rules.toml` (policy version 1 → 2), reminders worker, config, README; main-agent `router.py`, `jobs.py`, `agent/runtime.py`, `voice/agent.py`, `mcp_servers/providers/awareness.py`; `settings.env`. Earlier debug-dashboard and voice files remain as recorded. |
-| Next permitted task | Owner review of the human-context work. Then, if approved, either (a) run the main-venv suite and a live agent/voice session to verify signal emission end to end, or (b) populate interaction `entity_ids` so conversation relevance does real work rather than scoring zero. Separately, the earlier owner-visible idle wake/pause/noise corpus and Phase F barge-in corpus/soak remain outstanding before voice rollout claims. |
+| Next permitted task | Owner review of the human-context work, and authorization of a Phase 9 sub-phase. **Phase 9 (Proactive Briefing and Model-Selected Salience) is now specified** in `phases/PHASE_09_PROACTIVE_BRIEFING.md` and is NOT started: it separates the deterministic *moment* from model-selected *content*, and is split into 9A (assembler), 9B (triggers and delivery bookkeeping), 9C (model selection), 9D (feedback loop), each independently authorizable. Otherwise: Then, if approved, either (a) run the main-venv suite and a live agent/voice session to verify signal emission end to end, or (b) populate interaction `entity_ids` so conversation relevance does real work rather than scoring zero. Separately, the earlier owner-visible idle wake/pause/noise corpus and Phase F barge-in corpus/soak remain outstanding before voice rollout claims. |
 | Required reading | `SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md`, the README "Human context" section, `talos/services/awareness_signals.py`, `talos/awareness/api/routes/ingest.py`, `talos/awareness/context/broker.py`, and ADR-028..031. For the debug page retain the 2026-08-09 handoff; for voice follow-up retain the wake-latency handoff and barge-in plan reading list. |
 | Explicit stop condition | Human-context task is complete. **Do not begin unsorted/unmodeled-data handling** (observations table, promotion by repetition, salience decay) — it was explicitly excluded and needs its own owner decision. Do not add utterance-text capture, remote exposure of `/ingest`, or escalation rules for tool failures without authorization. Prior stop conditions still hold: no prompt/tool/audio hot-path capture, no silent room recording, do not set `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1` or enable unaccepted barge-in. |
 | Documentation follow-up (2026-07-16) | Added `like_im_a_child_or_golden_retriever.md`, a plain-language intern quick start covering immediate operation, TALOS integration, maintenance, code paths, tests, safety invariants, limitations, and troubleshooting. Linked it from this documentation index. Validation: 96 awareness unit tests and 3 main-agent home-action tests pass; CLI help, relative-link targets, and `git diff --check` pass. Runtime, schemas, migrations, decisions, and open questions are unchanged. |

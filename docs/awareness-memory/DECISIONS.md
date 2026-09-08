@@ -2,6 +2,67 @@
 
 Only source-confirmed decisions are recorded as accepted. Repository-dependent selections remain pending Phase 0 and must not be inferred from defaults.
 
+## Phase 9A implementation decisions (2026-09-06)
+
+- **ADR-033 — Accepted within the requested assembler scope.** Reuse existing
+  `notification_deliveries` as the read-side delivery watermark, identified by
+  `metadata.briefing_kind`, and reuse the situation `Candidate`/temporal helpers.
+  No schema migration or runtime trigger is needed for 9A. Existing notification
+  code already writes `attention_items.delivery_status`; the phase brief's
+  assertion that it never does is stale. Delivery producers/bookkeeping remain
+  9B work. Outbox completion is not delivery evidence and completed outbox rows
+  are subject to retention.
+- **ADR-034 — Accepted within the requested assembler scope.** Compute novelty
+  as pooled sample z-scores in SQL over complete prior hourly buckets, separated
+  by entity/measurement/unit. Exclude the candidate window from the baseline;
+  do not claim first-ever observations from bounded, retained history. Missing,
+  constant, nonfinite, and over-bound baselines are unscored. Bounded assembly
+  fails if its critical-alert result could have been truncated; it never emits
+  a partial result after a query error. These choices implement INV-02/12/17.
+
+## Phase 9B–9D implementation decisions (2026-09-06)
+
+- **ADR-035 — Accepted under owner continuation authorization through 9D.**
+  Use a dedicated, filtered outbox worker for briefings, with batch size one,
+  preserving the ordinary notification/action worker's independence from
+  briefing model timeouts. Use existing outbox JSON for frozen preparation and
+  existing notification ledger metadata for confirmed receipts, item identity,
+  and selection/query provenance; no new table is needed. A session advisory
+  lock serializes briefings without a database transaction spanning network
+  work. Confirmed receipt, attention marking, and critical continuation enqueue
+  commit together. The delivery window cursor is the recorded assembly end,
+  preventing gaps while a previous briefing was being selected or deferred.
+- **ADR-036 — Accepted implementation resolution of OQ-N.** The default-three
+  cap applies per delivery. More than three critical items produce durable
+  capped continuation batches; model output and feedback cannot suppress them.
+  Noncritical quiet-hour deferrals spend no failure attempts. Use only the
+  configured existing adapter: a failed voice enqueue cannot be laundered into
+  a successful speech receipt by falling back to logging. Confirmation means
+  adapter acceptance, with the existing ambiguous-enqueue crash/retry window
+  explicitly retained. No exactly-once speech or playback claim is made.
+- **ADR-037 — Accepted within the authorized selection/feedback scope.**
+  Model output ranks supplied ids and records reasons; it never provides
+  delivered text. Prompt `briefing-selection-v1` is bounded and sent only to
+  loopback Ollama with proxies/redirects disabled. Invalid ids/schema, timeout,
+  disabled/unset/unavailable models fall back with explicit audit mode/reason.
+  Feedback uses active personal semantic memories in `briefing_preferences`,
+  exact structured keys, existing supersession, and explicit-user provenance.
+  Dismissal is enforced before prompting and rechecked before delivery;
+  critical items are exempt. There is no remote trigger endpoint. Proactive
+  delivery/model ranking remain opt-in until the owner configures rollout.
+
+## Earlier decision table
+
+**ADR-038 — Accepted bounded repair following the owner's live-test report.**
+Authenticated `/speak` enqueues `AnnouncementPayload` on an explicit announcement
+message type. The router sends its supplied text through the existing speech
+helper without request classification, agent/tool execution, background-job
+acknowledgements, or human activity signals. The previous voice-command wrapper
+was classified as background work and spoke BACKGROUND_ACK instead of content.
+This narrow repair is authorized by the bug report; ordinary user-command and
+voice-worker behavior remains unchanged. No additional speech endpoint or
+physical-action capability is introduced. HTTP 200 remains enqueue confirmation.
+
 | ID | Status | Decision | Basis / consequence |
 |---|---|---|---|
 | ADR-001 | Accepted | Operate local-first; require no cloud database, vector store, embeddings, or inference. | Original sections 1-3, C17. Existing explicitly configured external integrations may handle only their intended data. |
@@ -37,6 +98,33 @@ Only source-confirmed decisions are recorded as accepted. Repository-dependent s
 | ADR-030 | Accepted (owner request, 2026-09-06) | Sources may pin themselves to a transport set via `metadata.allowed_transports`; empty means unrestricted. `talos_agent` lists `["internal"]` and violations are dead-lettered as `unauthorized_transport`. | The agent's topics live under `home/`, which the broker ingress subscribes to, so without a transport check anyone on the unauthenticated LAN broker could publish fabricated presence or interaction events. Empty-means-unrestricted keeps every existing device source behaviorally unchanged (INV-10). |
 | ADR-031 | Accepted (owner request, 2026-09-06) | The situation broker honors `interruptibility` (withholding `passive` items while nobody is present) and scores `conversation_relevance` to order attention items *within* their priority band only. Priority bands are never reordered, so critical alerts remain first and untruncated. | CTX-002 and INV-12 make critical-alert survival non-negotiable; relevance is a tie-break, not an override, and is covered by a regression test asserting a relevance-99 attention item still loses to a critical alert. Relevance is deterministic (entity-set intersection plus an `immediate` bonus), never model-scored, per INV-02. The per-request `limitations` string reports when no interaction named an entity, so a zero-relevance ordering is stated rather than passed off as a judgment. |
 | ADR-032 | Accepted (2026-09-06) | A source may opt out of offline detection with `metadata.offline_detection = false`, and the agent's internal signal source does. | Every other source is a device that reports on a schedule, so silence is evidence of a fault. The agent source reports only when a human interacts, so silence means nobody was home. Without the opt-out, leaving the machine off for a day would make TALOS announce that TALOS is offline on the next startup — alarming and false, violating INV-14's truthfulness requirement. Implemented as an explicit `IS NULL OR != 'false'` predicate because a bare `NOT(key = 'false')` yields NULL for sources lacking the key and would have silently disabled offline detection fleet-wide; a regression test asserts a silent device still faults while the agent does not. |
+
+## ADR-039 — Separate briefing speech from diagnostic evidence
+
+Date: 2026-09-06. Status: accepted. Scope: owner-reported Phase 9 speech defect.
+The announcement routing repair exposed diagnostic candidate strings as audio.
+Keep those strings for audit and selection, but add bounded deterministic
+`spoken_text` from stored facts. Suppress owner transport metadata, preserve
+critical notices, deduplicate equivalent sentences, and render legacy prepared
+payloads through safe category fallbacks. Arrival batches may say welcome back.
+No model rewriting or conversational-path inference is introduced. Generic
+fallbacks omit detail when stored content looks like logs; history retains it.
+Restart awareness backend; enqueue confirmation remains distinct from playback.
+
+## ADR-040 — Recall proactive announcements from delivery receipts
+
+Date: 2026-09-07. Status: accepted. Owner authorized announcement recall.
+Save exact rendered wording in existing briefing and awareness notification
+receipt metadata, alongside existing source references. Do not convert output
+into authoritative facts or validated long-term memory. Accepted voice receipts
+enter bounded situation context (latest three within 24 hours), below alert
+priority. Failed and nonvoice attempts stay out. Briefing retrieval returns exact
+wording when available; historical receipts without it remain unchanged.
+Playback is explicitly unconfirmed. Quotes are historical data, not instructions;
+manual arrival evidence requires checking the source events. No schema migration,
+LLM call, speech restart, or physical action. Existing context budgeting and
+receipt retention still apply; this covers awareness announcements, not unrelated
+direct speech callers outside the awareness delivery ledger.
 
 ## New decision template
 

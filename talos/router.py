@@ -11,18 +11,16 @@ from typing import Optional
 from talos.agent import runtime as agent_runtime
 from talos.config import env_bool
 from talos.jobs import TERMINAL_STATUSES, JobManager, JobRecord, get_default_job_store
-from talos.messages import Message, StatusPayload, TextPayload, VoicePayload
+from talos.messages import AnnouncementPayload, Message, StatusPayload, TextPayload, VoicePayload
 from talos.request_classifier import RequestClassification, classify_request
-from talos.services import awareness_client, awareness_signals
+from talos.services import awareness_client, awareness_signals, sleep_mode
 from talos.state_store import StateStore
 
 
 BACKGROUND_ACK = "I can do that. I'm working on it now."
-# Proactive voice_cmd messages (scheduled reports, awareness alerts, fired
-# reminders) are phrased by the agent here in the main process, but only the
-# voice worker owns TTS + the audio device — so we hand it the finished text to
-# speak aloud. Best-effort: the router never blocks on audio, and a missing
-# voice worker just means the banner shows without sound.
+# The voice worker owns TTS and the audio device. Announcements send their
+# already-rendered text; user commands send the agent's response. Enqueue is
+# best-effort and is not playback acknowledgement.
 VOICE_SPEAK_URL = os.getenv("TALOS_VOICE_SPEAK_URL", "http://127.0.0.1:8610")
 VOICE_SPEAK_ENABLED = env_bool("TALOS_VOICE_SPEAK_ENABLED", True)
 
@@ -73,6 +71,19 @@ CODE_CALL_EXCLUSIONS = {
     "number",
     "numbers",
 }
+
+
+_SEVERITY_TAG = re.compile(r"^\[([A-Za-z]+)\]")
+
+
+def _announcement_severity(title: str) -> str:
+    """Severity carried by an announcement title, e.g. "[CRITICAL] Pump down".
+
+    Producers tag the title before it reaches the router; an untagged title is
+    treated as routine, which is the safe default while the house is asleep.
+    """
+    match = _SEVERITY_TAG.match(str(title or "").strip())
+    return match.group(1).lower() if match else "notice"
 
 
 def _run_agent_command(
@@ -261,6 +272,25 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                 sp: StatusPayload = msg.payload
                 state.update_status(sp.key, sp.value, sp.freshness)
 
+            elif msg.type == "announcement":
+                announcement: AnnouncementPayload = msg.payload
+                # System output is neither a task request nor evidence that a
+                # human spoke. Never classify it, run tools, or emit presence.
+                gui_queue.put(("VOICE_CMD", announcement.title, announcement.text))
+                # The morning wake-up ends sleep mode; everything else routine
+                # stays silent until it does. The banner above is queued either
+                # way, so the notification is still on the record -- on a panel
+                # dimmed to 5%, that is a note to read in the morning, not an
+                # interruption. Announcements arriving over /speak are already
+                # gated at the text server; this covers in-process producers.
+                if sleep_mode.is_wake_announcement(announcement.title):
+                    try:
+                        sleep_mode.wake(reason="morning wake-up announcement")
+                    except RuntimeError as exc:
+                        print(f"[router] could not clear sleep mode: {exc}")
+                if sleep_mode.should_speak(_announcement_severity(announcement.title)):
+                    _speak_via_voice_worker(announcement.text)
+
             elif msg.type == "voice_cmd":
                 vp: VoicePayload = msg.payload
                 # Awareness situation when the backend is up; legacy in-memory
@@ -335,6 +365,10 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                 snapshot = awareness_client.snapshot_with_fallback(state.snapshot())
                 interaction_mode = _interaction_mode_for_source(tp.source, tp.session_id)
                 runtime_context = _runtime_context_for_session(tp.session_id)
+                if tp.extra_context:
+                    # Ingress-supplied context for this turn only (e.g. sleep
+                    # mode was just toggled before the model was invoked).
+                    runtime_context = f"{runtime_context}\n\n{tp.extra_context}"
                 decision = _classify_with_context(
                     tp.command,
                     source=tp.source,

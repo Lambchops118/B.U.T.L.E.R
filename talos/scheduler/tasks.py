@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from talos.messages import Message, VoicePayload
-from talos.services import tv_control
+from talos.services import sleep_mode, tv_control
 
 TZ       = ZoneInfo("America/New_York")  # pick your local tz
 BROKER   = "192.168.1.160"
@@ -42,6 +42,17 @@ def debug_job(gui_queue, central_queue=None):
     
 def wake_display(): #This will require a script on the PI to listen on this MQTT port and then send the CEC signal to the TV
     print("Waking Display.")
+    # This is the morning wake-up, so it also ends sleep mode and restores the
+    # info panel to full brightness. The morning briefing clears sleep mode on
+    # its own when it is delivered (see talos/text/server.py); this job is the
+    # backstop, so the panel never stays dimmed into the day because the
+    # briefing was disabled, deferred, or had nothing worth saying.
+    try:
+        if sleep_mode.is_asleep():
+            sleep_mode.wake(reason="morning wake_display job")
+            print("Sleep mode cleared for the morning.")
+    except RuntimeError as exc:
+        print(f"Could not clear sleep mode: {exc}")
     TOPIC_PREFIX = "tv_display"
     topic        = f"{TOPIC_PREFIX}/wake_status"
     message      = "1"

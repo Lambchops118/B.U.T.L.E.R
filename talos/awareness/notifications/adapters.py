@@ -1,11 +1,11 @@
 """Adapters for the existing delivery channels: spoken voice, GUI banner, log.
 
 - ``voice``: authenticated ``POST /speak`` on the TALOS text server, which
-  enqueues a ``voice_cmd`` so the agent phrases the alert in its own voice and
-  speaks it aloud. Confirmed means the text server accepted and enqueued it
+  enqueues a typed announcement of the supplied text for the existing speech
+  worker. Confirmed means the text server accepted and enqueued it
   (HTTP 200 + ok) — it does NOT mean a human heard it; that limitation is
   documented (INV-14). The awareness backend still detects the condition and
-  renders factual title/body deterministically; only the wording is the LLM's.
+  renders factual title/body deterministically; no downstream model rewrites it.
 - ``gui``: authenticated ``POST /notify`` on the TALOS text server, which
   enqueues a deterministic display message for the pygame GUI. Confirmed
   means the text server accepted and enqueued it (HTTP 200 + ok) — it does
@@ -77,11 +77,21 @@ class _TextServerAdapter:
                 confirmed=False, detail=f"status {response.status_code}"
             )
         try:
-            ok = bool(response.json().get("ok"))
+            payload = response.json()
+            ok = bool(payload.get("ok"))
         except ValueError:
-            ok = False
+            payload, ok = {}, False
         if not ok:
-            return DeliveryResult(confirmed=False, detail="server did not confirm")
+            # The text server can decline for a reason worth keeping -- night
+            # sleep mode holds back noncritical speech, for example -- so record
+            # what it said rather than a generic non-confirmation. The handler
+            # then falls through to the next channel, which is the intent: the
+            # notification still lands on the GUI and in the log, silently.
+            reason = str(payload.get("error") or "").strip()
+            return DeliveryResult(
+                confirmed=False,
+                detail=reason or "server did not confirm",
+            )
         return DeliveryResult(confirmed=True, detail=self._confirm_detail)
 
 

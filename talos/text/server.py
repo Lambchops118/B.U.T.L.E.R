@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from talos.agent import runtime as agent_runtime
 from talos.config import env_bool, load_environment
 from talos.jobs import get_default_job_store
-from talos.messages import EventPayload, Message, TextPayload, VoicePayload
-from talos.services import awareness_client
+from talos.messages import AnnouncementPayload, EventPayload, Message, TextPayload
+from talos.services import awareness_client, sleep_mode
 from talos.telemetry import emit_pipeline_event
 
 
@@ -203,14 +203,10 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
 
     def _handle_speak(self) -> None:
-        """Spoken, LLM-phrased proactive alert for the awareness backend.
+        """Enqueue already-rendered speech, without command classification.
 
-        Unlike ``/notify`` (a silent GUI banner), this enqueues a ``voice_cmd``
-        so the agent phrases the alert in its own voice and speaks it out loud
-        without the user prompting. The awareness backend detects the condition
-        deterministically and renders factual title/body; the LLM only decides
-        the wording. 200 means the message was enqueued for the router, not
-        that a human heard it.
+        200 confirms router enqueue, not playback or human receipt. The same
+        existing voice worker performs TTS; no model or tools phrase this text.
         """
         try:
             body = self._read_json_body()
@@ -225,18 +221,34 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Missing 'title'."})
             return
 
-        instruction = (
-            "[This is an automated home-awareness alert, not something the user "
-            "said out loud. Speak it to the user naturally and briefly in your own "
-            "voice. Do not read it back verbatim and do not mention that this is a "
-            "system message.]\n"
-            f"Severity: {severity}\n"
-            f"Alert: {title}"
-        )
-        if text:
-            instruction += f"\nDetails: {text}"
+        # The morning briefing IS the wake-up message, so it ends sleep mode
+        # before it is spoken rather than being silenced by it. Done here, at
+        # the one door every backend announcement comes through, so the
+        # awareness subsystem needs to know nothing about sleep mode.
+        if sleep_mode.is_wake_announcement(title) and sleep_mode.is_asleep():
+            try:
+                sleep_mode.wake(reason="morning wake-up announcement")
+            except RuntimeError as exc:
+                print(f"[text-agent] could not clear sleep mode: {exc}")
+
+        # Asleep: routine spoken alerts are held back, critical ones are not.
+        # Reported as an unconfirmed delivery rather than a silent success, so
+        # the caller's own fallback (GUI banner, then log) still records the
+        # notification and no delivery log claims speech nobody heard.
+        if not sleep_mode.should_speak(severity):
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": False,
+                    "error": "suppressed: sleep mode (noncritical)",
+                    "suppressed": True,
+                },
+            )
+            return
+
+        banner_title = title if title.startswith("[") else f"[{severity.upper()}] {title}"
         self.server.central_queue.put(
-            Message(type="voice_cmd", payload=VoicePayload(instruction))
+            Message(type="announcement", payload=AnnouncementPayload(banner_title, text or title))
         )
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
 
@@ -370,6 +382,14 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         source = str(body.get("source") or "http").strip()
         requested_mode = _requested_mode_from_body(body)
 
+        # Applies the state change now; the model still phrases the reply.
+        sleep_note = self._sleep_phrase_note(command, source)
+        if sleep_note is not None:
+            # Acknowledging a good night is a one-line conversational reply, not
+            # a task. Pin it to the foreground so the classifier cannot hand it
+            # to the background lane and answer "I'm working on it now."
+            requested_mode = "foreground"
+
         reply_queue: queue.Queue = queue.Queue(maxsize=1)
         self.server.central_queue.put(
             Message(
@@ -380,6 +400,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                     source=source,
                     reply_queue=reply_queue,
                     requested_mode=requested_mode,
+                    extra_context=sleep_note,
                 ),
             )
         )
@@ -427,6 +448,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         session_id = str(body.get("session_id") or "voice").strip() or "voice"
         source = str(body.get("source") or "voice").strip()
+
+        # Applies the state change now, before the model runs, so the panel
+        # dims without waiting on generation; the model still says the words.
+        sleep_note = self._sleep_phrase_note(command, source)
+
         snapshot_started = time.perf_counter()
         snapshot = _stream_state_snapshot(body)
         awareness_snapshot_ms = round(
@@ -473,6 +499,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 session_id=session_id,
                 interaction_mode="voice",
                 runtime_lane="foreground",
+                extra_context=sleep_note,
                 request_id=request_id,
                 telemetry_callback=send_telemetry,
                 cancel=cancel_token,
@@ -517,6 +544,29 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             # finally block so barge-in, client disconnect, and mid-turn errors
             # still show whatever was said and heard.
             self._publish_turn_banner(command, "".join(full_parts).strip())
+
+    def _sleep_phrase_note(self, command: str, source: str) -> str | None:
+        """Apply "butler, good night" / "butler, wake up" before the model runs.
+
+        Recognising the phrase and flipping the flag is deterministic and
+        happens here, ahead of the request classifier, so the panel dims in
+        milliseconds and a late-night "good night" is never routed to a
+        background job. What TALOS *says* about it is still the model's own
+        wording: this returns a note describing what just happened, which the
+        caller passes to the agent as extra context. ``None`` means this was an
+        ordinary command and the turn is untouched.
+        """
+        try:
+            note = sleep_mode.apply_phrase(command, source=source)
+        except RuntimeError as exc:
+            # The state file could not be written. Tell the model so it reports
+            # the failure, rather than wishing the user a good night over a
+            # panel that never dimmed.
+            print(f"[text-agent] sleep mode change failed: {exc}")
+            return sleep_mode.FAILURE_NOTE
+        if note is not None:
+            print(f"[text-agent] sleep phrase from {source}: {command!r}")
+        return note
 
     def _publish_turn_banner(self, command: str, response: str) -> None:
         """Show one completed turn on the pygame panel via the router's ui lane.

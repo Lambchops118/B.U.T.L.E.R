@@ -283,6 +283,28 @@ def register(server: FastMCP) -> None:
         return _dumps(_post(f"/reminders/{reminder_id}/cancel", {}))
 
     @server.tool()
+    def list_recent_briefings(limit: int = 10) -> str:
+        """Recall what TALOS announced in recent briefings, including welcome-back
+        briefings: returns exact announcement text, timestamps, source item ids,
+        categories and selection audit. Older receipts may lack announcement text;
+        do not invent their wording. Check status: failed attempts were not accepted.
+        Delivery means adapter acceptance, not proof the user heard it.
+        Use to identify an item before recording explicit owner feedback."""
+        return _call("/briefings", {"limit": max(1, min(limit, 50))})
+
+    @server.tool()
+    def set_briefing_preference(value: str, category: str = "", item_id: str = "") -> str:
+        """Only when the owner explicitly requests it, record briefing feedback.
+        value is dismiss, interest, or neutral. Provide exactly one target:
+        category (alert, transition, agent_outcome, novelty, interaction, reminder)
+        or an exact item_id from list_recent_briefings. Never infer a dismissal
+        from silence. Critical items cannot be suppressed. This does not trigger
+        a briefing, alter detection, or affect physical devices."""
+        return _dumps(_post("/briefings/feedback", {
+            "value": value, "category": category or None, "item_id": item_id or None,
+        }))
+
+    @server.tool()
     def get_awareness_capabilities() -> str:
         """What the awareness subsystem can and cannot do right now
         (available / degraded / not_yet_implemented)."""

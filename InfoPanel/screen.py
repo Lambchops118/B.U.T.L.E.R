@@ -15,6 +15,8 @@ from . import screen_effects as fx
 from . import windows
 from .screen_effects import GpuCRT
 
+from talos.services import sleep_mode
+
 font_path = str(Path(__file__).resolve().parent / "VT323-Regular.ttf")
 
 # =============== PYGAME INFO PANEL ===============
@@ -361,6 +363,18 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         post.blit(grille_surf,   (0, 0))
         post.blit(vignette_surf, (0, 0))
         post.blit(scanlines_surf,(0, 0))
+
+        # Sleep mode: multiply the finished frame down to a few percent of its
+        # brightness. Applied last so every layer -- text, dynamos, CRT masks --
+        # dims together, and as a single BLEND_MULT fill so it costs one pass
+        # rather than a re-render. The panel stays lit but night-dark: the clock
+        # is still readable across a dark room, and an asleep panel is visibly
+        # different from a dead one.
+        asleep = sleep_mode.is_asleep()
+        if asleep and sleep_mode.DIM_LEVEL < 1.0:
+            level = int(round(255 * sleep_mode.DIM_LEVEL))
+            post.fill((level, level, level), special_flags=pygame.BLEND_MULT)
+
         if crt is not None:
             crt.draw_surface(post)
         else:
@@ -368,7 +382,9 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
             pygame.display.flip()
         #last_frame = post
 
-        clock.tick(60)
+        # Nothing on a sleeping panel animates fast enough to need 60 fps, and
+        # the GPU shares this box with the local model.
+        clock.tick(15 if asleep else 60)
         circle_time += 1
         mob_angle += 0.01
 

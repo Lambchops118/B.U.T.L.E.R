@@ -17,7 +17,11 @@ The [original specification](../ROBUST_HOME_AUTOMATION_MEMORY_IMPLEMENTATION_PRO
 - [`ARCHITECTURAL_INVARIANTS.md`](ARCHITECTURAL_INVARIANTS.md) contains permanent system constraints.
 - [`REQUIREMENTS_TRACEABILITY.md`](REQUIREMENTS_TRACEABILITY.md) maps source requirements to canonical homes and verification.
 - [`reference/`](reference/) contains reusable schemas, failure, security, testing, operations, component, and completion material.
-- [`phases/`](phases/) contains nine bounded implementation specifications.
+- [`phases/`](phases/) contains ten bounded implementation specifications. Phases 0-8 are
+  implemented; [`phases/PHASE_09_PROACTIVE_BRIEFING.md`](phases/PHASE_09_PROACTIVE_BRIEFING.md)
+  is implemented through all four sub-phases (9A-9D), with opt-in rollout and
+  production acceptance pending. See the
+  [`Phase 9 handoff`](SESSION_HANDOFF_2026-09-06_PHASE_09_COMPLETE.md).
 - [`prompts/`](prompts/) contains concise launcher prompts, not duplicate specifications.
 - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md), [`DECISIONS.md`](DECISIONS.md), [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md), and [`SESSION_HANDOFF_TEMPLATE.md`](SESSION_HANDOFF_TEMPLATE.md) support fresh-session handoff.
 

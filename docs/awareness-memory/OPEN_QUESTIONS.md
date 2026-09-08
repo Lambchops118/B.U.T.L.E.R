@@ -2,6 +2,27 @@
 
 These questions require Phase 0 repository/deployment evidence or owner input. Confirmed source facts—local-first operation, reuse of the existing Mosquitto broker, central database authority, and deterministic safety behavior—are not open.
 
+## Phase 9 follow-up (2026-09-06)
+
+- **OQ-M — Resolved.** Owner explicitly authorized continuation through 9D
+  without further pauses except for critical issues (2026-09-06).
+- **OQ-N — Resolved for implementation by ADR-036.** Critical overflow uses
+  separately capped durable batches. Existing ordinary critical notifications
+  remain independent. Receipts represent adapter acceptance, never confirmed
+  playback or exactly-once delivery.
+- **OQ-O — Production acceptance remains open.**
+  ADR-040 adds receipt-based announcement recall; owner-visible follow-up voice
+  testing is still needed after restart, using a newly delivered test briefing.
+  Historical receipts do not gain reconstructed wording. Measure voice latency against
+  p50 1238 ms / p95 2541 ms and verify real morning/arrival/feedback behavior
+  after opt-in rollout. The acknowledgement bug is fixed: `/speak` now routes
+  supplied text as an announcement without model phrasing, but confirms enqueue
+  only. ADR-039 also replaces spoken diagnostic briefing strings with concise
+  factual rendering; restart awareness backend before retesting. Real playback
+  and voice latency still need owner-visible verification.
+  No live speech session, production model interruption, or latency benchmark
+  was performed during Phase 9 implementation.
+
 | ID | Question | Why it matters | Evidence / owner decision needed | Recommended starting interpretation |
 |---|---|---|---|---|
 | OQ-001 | What language, runtime, dependency manager, formatter, linter, type checker, entry points, and module boundaries are established? | Determines additive integration and tooling. | Repository inspection. | Use established suitable patterns before defaults. |

@@ -20,6 +20,8 @@ from talos.awareness.api.routes import ingest as ingest_routes
 from talos.awareness.api.routes import memory as memory_routes
 from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.api.routes import reminders as reminder_routes
+from talos.awareness.api.routes import briefing as briefing_routes
+from talos.awareness.briefing.worker import BriefingHandler, BriefingWorker
 from talos.awareness.config import AwarenessSettings, load_settings
 from talos.awareness.db.session import build_engine
 from talos.awareness.health.service import HealthService
@@ -152,10 +154,25 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                 "action_dispatch": action_service.dispatch_handler(publish_command),
                 "action_timeout": action_service.timeout_handler,
             },
+            exclude_work_types=("briefing",),
         )
         outbox_stop = asyncio.Event()
         outbox_task = asyncio.create_task(outbox.run(outbox_stop), name="awareness-outbox")
         app.state.outbox = outbox
+
+        # Separate claim lane: a model timeout cannot hold up critical notifications.
+        briefing_outbox = OutboxWorker(
+            engine, settings.model_copy(update={"outbox_batch_size": 1}),
+            {"briefing": BriefingHandler(engine, settings, adapters)},
+            worker_id="awareness-briefing-1", work_types=("briefing",),
+        )
+        briefing_outbox_stop = asyncio.Event()
+        briefing_outbox_task = asyncio.create_task(briefing_outbox.run(briefing_outbox_stop), name="awareness-briefing-outbox")
+        app.state.briefing_outbox = briefing_outbox
+        briefing_worker = BriefingWorker(engine, settings)
+        briefing_stop = asyncio.Event()
+        briefing_task = asyncio.create_task(briefing_worker.run(briefing_stop), name="awareness-briefing-moments")
+        app.state.briefing_worker = briefing_worker
 
         reminder_worker = ReminderWorker(engine, settings, alerts)
         reminder_stop = asyncio.Event()
@@ -173,6 +190,8 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                 (freshness_stop, freshness_task),
                 (outbox_stop, outbox_task),
                 (reminder_stop, reminder_task),
+                (briefing_stop, briefing_task),
+                (briefing_outbox_stop, briefing_outbox_task),
             ):
                 stop_event.set()
                 task.cancel()
@@ -194,6 +213,7 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(action_routes.router)
     app.include_router(reminder_routes.router)
+    app.include_router(briefing_routes.router)
     return app
 
 
