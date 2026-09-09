@@ -30,6 +30,9 @@ tests/persistent_convo.py
 # Launcher: per-machine component/GPU choices (settings live in settings.env)
 launcher.config.json
 
+# Exact LLM transcripts contain prompts, conversation, context, and tool data.
+talos/logs/llm_io_*.jsonl
+
 # Local artifact/data directory for the awareness subsystem
 db/awareness/
 

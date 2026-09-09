@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from .config import LauncherConfig
+from talos.voice.microphone_profiles import MICROPHONE_PROFILES
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-awareness", action="store_true", help="Do not start the awareness backend or its DB.")
     parser.add_argument("--no-main", action="store_true", help="Do not start the main agent.")
     parser.add_argument("--no-voice", action="store_true", help="Do not start the voice worker.")
+    parser.add_argument(
+        "--microphone",
+        choices=tuple(MICROPHONE_PROFILES),
+        help="Room microphone profile for this headless run (yeti or respeaker).",
+    )
     parser.add_argument(
         "--api-models",
         action="store_true",
@@ -140,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.start_main = False
     if args.no_voice:
         cfg.start_voice = False
+    if args.microphone:
+        cfg.microphone_profile = args.microphone
     if args.api_models:
         cfg.use_api_models = True
     if args.disable_mcp:

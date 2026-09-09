@@ -126,6 +126,51 @@ LLM call, speech restart, or physical action. Existing context budgeting and
 receipt retention still apply; this covers awareness announcements, not unrelated
 direct speech callers outside the awareness delivery ledger.
 
+## ADR-041 — Select microphone-specific capture contracts in the launcher
+
+Date: 2026-09-08. Status: accepted. Owner authorized the ReSpeaker repair and a
+launcher choice between ReSpeaker and Yeti. Persist one explicit profile and
+inject it into the voice worker. ReSpeaker opens its named PortAudio endpoint at
+16 kHz stereo, selects USB channel 2 (the documented auto-selected ASR beam), and
+uses the recognizer's measured ambient threshold. It does not use the Yeti's
+Windows AEC/barge-in or unaccepted idle-VAD contract because Talos renders on
+BenQ and does not supply the XVF3800 hardware far-end reference. Yeti preserves
+the pinned Windows communications-AEC contract and fixed threshold, with a
+named-device ordinary-capture fallback if Windows's active defaults do not
+match. Invalid or legacy launcher values normalize to ReSpeaker on this deployed
+host. No profile claims production accuracy until the visible phrase corpus
+passes, and no raw room PCM is recorded automatically.
+
+## ADR-042 — Keep exact launcher LLM debugging local, ephemeral, and bounded
+
+Date: 2026-09-08. Status: superseded in part by ADR-043. Owner authorized a launcher tab showing
+exact prompt data sent to the LLM and data received from it for breakage
+diagnosis. Capture the final provider request object after Chat Completions tool
+schema conversion, every provider response chunk exposed by the SDK, the
+assembled completion/tool calls, and separately labeled warmup and Responses API
+traffic. Enable capture only in launcher-managed main-agent processes. Carry
+records over the existing child stdout pipe, intercept them out of ordinary
+logs, expose no endpoint, write no separate transcript file, and bound the GUI
+to the latest 5,000,000 characters. The tab must visibly warn that prompts can
+contain conversation history, memory, awareness context, tool schemas,
+arguments, and results. Capture failure must never change model-call behavior.
+This resolves OQ-K only for exact LLM request/response debugging; audio and other
+sensitive telemetry feeds retain their existing gates.
+
+## ADR-043 — Persist exact LLM I/O in local per-run transcripts
+
+Date: 2026-09-08. Status: accepted. Owner explicitly requested permanent
+logging after reviewing the live debug view. In addition to the existing stdout
+feed, a launcher-managed main agent appends the identical structured events to
+`talos/logs/llm_io_<UTC timestamp>_<pid>.jsonl`. Create the directory lazily,
+use one file per process run, preserve full payloads without redaction, and do
+not prune them automatically. Git-ignore the file pattern to reduce accidental
+source-control disclosure. Filesystem and serialization failures remain
+non-fatal to inference. The log is local but highly sensitive and requires
+manual deletion when no longer wanted. This supersedes only ADR-042's
+no-transcript/ephemeral policy; its GUI bound, stdout transport, no-network
+endpoint, and remaining OQ-K gates continue to apply.
+
 ## New decision template
 
 ```text

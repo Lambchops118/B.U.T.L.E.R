@@ -91,6 +91,25 @@ class ToolDefConversionTests(unittest.TestCase):
 
 
 class StreamingTests(unittest.TestCase):
+    def test_debug_capture_gets_exact_sent_request_and_received_completion(self):
+        script = [
+            _delta_chunk(content="Hello"),
+            _delta_chunk(finish_reason="stop"),
+        ]
+        backend = OpenAICompatibleChatBackend(model="test", client=FakeClient(script))
+        messages = [{"role": "user", "content": "show the exact prompt"}]
+
+        with mock.patch.object(llm_openai_compat, "emit_llm_io") as emit:
+            completion = backend.complete(messages)
+
+        sent = emit.call_args_list[0]
+        self.assertEqual(sent.args[:2], ("sent", backend._client.chat.completions.calls[0]))
+        self.assertEqual(sent.kwargs["api"], "chat.completions")
+        received = emit.call_args_list[1]
+        self.assertEqual(received.args[0], "received")
+        self.assertEqual(received.args[1]["assembled_completion"], completion)
+        self.assertEqual(completion.text, "Hello")
+
     def test_streams_text_then_completion(self):
         script = [
             _delta_chunk(content="Hello "),
@@ -296,6 +315,16 @@ class WarmupTests(unittest.TestCase):
         sent = backend._client.chat.completions.calls[0]
         self.assertEqual(sent["max_completion_tokens"], 1)
         self.assertNotIn("max_tokens", sent)
+
+    def test_warmup_is_identified_separately_in_debug_capture(self):
+        backend = self._backend()
+        with mock.patch.object(llm_openai_compat, "emit_llm_io") as emit:
+            backend.warmup([{"role": "user", "content": "ready"}])
+
+        self.assertEqual([call.args[0] for call in emit.call_args_list], ["sent", "received"])
+        self.assertTrue(
+            all(call.kwargs["operation"] == "warmup" for call in emit.call_args_list)
+        )
 
 
 class MessageHelperTests(unittest.TestCase):

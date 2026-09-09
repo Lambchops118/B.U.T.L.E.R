@@ -2,6 +2,94 @@
 
 This file reports implementation state, not documentation availability.
 
+## Latest bounded launcher enhancement — persistent exact LLM I/O (2026-09-08)
+
+The owner requested permanent capture after confirming the initial LLM I/O tab
+was memory-only. Launcher-managed main agents now append every exact structured
+LLM debug event to a per-run
+`talos/logs/llm_io_<UTC timestamp>_<pid>.jsonl` file while continuing to send
+the same event to the live color-coded tab. The directory is created lazily,
+files are git-ignored because they contain sensitive prompt/tool content, and no
+automatic deletion or pruning is performed. File failures remain isolated from
+inference. ADR-043 supersedes ADR-042's no-file policy.
+
+Validation: the five runtime modules and two focused test modules compile;
+**34 focused tests passed**, including file-only persistence and launcher child
+environment coverage. `git diff --check` passed. Testing used the available
+Python 3.12.12 runtime with `.venv-main` packages because `.venv-main` still
+references a missing interpreter. No live launcher restart, GUI smoke test,
+model request, or full-suite run occurred. See
+`SESSION_HANDOFF_2026-09-08_LLM_DEBUG_PERSISTENCE.md`; restart the launcher and
+its managed main agent to begin a new transcript, then stop at this enhancement.
+
+## Latest bounded launcher enhancement — separate logs and exact LLM I/O (2026-09-08)
+
+The owner authorized exact prompt/response debugging in the launcher. The GUI
+now has three top-level tabs: **Launcher**, **Logs**, and **LLM I/O**. A
+launcher-managed main agent emits the full Chat Completions request payload and
+provider response chunks/assembled completion, plus labeled warmup and legacy
+Responses API traffic, through its existing private stdout pipe. The launcher
+intercepts those structured records into the LLM tab instead of mixing them into
+ordinary logs. No separate debug file or network endpoint is created; the GUI
+retains only the latest 5,000,000 displayed characters and warns that the feed
+contains sensitive conversation, memory, context, and tool data. Sent headings
+and payloads are blue/cyan; received headings and payloads are green.
+
+Validation: five changed Python modules and two focused test modules compile;
+**33 focused tests passed** covering the backend, LLM debug routing, color-coded
+rendering, and existing
+launcher microphone behavior. The repository's `.venv-main` remains unusable
+because its configured Python 3.12 executable is missing, so tests used the
+available Python 3.12.12 runtime with `.venv-main` packages. No GUI smoke test,
+live model request, process restart, or full-suite run occurred. ADR-042 records
+the local, ephemeral sensitive-data policy and resolves the LLM-I/O portion of
+OQ-K. See `SESSION_HANDOFF_2026-09-08_LAUNCHER_LLM_DEBUG.md`. Restart the launcher
+and its managed main agent to use the new feed; stop at this bounded enhancement.
+
+## Latest bounded repair — selectable Yeti/ReSpeaker capture (2026-09-08)
+
+The owner authorized the repair identified by the XVF3800 diagnosis. The
+launcher now has a persisted **Room microphone** dropdown and a headless
+`--microphone {respeaker,yeti}` override. Both profiles select a named device
+instead of trusting Windows's mutable default. ReSpeaker opens explicit 16 kHz
+stereo and extracts USB channel 2, the documented auto-selected ASR beam; its
+SpeechRecognition threshold retains the measured one-second room calibration.
+Yeti retains its fixed threshold and the existing pinned Windows AEC contract.
+ReSpeaker barge-in and experimental idle VAD fail closed because Talos renders
+through BenQ and the XVF3800 hardware AEC has no validated far-end reference.
+
+Validation: **37 distinct focused tests passed** across the two new profile
+suites and the existing Windows audio, duplex, VAD, and faster-whisper suites;
+the five launcher tests also passed a second time in the launcher's actual
+`.venv-main`. All touched Python files compile, `git diff --check` passes, launcher help exposes both
+choices, the saved launcher profile is `respeaker`, and a non-recording live
+PortAudio check resolves and opens the connected two-channel MME device at
+index 1 with the 16 kHz/channel 2 contract. No PCM was read; no live
+transcription, process restart, firmware
+write, or full-suite run occurred. ADR-041 records the capture contract and OQ-P
+retains the owner-visible accuracy acceptance test. See
+`SESSION_HANDOFF_2026-09-08_MICROPHONE_PROFILES.md`. Restart the voice worker (or
+the launcher stack) to apply the selected profile; stop at this repair.
+
+## Diagnostic task — ReSpeaker XVF3800 STT regression (2026-09-08)
+
+The reported microphone-switch regression is real and is primarily an
+integration/configuration mismatch, not evidence of a failed ReSpeaker. The
+current Windows default capture endpoint is the XVF3800 (`...5dda5d51...`), but
+`settings.env` still pins the former Yeti endpoint (`...1783577d...`). The voice
+worker therefore fails its exact AEC/duplex endpoint check and falls back to
+generic SpeechRecognition capture; current telemetry confirms no AEC residual
+on that fallback. The fallback opens one mono MME channel at the device default
+44.1 kHz and uses Yeti-era fixed energy thresholds, while the XVF3800 exposes
+two semantically different channels and reserves its right channel for the
+auto-selected ASR beam. Read-only USB control found normal stock routing and
+processing on firmware 2.0.6: left `(8,0)`, right `(7,3)`, ASR/AGC enabled,
+16-bit USB, and expected gains. No room PCM was recorded and no code,
+configuration, device state, firmware, or running process was changed. See
+`SESSION_HANDOFF_2026-09-08_RESPEAKER_STT_DIAGNOSIS.md`; OQ-P tracks the
+owner-visible channel/threshold acceptance comparison. Stop at diagnosis until
+the owner authorizes a capture-path repair and visible A/B corpus.
+
 ## Documentation task — awareness block diagram (2026-09-08)
 
 Added `AWARENESS_BLOCK_DIAGRAM.md` with four linked views covering ingestion,

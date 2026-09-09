@@ -1,0 +1,1 @@
+{"timestamp":"2026-09-08T22:51:11.261+00:00","request_id":"voice-boot-warmup","component":"voice_worker","event":"barge_in_metrics_snapshot","counters":{"candidate_started":0,"candidate_rejected":0,"accepted":0},"measurements":{},"capabilities":{"vad_probability_available":false,"aec_residual_rms_available":false,"asr_confidence_observed":false}}

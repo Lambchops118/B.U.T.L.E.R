@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterator
 
+from talos.llm_debug import emit_llm_io, json_safe, llm_debug_enabled
 from talos.voice.backends.base import (
     LLMBackend,
     LLMCompletion,
@@ -110,7 +111,9 @@ class OpenAICompatibleChatBackend(LLMBackend):
             request["tools"] = chat_tools
         if self._extra_body:
             request["extra_body"] = self._extra_body
-        self._client.chat.completions.create(**request)
+        emit_llm_io("sent", request, api="chat.completions", operation="warmup")
+        response = self._client.chat.completions.create(**request)
+        emit_llm_io("received", response, api="chat.completions", operation="warmup")
         return round((time.perf_counter() - started) * 1000.0, 1)
 
     def stream(
@@ -152,9 +155,13 @@ class OpenAICompatibleChatBackend(LLMBackend):
         provider_total_tokens: int | None = None
         accumulator = _ToolCallAccumulator()
         text_parts: list[str] = []
+        received_chunks: list[Any] | None = [] if llm_debug_enabled() else None
         finish_reason = "stop"
 
+        emit_llm_io("sent", request, api="chat.completions", operation="stream")
         for chunk in self._client.chat.completions.create(**request):
+            if received_chunks is not None:
+                received_chunks.append(json_safe(chunk))
             if first_chunk_at is None:
                 first_chunk_at = time.perf_counter()
             usage = getattr(chunk, "usage", None)
@@ -215,7 +222,7 @@ class OpenAICompatibleChatBackend(LLMBackend):
             model_load_ms = None
             model_load_measurement = "unavailable"
 
-        yield LLMCompletion(
+        completion = LLMCompletion(
             text="".join(text_parts).strip(),
             tool_calls=accumulator.finalize(),
             finish_reason=finish_reason,
@@ -235,6 +242,16 @@ class OpenAICompatibleChatBackend(LLMBackend):
                 "provider_total_tokens": provider_total_tokens,
             },
         )
+        emit_llm_io(
+            "received",
+            {
+                "chunks": received_chunks or [],
+                "assembled_completion": completion,
+            },
+            api="chat.completions",
+            operation="stream",
+        )
+        yield completion
 
 
 def _first_choice(chunk: Any) -> Any | None:

@@ -21,6 +21,7 @@ from talos.agent.prompting import (
 from talos.agent.thinking import thinking_suffix
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
 from talos.memory import MemoryStore, get_default_memory_store
+from talos.llm_debug import emit_llm_io
 from talos.mcp_client import get_local_mcp_client, shutdown_local_mcp_client
 from talos.telemetry import emit_pipeline_event
 from talos.tool_arguments import parse_tool_arguments
@@ -547,8 +548,17 @@ def _responses_create_with_retry(**kwargs):
     attempt = 0
     while True:
         try:
-            return _get_openai_client().responses.create(**kwargs)
+            emit_llm_io("sent", kwargs, api="responses", operation="create")
+            response = _get_openai_client().responses.create(**kwargs)
+            emit_llm_io("received", response, api="responses", operation="create")
+            return response
         except Exception as exc:
+            emit_llm_io(
+                "received",
+                {"error_type": type(exc).__name__, "error": str(exc)},
+                api="responses",
+                operation="error",
+            )
             if attempt >= OPENAI_SERVER_ERROR_RETRIES or not _is_server_error(exc):
                 raise
             attempt += 1

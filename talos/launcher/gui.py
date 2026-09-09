@@ -9,6 +9,7 @@ choices go to ``launcher.config.json``.
 
 from __future__ import annotations
 
+import json
 import queue
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from tkinter import messagebox, ttk
 from . import config
 from .config import LauncherConfig
 from .core import Supervisor
+from talos.llm_debug import LLM_DEBUG_PREFIX
+from talos.voice.microphone_profiles import MICROPHONE_PROFILES
 
 
 def _ollama_models() -> list[str]:
@@ -44,6 +47,7 @@ def _ollama_models() -> list[str]:
 
 
 class LauncherGUI:
+    LLM_DEBUG_TEXT_LIMIT = 5_000_000
     # (display label, TALOS_LLM_THINK_MODE value). Only Qwen-family local models
     # (e.g. mb-core-v1) act on these soft switches; other models ignore them, so
     # keep "Off" for Hermes/Llama and hosted API models.
@@ -53,6 +57,9 @@ class LauncherGUI:
         ("Never — instant response", "never"),
         ("Off — model has no thinking mode", "off"),
     ]
+    MICROPHONE_CHOICES = [
+        (profile.label, profile.name) for profile in MICROPHONE_PROFILES.values()
+    ]
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -60,6 +67,7 @@ class LauncherGUI:
         self.gpus = config.detect_gpus()
         self.supervisor: Supervisor | None = None
         self._log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._llm_queue: "queue.Queue[dict[str, object]]" = queue.Queue()
 
         root.title("TALOS Launcher")
         root.geometry("900x900")
@@ -73,7 +81,17 @@ class LauncherGUI:
     # -- layout ------------------------------------------------------------
 
     def _build_widgets(self) -> None:
-        outer = ttk.Frame(self.root, padding=10)
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True)
+
+        settings_tab = ttk.Frame(notebook)
+        logs_tab = ttk.Frame(notebook)
+        llm_tab = ttk.Frame(notebook)
+        notebook.add(settings_tab, text="Launcher")
+        notebook.add(logs_tab, text="Logs")
+        notebook.add(llm_tab, text="LLM I/O")
+
+        outer = ttk.Frame(settings_tab, padding=10)
         outer.pack(fill="both", expand=True)
 
         columns = ttk.Frame(outer)
@@ -109,6 +127,28 @@ class LauncherGUI:
         ttk.Checkbutton(opts, text="Start Ollama if not already running", variable=self.var_manage_ollama).pack(anchor="w")
         ttk.Checkbutton(opts, text="Manage Docker Postgres (compose up)", variable=self.var_manage_docker).pack(anchor="w")
         ttk.Checkbutton(opts, text="Run DB migrations before serving", variable=self.var_run_migrations).pack(anchor="w")
+
+        # --- Room microphone ---------------------------------------------
+        microphone = ttk.LabelFrame(left, text="Room microphone", padding=8)
+        microphone.pack(fill="x", pady=(8, 0))
+        ttk.Label(microphone, text="Capture profile:").grid(row=0, column=0, sticky="w")
+        self.var_microphone = tk.StringVar()
+        self.microphone_box = ttk.Combobox(
+            microphone,
+            textvariable=self.var_microphone,
+            values=[label for label, _ in self.MICROPHONE_CHOICES],
+            state="readonly",
+            width=32,
+        )
+        self.microphone_box.grid(row=0, column=1, sticky="we", padx=4, pady=2)
+        ttk.Label(
+            microphone,
+            text="ReSpeaker selects its right-hand ASR beam; Yeti keeps Windows AEC.",
+            foreground="#808080",
+            wraplength=360,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="w")
+        microphone.columnconfigure(1, weight=1)
 
         # --- LLM / model --------------------------------------------------
         llm = ttk.LabelFrame(left, text="Language model", padding=8)
@@ -195,16 +235,63 @@ class LauncherGUI:
         self.status = ttk.Label(buttons, text="idle")
         self.status.pack(side="right")
 
-        # --- Log pane -----------------------------------------------------
-        logframe = ttk.LabelFrame(outer, text="Logs", padding=4)
+        # --- Separate log tab --------------------------------------------
+        logframe = ttk.Frame(logs_tab, padding=8)
         logframe.pack(fill="both", expand=True)
-        # The settings columns are fixed-height, so the log pane is what absorbs
-        # window resizing; it starts short and grows with the window.
-        self.log_text = tk.Text(logframe, wrap="none", height=8, bg="#101418", fg="#d0d0d0", insertbackground="#d0d0d0")
+        self.log_text = tk.Text(logframe, wrap="none", bg="#101418", fg="#d0d0d0", insertbackground="#d0d0d0")
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(logframe, command=self.log_text.yview)
         scroll.pack(side="right", fill="y")
         self.log_text.configure(yscrollcommand=scroll.set, state="disabled")
+
+        # --- Exact LLM boundary tab --------------------------------------
+        llmframe = ttk.Frame(llm_tab, padding=8)
+        llmframe.pack(fill="both", expand=True)
+        ttk.Label(
+            llmframe,
+            text=(
+                "Full provider payloads for this launcher run. This can include "
+                "private conversation, memory, context, tool arguments, and results. "
+                "Saved per run in talos/logs/llm_io_*.jsonl."
+            ),
+            foreground="#9a6b00",
+            wraplength=820,
+            justify="left",
+        ).pack(fill="x", pady=(0, 6))
+        llm_text_frame = ttk.Frame(llmframe)
+        llm_text_frame.pack(fill="both", expand=True)
+        self.llm_text = tk.Text(
+            llm_text_frame,
+            wrap="none",
+            bg="#101418",
+            fg="#d0d0d0",
+            insertbackground="#d0d0d0",
+            font="TkFixedFont",
+        )
+        self.llm_text.pack(side="left", fill="both", expand=True)
+        llm_scroll_y = ttk.Scrollbar(llm_text_frame, command=self.llm_text.yview)
+        llm_scroll_y.pack(side="right", fill="y")
+        llm_scroll_x = ttk.Scrollbar(llmframe, orient="horizontal", command=self.llm_text.xview)
+        llm_scroll_x.pack(fill="x")
+        self.llm_text.configure(
+            yscrollcommand=llm_scroll_y.set,
+            xscrollcommand=llm_scroll_x.set,
+            state="disabled",
+        )
+        self.llm_text.tag_configure(
+            "sent_header", foreground="#58a6ff", font=("TkFixedFont", 10, "bold")
+        )
+        self.llm_text.tag_configure("sent_payload", foreground="#9cdcfe")
+        self.llm_text.tag_configure(
+            "received_header",
+            foreground="#3fb950",
+            font=("TkFixedFont", 10, "bold"),
+        )
+        self.llm_text.tag_configure("received_payload", foreground="#b7e4c7")
+        self.llm_text.tag_configure(
+            "event_header", foreground="#d29922", font=("TkFixedFont", 10, "bold")
+        )
+        self.llm_text.tag_configure("event_payload", foreground="#e3b341")
 
     def _build_prompt_context(self, parent: tk.Widget) -> None:
         """Everything that ends up in front of the model, in one place.
@@ -363,6 +450,18 @@ class LauncherGUI:
                 return val
         return "auto"
 
+    def _microphone_label_for(self, value: str) -> str:
+        for label, name in self.MICROPHONE_CHOICES:
+            if name == value:
+                return label
+        return self.MICROPHONE_CHOICES[0][0]
+
+    def _microphone_value_from(self, label: str) -> str:
+        for choice_label, name in self.MICROPHONE_CHOICES:
+            if choice_label == label:
+                return name
+        return self.MICROPHONE_CHOICES[0][1]
+
     # -- state <-> widgets -------------------------------------------------
 
     def _load_into_widgets(self) -> None:
@@ -371,6 +470,9 @@ class LauncherGUI:
         self.var_awareness.set(self.cfg.start_awareness)
         self.var_main.set(self.cfg.start_main)
         self.var_voice.set(self.cfg.start_voice)
+        self.var_microphone.set(
+            self._microphone_label_for(self.cfg.microphone_profile)
+        )
         self.var_discord.set(self.cfg.start_discord)
         self.var_manage_ollama.set(self.cfg.manage_ollama)
         self.var_manage_docker.set(self.cfg.manage_docker)
@@ -403,6 +505,9 @@ class LauncherGUI:
         self.cfg.start_awareness = self.var_awareness.get()
         self.cfg.start_main = self.var_main.get()
         self.cfg.start_voice = self.var_voice.get()
+        self.cfg.microphone_profile = self._microphone_value_from(
+            self.var_microphone.get()
+        )
         self.cfg.start_discord = self.var_discord.get()
         self.cfg.manage_ollama = self.var_manage_ollama.get()
         self.cfg.manage_docker = self.var_manage_docker.get()
@@ -575,6 +680,17 @@ class LauncherGUI:
     # -- logging -----------------------------------------------------------
 
     def _enqueue_log(self, source: str, message: str) -> None:
+        if source == "main" and message.startswith(LLM_DEBUG_PREFIX):
+            try:
+                event = json.loads(message[len(LLM_DEBUG_PREFIX) :])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                self._log_queue.put((source, message))
+            else:
+                if isinstance(event, dict):
+                    self._llm_queue.put(event)
+                else:
+                    self._log_queue.put((source, message))
+            return
         self._log_queue.put((source, message))
 
     def _drain_log_queue(self) -> None:
@@ -584,6 +700,11 @@ class LauncherGUI:
                 self._append_log(source, message)
         except queue.Empty:
             pass
+        try:
+            while True:
+                self._append_llm_event(self._llm_queue.get_nowait())
+        except queue.Empty:
+            pass
         self.root.after(100, self._drain_log_queue)
 
     def _append_log(self, source: str, message: str) -> None:
@@ -591,6 +712,29 @@ class LauncherGUI:
         self.log_text.insert("end", f"[{source}] {message}\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    def _append_llm_event(self, event: dict[str, object]) -> None:
+        direction = str(event.get("direction", "event")).upper()
+        timestamp = str(event.get("timestamp", ""))
+        api = str(event.get("api", "unknown"))
+        operation = str(event.get("operation", "completion"))
+        payload = json.dumps(event.get("payload"), ensure_ascii=False, indent=2)
+        header = (
+            f"\n{'=' * 18} {direction} {timestamp} "
+            f"[{api}/{operation}] {'=' * 18}\n"
+        )
+        tag_prefix = direction.lower() if direction in {"SENT", "RECEIVED"} else "event"
+        self.llm_text.configure(state="normal")
+        self.llm_text.insert("end", header, f"{tag_prefix}_header")
+        self.llm_text.insert("end", payload + "\n", f"{tag_prefix}_payload")
+        excess = (
+            int(self.llm_text.count("1.0", "end-1c", "chars")[0])
+            - self.LLM_DEBUG_TEXT_LIMIT
+        )
+        if excess > 0:
+            self.llm_text.delete("1.0", f"1.0+{excess}c")
+        self.llm_text.see("end")
+        self.llm_text.configure(state="disabled")
 
 
 def main() -> int:
