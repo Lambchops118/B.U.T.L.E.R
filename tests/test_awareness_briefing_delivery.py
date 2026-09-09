@@ -4,7 +4,7 @@ import asyncio
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 try:
     import sqlalchemy as sa
@@ -54,14 +54,30 @@ class BriefingDeliveryTest(unittest.TestCase):
             try:
                 now = datetime.now(timezone.utc)
                 async with engine.begin() as connection:
-                    for status, before in (("stale", True), ("current", True)):
+                    for status, before in (("stale", True), ("current", False)):
                         await connection.execute(sa.insert(StateTransition).values(entity_id="owner", property_name="present",
                             occurred_at=now-timedelta(seconds=2), from_status=status, to_status="current", reason="fixture",
                             from_value={"value": before}, to_value={"value": True}))
-                self.assertEqual(await store.enqueue_due(now), 2)  # morning + one real arrival
+                self.assertEqual(await store.enqueue_due(now), 2)  # morning + explicit away -> present
                 self.assertEqual(await BriefingStore(engine, settings).enqueue_due(now), 0)
                 async with engine.connect() as connection:
                     self.assertEqual((await connection.execute(sa.select(sa.func.count()).select_from(OutboxItem))).scalar_one(), 2)
+            finally:
+                await engine.dispose()
+        asyncio.run(flow())
+
+    def test_idle_presence_expiry_is_not_an_arrival(self):
+        async def flow():
+            engine, settings, store = await self.setup_flow()
+            try:
+                now = datetime.now(timezone.utc)
+                async with engine.begin() as connection:
+                    await connection.execute(sa.insert(StateTransition).values(
+                        entity_id="owner", property_name="present",
+                        occurred_at=now-timedelta(seconds=2), from_status="stale",
+                        to_status="current", reason="fixture",
+                        from_value={"value": True}, to_value={"value": True}))
+                self.assertEqual(await store.enqueue_due(now), 1)  # scheduled morning only
             finally:
                 await engine.dispose()
         asyncio.run(flow())
@@ -228,6 +244,26 @@ class BriefingDeliveryTest(unittest.TestCase):
                 adapter.send.assert_not_called()
                 model.assert_not_called()
                 self.assertEqual((await store.load("briefing:test"))["state"], "silent")
+            finally:
+                await engine.dispose()
+        asyncio.run(flow())
+
+    def test_empty_morning_still_delivers_guaranteed_context(self):
+        async def flow():
+            engine, settings, store = await self.setup_flow()
+            try:
+                await self.enqueue(store, key="briefing:morning:test", kind="morning")
+                adapter = AsyncMock(); adapter.send.return_value = DeliveryResult(True)
+                context = {"text": "Good morning. It is 8:00 AM. Clear and 60 degrees. No reminders today.",
+                           "audit": {"version": "morning-context-v1"}}
+                with patch("talos.awareness.briefing.worker.build_morning_context",
+                           new=AsyncMock(return_value=context)):
+                    await BriefingHandler(engine, settings, {"voice": adapter})(
+                        {"key": "briefing:morning:test"})
+                self.assertEqual(adapter.send.call_args.args[0].body, context["text"])
+                self.assertEqual((await store.load("briefing:morning:test"))["state"], "delivered")
+                receipts = await store.recent()
+                self.assertEqual(receipts[0]["audit"]["item_ids"], [])
             finally:
                 await engine.dispose()
         asyncio.run(flow())

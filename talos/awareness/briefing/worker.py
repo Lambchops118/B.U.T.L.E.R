@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from talos.awareness.alerts.service import parse_quiet_hours, quiet_hours_deferral
 from talos.awareness.briefing.feedback import apply_preferences, preferences
+from talos.awareness.briefing.morning import build_morning_context
 from talos.awareness.briefing.selection import select
 from talos.awareness.briefing.service import BriefingStore, unavailable_ids
 from talos.awareness.briefing.speech import VERSION as SPEECH_VERSION, candidate_text, render_batch
@@ -73,8 +74,12 @@ class BriefingHandler:
             assembled = await BriefingAssembler(self.engine, self.settings).build(payload["kind"])
             speakable = [c for c in assembled["candidates"] if candidate_text(c)]
             chosen, audit = await select(speakable, self.settings, model=self.model)
+            morning_context = None
+            if payload["kind"] == "morning":
+                morning_context = await build_morning_context(self.engine, self.settings)
             audit["speech_filtered_ids"] = [c["item_id"] for c in assembled["candidates"] if not candidate_text(c)]
-            payload.update(state="prepared" if chosen else "silent", remaining=chosen,
+            payload.update(state="prepared" if chosen or morning_context else "silent", remaining=chosen,
+                           morning_context=morning_context,
                            window=assembled["window"], selection=audit,
                            assembly_audit={k: assembled[k] for k in ("audit", "queries", "truncated", "feedback_audit", "unavailable_ids")})
             await self.store.save(payload)
@@ -89,13 +94,16 @@ class BriefingHandler:
             remaining = [c for c in remaining if candidate_text(c)]
         payload["remaining"] = remaining
         payload["selection"]["delivery_recheck"] = {"unavailable_ids": sorted(unavailable), "feedback": feedback_audit}
-        if not remaining:
+        include_morning = bool(
+            payload.get("morning_context") and payload.get("part", 0) == 0
+        )
+        if not remaining and not include_morning:
             payload["state"] = "silent"
             await self.store.save(payload)
             return
         deferred = quiet_hours_deferral(now, parse_quiet_hours(self.settings.quiet_hours))
         eligible = [c for c in remaining if not deferred or c["priority"] == 1]
-        if not eligible:
+        if not eligible and not (include_morning and not deferred):
             await self.store.save(payload)
             raise OutboxDeferred(deferred)
         batch = eligible[:self.settings.briefing_max_items]
@@ -103,8 +111,10 @@ class BriefingHandler:
         after = [c for c in remaining if c["item_id"] not in batch_ids]
         payload["selection"]["speech_version"] = SPEECH_VERSION
         # Diagnostic candidate text stays in provenance, never in speech.
+        history_text = render_batch(batch, kind=payload["kind"], part=payload.get("part", 0))
+        context_text = payload["morning_context"]["text"] if include_morning else ""
         content = NotificationContent(title=f"{payload['kind'].capitalize()} briefing",
-            body=render_batch(batch, kind=payload["kind"], part=payload.get("part", 0)),
+            body=" ".join(text for text in (context_text, history_text) if text),
             severity="critical" if any(c["priority"] == 1 for c in batch) else "notice")
         channel = self.settings.briefing_channel
         adapter = self.adapters.get(channel)

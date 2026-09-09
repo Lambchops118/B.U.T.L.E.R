@@ -37,6 +37,59 @@ logger = get_logger("talos.awareness.state.freshness")
 AlertHook = Callable[[AsyncConnection, dict[str, Any]], Awaitable[None]]
 
 
+# Registry metadata key that opts a source out of state expiry entirely.
+#
+# Expiry answers "is this reading still good?", which only makes sense for a
+# source that re-reports on a schedule. The main agent's presence signal does
+# not: a person is present or away as an explicit fact, and silence is a person
+# not talking, not a person leaving. Marking that reading stale made a quiet
+# hour indistinguishable from a departure, so the next word out of the user
+# produced a homecoming the user never made.
+FRESHNESS_OPT_OUT_KEY = "state_freshness_detection"
+
+
+def freshness_detection_column():
+    """The opt-out flag, selectable alongside a joined ``Source``.
+
+    Written as text so a missing key reads as NULL rather than raising, which
+    is also why every consumer treats NULL as "detection on": absent metadata
+    must never silently disable expiry fleet-wide.
+    """
+    return Source.metadata_json[FRESHNESS_OPT_OUT_KEY].astext.label(
+        "state_freshness_detection"
+    )
+
+
+def freshness_detection_enabled(flag: Any) -> bool:
+    """Whether expiry applies to a row, given that column's value."""
+    return flag is None or str(flag).strip().lower() != "false"
+
+
+def effective_state_status(
+    state_status: str,
+    received_at: datetime | None,
+    stale_after: float | None,
+    now: datetime,
+    default_stale: float,
+    freshness_flag: Any = None,
+) -> str:
+    """Status a *read* should report for one state row.
+
+    Reads re-derive expiry rather than trusting the worker's last pass, so the
+    same opt-out has to hold on both paths. Without this, the worker could be
+    told to leave presence alone and every read would still call it stale a few
+    minutes later.
+    """
+    if state_status not in ("current", "inferred") or received_at is None:
+        return state_status
+    if not freshness_detection_enabled(freshness_flag):
+        return state_status
+    deadline = stale_after or default_stale
+    if (now - received_at).total_seconds() > deadline:
+        return "stale"
+    return state_status
+
+
 async def record_source_health_change(
     connection: AsyncConnection,
     *,
@@ -129,7 +182,14 @@ class FreshnessWorker:
                     Source.stale_after_seconds,
                 )
                 .join(Source, Source.source_id == CurrentState.source_id, isouter=True)
-                .where(CurrentState.state_status.in_(("current", "inferred")))
+                .where(
+                    CurrentState.state_status.in_(("current", "inferred")),
+                    sa.or_(
+                        Source.source_id.is_(None),
+                        Source.metadata_json[FRESHNESS_OPT_OUT_KEY].astext.is_(None),
+                        Source.metadata_json[FRESHNESS_OPT_OUT_KEY].astext != "false",
+                    ),
+                )
                 .with_for_update(of=CurrentState)
             )
         ).all()

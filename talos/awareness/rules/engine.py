@@ -133,9 +133,11 @@ class RuleEngine:
             deduplication_key=f"source_offline:{source_id}",
             alert_type="source_offline",
             severity=severity,
-            title=f"Source offline: {source_id}",
+            title=f"Monitoring connection offline: {source_id}",
             description=(
-                f"{source_id} has been silent for {silence_seconds:.0f} seconds."
+                f"No telemetry has arrived from {source_id} for "
+                f"{silence_seconds:.0f} seconds. This does not by itself prove "
+                "that the attached equipment is mechanically inoperative."
             ),
             entity_id=None,
             location_id=None,

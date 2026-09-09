@@ -20,13 +20,22 @@ simulated hardware for now.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from talos.awareness.db.models import Entity, Location, Source
+from talos.awareness.db.models import (
+    Alert,
+    AttentionItem,
+    CurrentState,
+    Entity,
+    Location,
+    Source,
+    SourceHealthHistory,
+)
 
 _LOCATIONS: list[dict[str, Any]] = [
     {"location_id": "home", "display_name": "Home", "kind": "building"},
@@ -68,7 +77,14 @@ _SOURCES: list[dict[str, Any]] = [
         "location_id": "home",
         "clock_quality": "server_received",
         "allowed_topics": ["status/17", "status/18", "status/19"],
-        "metadata": {"legacy": "pin_status"},
+        # This read surface was superseded by the canonical firmware. It stays
+        # registered so retained/late legacy evidence remains attributable,
+        # but silence is not a fault now that the device reports canonically.
+        "metadata": {
+            "legacy": "pin_status",
+            "superseded_by": "quad_pump_canonical",
+            "offline_detection": False,
+        },
     },
     {
         # Canonical quad-pump firmware (Peripherals/quad_pump). Separate from
@@ -89,6 +105,11 @@ _SOURCES: list[dict[str, Any]] = [
         # The firmware implements no clock synchronization, so ordering uses
         # the server receive time. Raise this only if NTP is added and proven.
         "clock_quality": "server_received",
+        # Firmware snapshots state every 300 s. The former inherited 300 s
+        # deadline raced that cadence and marked a healthy controller stale
+        # between snapshots. Heartbeats still drive the tighter source-health
+        # deadline independently.
+        "stale_after_seconds": 420.0,
         "allowed_topics": [
             "home/irrigation/quad_pump/state",
             "home/irrigation/quad_pump/event",
@@ -123,16 +144,11 @@ _SOURCES: list[dict[str, Any]] = [
         # stamp applied by an intermediary rather than by a synchronized
         # device.
         #
-        # Freshness: presence state goes stale after 15 minutes (a person
-        # detected a quarter-hour ago is evidence, not a current fact), so a
-        # person seen a while ago is never read as "here now".
-        #
-        # Offline detection is switched off entirely. Every other source is a
-        # device that reports on a schedule, so silence means a fault. This
-        # source reports only when a human interacts, so silence means nobody
-        # was home — normal, not a fault. Without the opt-out, leaving the
-        # machine off for a day would make TALOS announce that TALOS is
-        # offline on the next startup.
+        # Human presence is explicit state, not an inactivity timer. Ordinary
+        # interaction may assert present, but silence never changes it to stale
+        # or absent. Only an explicit user statement may write present=false.
+        # This source is also excluded from offline detection because it reports
+        # on interaction rather than on a schedule.
         "source_id": "talos_agent",
         "source_type": "agent",
         "display_name": "TALOS main agent (internal signals)",
@@ -140,7 +156,6 @@ _SOURCES: list[dict[str, Any]] = [
         "entity_id": "talos",
         "location_id": "home",
         "clock_quality": "gateway_stamped",
-        "stale_after_seconds": 900.0,
         "allowed_topics": [
             "home/presence/owner/state",
             "home/interaction/owner/event",
@@ -151,6 +166,7 @@ _SOURCES: list[dict[str, Any]] = [
             "internal": True,
             "allowed_transports": ["internal"],
             "offline_detection": False,
+            "state_freshness_detection": False,
         },
     },
 ]
@@ -165,6 +181,46 @@ _SOURCE_MIGRATIONS: list[dict[str, Any]] = [
         "column": "display_name",
         "expected": "Quad pump Pico W (legacy status topics)",
         "value": "Quad pump Pico W (legacy status topics; superseded by quad_pump_canonical)",
+    },
+    {
+        "source_id": "quad_pump_pico",
+        "column": "metadata_json",
+        "expected": {"legacy": "pin_status"},
+        "value": {
+            "legacy": "pin_status",
+            "superseded_by": "quad_pump_canonical",
+            "offline_detection": False,
+        },
+    },
+    {
+        "source_id": "quad_pump_canonical",
+        "column": "stale_after_seconds",
+        "expected": None,
+        "value": 420.0,
+    },
+    {
+        # Dropping the field from the seed only affects a fresh insert; the
+        # deployed row still carried the old 15-minute presence timer, which is
+        # the exact deadline that produced the stale/recovered churn.
+        "source_id": "talos_agent",
+        "column": "stale_after_seconds",
+        "expected": 900.0,
+        "value": None,
+    },
+    {
+        "source_id": "talos_agent",
+        "column": "metadata_json",
+        "expected": {
+            "internal": True,
+            "allowed_transports": ["internal"],
+            "offline_detection": False,
+        },
+        "value": {
+            "internal": True,
+            "allowed_transports": ["internal"],
+            "offline_detection": False,
+            "state_freshness_detection": False,
+        },
     },
 ]
 
@@ -186,6 +242,8 @@ async def seed_registry(engine: AsyncEngine) -> None:
                 insert(Source).values(**values).on_conflict_do_nothing(index_elements=["source_id"])
             )
         await apply_source_migrations(connection)
+        await reconcile_non_reporting_sources(connection)
+        await reconcile_never_expiring_state(connection)
 
 
 async def apply_source_migrations(connection) -> int:
@@ -208,3 +266,112 @@ async def apply_source_migrations(connection) -> int:
         )
         changed += result.rowcount or 0
     return changed
+
+
+async def reconcile_non_reporting_sources(connection) -> int:
+    """Clear false offline incidents for sources whose silence is expected.
+
+    Changing registry policy alone would stop future detections while leaving
+    the durable source, state, alert, and attention rows saying ``offline``.
+    Reconcile only exact policy opt-outs; real reporting sources are untouched.
+    """
+    now = datetime.now(timezone.utc)
+    source_ids = list(
+        (
+            await connection.execute(
+                sa.select(Source.source_id).where(
+                    Source.metadata_json["offline_detection"].astext == "false"
+                )
+            )
+        ).scalars()
+    )
+    if not source_ids:
+        return 0
+    offline_rows = (
+        await connection.execute(
+            sa.select(Source.source_id, Source.health_status).where(
+                Source.source_id.in_(source_ids), Source.health_status == "offline"
+            )
+        )
+    ).all()
+    for row in offline_rows:
+        await connection.execute(
+            sa.insert(SourceHealthHistory).values(
+                source_id=row.source_id,
+                health_status="unknown",
+                previous_status="offline",
+                changed_at=now,
+                reason="offline detection disabled by registry policy",
+            )
+        )
+    changed = (
+        await connection.execute(
+            sa.update(Source)
+            .where(Source.source_id.in_(source_ids), Source.health_status == "offline")
+            .values(health_status="unknown", updated_at=now)
+        )
+    ).rowcount or 0
+    await connection.execute(
+        sa.update(CurrentState)
+        .where(CurrentState.source_id.in_(source_ids), CurrentState.state_status == "offline")
+        .values(state_status="stale")
+    )
+    keys = [f"source_offline:{source_id}" for source_id in source_ids]
+    resolved = (
+        await connection.execute(
+            sa.update(Alert)
+            .where(
+                Alert.deduplication_key.in_(keys),
+                Alert.status.in_(("open", "acknowledged")),
+            )
+            .values(status="resolved", resolved_at=now, last_updated_at=now)
+            .returning(Alert.alert_id)
+        )
+    ).scalars().all()
+    if resolved:
+        await connection.execute(
+            sa.update(AttentionItem)
+            .where(
+                AttentionItem.alert_id.in_(resolved),
+                AttentionItem.delivery_status.in_(("pending", "delivering", "failed")),
+            )
+            .values(delivery_status="cancelled")
+        )
+    return changed
+
+
+async def reconcile_never_expiring_state(connection) -> int:
+    """Un-expire state rows belonging to sources that no longer expire.
+
+    Turning off state expiry for a source stops future expiries but leaves
+    whatever the old deadline already wrote. For owner presence that residue is
+    the whole complaint: a reading marked ``stale`` during a quiet stretch keeps
+    reading as "not detected as present" until the next interaction rewrites it,
+    which is the same "you were away" the policy change was meant to end.
+
+    Only exact opt-outs are touched, and only the status: the recorded value,
+    its timestamps and its provenance are left exactly as they were, so nothing
+    here invents a fact. No transition row is written -- the reading did not
+    change, only the expiry policy applied to it did.
+    """
+    source_ids = list(
+        (
+            await connection.execute(
+                sa.select(Source.source_id).where(
+                    Source.metadata_json["state_freshness_detection"].astext == "false"
+                )
+            )
+        ).scalars()
+    )
+    if not source_ids:
+        return 0
+    return (
+        await connection.execute(
+            sa.update(CurrentState)
+            .where(
+                CurrentState.source_id.in_(source_ids),
+                CurrentState.state_status == "stale",
+            )
+            .values(state_status="current")
+        )
+    ).rowcount or 0

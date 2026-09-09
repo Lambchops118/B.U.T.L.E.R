@@ -332,6 +332,147 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
         """
         asyncio.run(self._check())
 
+    def test_presence_never_expires_and_pump_snapshot_has_cadence_margin(self) -> None:
+        asyncio.run(self._check_state_freshness_policy())
+
+    def test_superseded_pump_source_false_fault_is_reconciled(self) -> None:
+        asyncio.run(self._check_superseded_source_reconciliation())
+
+    def test_quiet_hours_do_not_read_the_owner_as_gone(self) -> None:
+        asyncio.run(self._check_reads_never_expire_presence())
+
+    async def _check_reads_never_expire_presence(self) -> None:
+        """Silence must not age a presence reading on the *read* path either.
+
+        The worker being told to leave presence alone is only half the policy:
+        every read re-derives expiry from the deadline, so without the same
+        opt-out here a long quiet stretch still reported "not detected as
+        present (stale)" -- the fact behind the unasked-for welcome back.
+        """
+        import sqlalchemy as sa
+
+        from talos.awareness.context.broker import SituationBroker
+        from talos.awareness.db.models import CurrentState
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.registry.bootstrap import seed_registry
+
+        engine = build_engine(self.settings)
+        try:
+            await seed_registry(engine)
+            now = datetime.now(timezone.utc)
+            long_ago = now - timedelta(hours=9)
+            async with engine.begin() as connection:
+                await connection.execute(sa.insert(CurrentState).values(
+                    entity_id="owner", property_name="present", value_json={"value": True},
+                    value_type="boolean", source_id="talos_agent",
+                    observed_at=long_ago, received_at=long_ago, updated_at=long_ago,
+                    state_status="current"))
+            context = await SituationBroker(engine, self.settings).build()
+            self.assertEqual(context["presence"], "present via unknown modality")
+            self.assertNotIn("stale", context["limitations"])
+            self.assertIn("STATE owner.present = True (current", context["text"])
+        finally:
+            await engine.dispose()
+
+    def test_a_presence_row_left_stale_by_the_old_policy_is_restored(self) -> None:
+        asyncio.run(self._check_stale_presence_reconciliation())
+
+    async def _check_stale_presence_reconciliation(self) -> None:
+        import sqlalchemy as sa
+
+        from talos.awareness.db.models import CurrentState
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.registry.bootstrap import seed_registry
+
+        engine = build_engine(self.settings)
+        try:
+            await seed_registry(engine)
+            now = datetime.now(timezone.utc)
+            async with engine.begin() as connection:
+                await connection.execute(sa.insert(CurrentState).values(
+                    entity_id="owner", property_name="present", value_json={"value": True},
+                    value_type="boolean", source_id="talos_agent",
+                    received_at=now-timedelta(hours=9), state_status="stale"))
+            await seed_registry(engine)
+            async with engine.connect() as connection:
+                status = (await connection.execute(sa.select(CurrentState.state_status).where(
+                    CurrentState.entity_id == "owner",
+                    CurrentState.property_name == "present"))).scalar_one()
+            self.assertEqual(status, "current")
+        finally:
+            await engine.dispose()
+
+    async def _check_superseded_source_reconciliation(self) -> None:
+        import sqlalchemy as sa
+
+        from talos.awareness.db.models import Alert, AttentionItem, Source
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.registry.bootstrap import seed_registry
+
+        engine = build_engine(self.settings)
+        try:
+            await seed_registry(engine)
+            async with engine.begin() as connection:
+                await connection.execute(sa.update(Source).where(
+                    Source.source_id == "quad_pump_pico").values(health_status="offline"))
+                alert_id = (await connection.execute(sa.insert(Alert).values(
+                    alert_type="source_offline", severity="warning",
+                    title="Source offline: quad_pump_pico", status="open",
+                    deduplication_key="source_offline:quad_pump_pico").returning(
+                        Alert.alert_id))).scalar_one()
+                await connection.execute(sa.insert(AttentionItem).values(
+                    alert_id=alert_id, reason="legacy source offline"))
+            await seed_registry(engine)
+            async with engine.connect() as connection:
+                source_status = (await connection.execute(sa.select(Source.health_status).where(
+                    Source.source_id == "quad_pump_pico"))).scalar_one()
+                alert_status = (await connection.execute(sa.select(Alert.status).where(
+                    Alert.alert_id == alert_id))).scalar_one()
+                delivery_status = (await connection.execute(sa.select(
+                    AttentionItem.delivery_status).where(
+                        AttentionItem.alert_id == alert_id))).scalar_one()
+            self.assertEqual((source_status, alert_status, delivery_status),
+                             ("unknown", "resolved", "cancelled"))
+        finally:
+            await engine.dispose()
+
+    async def _check_state_freshness_policy(self) -> None:
+        import sqlalchemy as sa
+
+        from talos.awareness.db.models import CurrentState
+        from talos.awareness.db.session import build_engine
+        from talos.awareness.registry.bootstrap import seed_registry
+        from talos.awareness.state.freshness import FreshnessWorker
+
+        engine = build_engine(self.settings)
+        try:
+            await seed_registry(engine)
+            now = datetime.now(timezone.utc)
+            async with engine.begin() as connection:
+                await connection.execute(sa.insert(CurrentState).values(
+                    entity_id="owner", property_name="present", value_json={"value": True},
+                    value_type="boolean", source_id="talos_agent",
+                    received_at=now-timedelta(days=2), state_status="current"))
+                await connection.execute(sa.insert(CurrentState).values(
+                    entity_id="quad_pump", property_name="relay_1", value_json={"value": False},
+                    value_type="boolean", source_id="quad_pump_canonical",
+                    received_at=now-timedelta(seconds=350), state_status="current"))
+            await FreshnessWorker(engine, self.settings).tick(now)
+            async with engine.connect() as connection:
+                statuses = dict((await connection.execute(sa.select(
+                    CurrentState.entity_id, CurrentState.state_status
+                ).where(CurrentState.property_name.in_(("present", "relay_1"))))).all())
+            self.assertEqual(statuses, {"owner": "current", "quad_pump": "current"})
+
+            await FreshnessWorker(engine, self.settings).tick(now+timedelta(seconds=71))
+            async with engine.connect() as connection:
+                pump_status = (await connection.execute(sa.select(CurrentState.state_status).where(
+                    CurrentState.entity_id == "quad_pump",
+                    CurrentState.property_name == "relay_1"))).scalar_one()
+            self.assertEqual(pump_status, "stale")
+        finally:
+            await engine.dispose()
+
     async def _check(self) -> None:
         import sqlalchemy as sa
 

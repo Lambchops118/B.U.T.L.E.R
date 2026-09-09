@@ -3,7 +3,11 @@
 import math
 import re
 
-VERSION = "briefing-speech-v1"
+VERSION = "briefing-speech-v2"
+
+# Distinguishes "no previous value supplied" from a previous value of None, so
+# a caller that cannot provide one keeps the older, less informed behavior.
+_UNSET = object()
 EVENT_SPEECH = {
     "agent.job.completed": "A background job completed earlier.",
     "agent.job.failed": "A background job failed earlier.",
@@ -32,13 +36,21 @@ def event_text(event_type):
     return EVENT_SPEECH.get(event_type, "An activity update was recorded earlier.")
 
 
-def transition_text(entity, property_name, value, status):
+def transition_text(entity, property_name, value, status, from_value=_UNSET, from_status=None):
     if entity == "owner":
         # Transport/test metadata is useful evidence, not briefing content.
         if property_name != "present":
             return ""
         if status in {"stale", "offline"}:
-            return "Your presence reading went stale earlier."
+            # Inactivity is not absence. Legacy expiry transitions remain as
+            # audit evidence but are never spoken as a homecoming fact.
+            return ""
+        if from_value is not _UNSET and from_value == value:
+            # The reading did not change; only its freshness label did. These
+            # are the expiry/recovery pairs the idle timer used to write, and
+            # speaking the recovery half is exactly the "welcome back" the user
+            # never triggered. Bookkeeping about a fact is not the fact.
+            return ""
         if status in {"unknown", "conflicting"} or not isinstance(value, bool):
             return "Your presence reading was uncertain earlier."
         return "Your presence was detected again." if value is True else "Your presence was not detected earlier."

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 
@@ -116,6 +117,31 @@ def register(server: FastMCP) -> None:
         freshness/outbox workers, rule policy. Use to check whether sensing
         infrastructure itself is working or degraded."""
         return _call("/health/components")
+
+    @server.tool()
+    def set_owner_presence(present: bool) -> str:
+        """Record an EXPLICIT owner presence change. Call this only when the
+        user directly says they are leaving/away or that they have returned;
+        never infer absence from silence, elapsed time, sleep mode, or a lack
+        of interaction. Normal voice/text interactions already assert present.
+        This records context only and performs no physical action."""
+        return _dumps(
+            _post(
+                "/ingest",
+                {
+                    "topic": "home/presence/owner/state",
+                    "transport": "internal",
+                    "payload": {
+                        "event_id": str(uuid4()),
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "present": bool(present),
+                        "modality": "explicit_user_statement",
+                        "detail": "explicitly_present" if present else "explicitly_away",
+                        "confidence": 1.0,
+                    },
+                },
+            )
+        )
 
     @server.tool()
     def get_event_provenance(event_id: str) -> str:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import time
 import wave
 import random
@@ -52,6 +53,17 @@ MICROPHONE_PROFILE = get_microphone_profile(
     os.getenv("TALOS_MICROPHONE_PROFILE", "respeaker")
 )
 WAKE_WORD = os.getenv("WAKE_WORD", "butler").lower()
+# What to remove from the front of a transcript once the wake word is found.
+#
+# The wake word plus any punctuation is obvious. The possessive is not: asked
+# for "butler, sleep mode", faster-whisper regularly writes "butler's sleep
+# mode" -- the comma pause is short and the following word starts with an s.
+# Slicing off only ``len(WAKE_WORD)`` and stripping " ,.:;!?-" left the
+# apostrophe behind, so the command reaching the agent was "'s sleep mode",
+# which matched no sleep phrase and was handed to the model as a garbled turn.
+_WAKE_WORD_PREFIX = re.compile(
+    rf"^{re.escape(WAKE_WORD)}(?:['’]s|s\b)?[\s,.:;!?\-]*"
+)
 WAKE_WORD_MODE = os.getenv("WAKE_WORD_MODE", "local").lower()
 WAKE_WORD_MODEL = os.getenv("WAKE_WORD_MODEL", "base")
 VOICE_SESSION_ID = os.getenv("TALOS_VOICE_SESSION", "voice-worker")
@@ -1243,7 +1255,7 @@ def _process_recognition_audio(audio_data):
             awareness_signals.record_presence(
                 modality="wake_word", confidence=0.95, force=True
             )
-            command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
+            command = _WAKE_WORD_PREFIX.sub("", text_spoken, count=1).strip()
             print(f"Command received: {command}")
             if command:
                 benchmark.set_command(command)
@@ -1608,8 +1620,9 @@ def run_voice_recognition():
         if BARGE_IN_ENABLED:
             print(
                 f"Barge-in is disabled for microphone profile "
-                f"'{MICROPHONE_PROFILE.name}'; its far-end/AEC contract has not "
-                "passed the room acceptance corpus."
+                f"'{MICROPHONE_PROFILE.name}': its far-end/AEC contract has not "
+                "been measured on this host. Run "
+                "'python -m talos.voice.diagnostics.windows_aec_probe'."
             )
         mic = _build_profile_microphone()
     elif BARGE_IN_ENABLED and BARGE_IN_BACKEND == "aec":

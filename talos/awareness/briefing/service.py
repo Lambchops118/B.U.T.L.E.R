@@ -80,8 +80,7 @@ class BriefingStore:
                     StateTransition.occurred_at >= start, StateTransition.occurred_at <= now,
                     StateTransition.to_value["value"].astext == "true",
                     StateTransition.to_status.in_(("current", "inferred")),
-                    sa.or_(StateTransition.from_status.in_(("stale", "offline")),
-                           StateTransition.from_value["value"].astext.in_(("false", "absent"))),
+                    StateTransition.from_value["value"].astext.in_(("false", "absent")),
                     ~sa.exists(sa.select(OutboxItem.outbox_id).where(
                         OutboxItem.idempotency_key == sa.literal("briefing:arrival:")+sa.cast(StateTransition.id, sa.String),
                     )),
@@ -125,6 +124,8 @@ class BriefingStore:
                     "categories": {c["item_id"]: c["category"] for c in batch},
                     "selection": payload["selection"], "assembly_audit": payload["assembly_audit"],
                     "confirmation": "adapter acceptance; not proof of speech or human receipt"}
+        if payload.get("morning_context") is not None:
+            metadata["morning_context"] = payload["morning_context"]["audit"]
         if content is not None:
             metadata["announcement"] = {"title": content.title, "text": content.body,
                                         "playback_confirmed": False}

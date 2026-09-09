@@ -150,6 +150,22 @@ class AwarenessSettings(BaseSettings):
     briefing_model_enabled: bool = False
     briefing_model_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     briefing_prompt_max_chars: int = Field(default=24000, ge=2000, le=64000)
+    # Guaranteed daily context uses the same host-wide location settings as
+    # the conversational weather/time tools. The API key remains secret.
+    timezone: str = Field(
+        default="America/New_York", validation_alias=AliasChoices("TALOS_TIMEZONE")
+    )
+    weather_location: str = Field(
+        default="", validation_alias=AliasChoices("TALOS_WEATHER_LOCATION")
+    )
+    weather_units: str = Field(
+        default="imperial", validation_alias=AliasChoices("TALOS_WEATHER_UNITS")
+    )
+    weather_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("OPEN_WEATHER_API_KEY")
+    )
+    morning_weather_timeout_seconds: float = Field(default=5.0, gt=0, le=15)
+    morning_agenda_max_items: int = Field(default=5, ge=1, le=20)
 
     @field_validator("briefing_schedule_time")
     @classmethod
@@ -223,6 +239,14 @@ class AwarenessSettings(BaseSettings):
         normalized = value.strip().upper()
         if normalized not in _LOG_LEVELS:
             raise ValueError(f"must be one of {sorted(_LOG_LEVELS)}")
+        return normalized
+
+    @field_validator("weather_units")
+    @classmethod
+    def _weather_units(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"imperial", "metric", "standard"}:
+            raise ValueError("must be imperial, metric, or standard")
         return normalized
 
     @field_validator("ollama_host")

@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from talos.awareness.config import AwarenessSettings
 from talos.awareness.db.models import CurrentState, Event, Source
 from talos.awareness.history.telemetry import QueryBoundsError, validate_range
+from talos.awareness.state.freshness import (
+    effective_state_status,
+    freshness_detection_column,
+)
 
 
 async def query_events(
@@ -112,6 +116,7 @@ async def read_entity_state(
             CurrentState.authority_rank,
             CurrentState.metadata_json.label("metadata_json"),
             Source.stale_after_seconds,
+            freshness_detection_column(),
         )
         .join(Source, Source.source_id == CurrentState.source_id, isouter=True)
         .where(CurrentState.entity_id == entity_id)
@@ -125,11 +130,14 @@ async def read_entity_state(
         age = (
             (now - row.received_at).total_seconds() if row.received_at is not None else None
         )
-        effective_status = row.state_status
-        if row.state_status in ("current", "inferred") and age is not None:
-            deadline = row.stale_after_seconds or settings.default_stale_after_seconds
-            if age > deadline:
-                effective_status = "stale"
+        effective_status = effective_state_status(
+            row.state_status,
+            row.received_at,
+            row.stale_after_seconds,
+            now,
+            settings.default_stale_after_seconds,
+            row.state_freshness_detection,
+        )
         properties.append(
             {
                 "property_name": row.property_name,

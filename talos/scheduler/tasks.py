@@ -2,12 +2,11 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from talos.messages import Message, VoicePayload
-from talos.services import sleep_mode, tv_control
+from talos.services import display_power, sleep_mode
 
 TZ       = ZoneInfo("America/New_York")  # pick your local tz
 BROKER   = "192.168.1.160"
@@ -40,38 +39,42 @@ def degrees_to_compass(deg):
 def debug_job(gui_queue, central_queue=None):
     print("DEBUG JOB ACTIVATED")
     
-def wake_display(): #This will require a script on the PI to listen on this MQTT port and then send the CEC signal to the TV
+def wake_display():
+    """Morning wake-up: leave sleep mode, which lights the display with it.
+
+    Waking and re-illuminating the screen are the same act, so this no longer
+    publishes to ``tv_display/wake_status`` itself -- ``sleep_mode.wake()``
+    drives that through ``talos.services.display_power``. This job stays as the
+    backstop for the morning briefing, which clears sleep mode on its own when
+    it is delivered (see talos/text/server.py) but may be disabled, deferred,
+    or have nothing worth saying.
+
+    ``wake()`` is called unconditionally rather than only when asleep: the
+    display command is re-asserted with it, so a screen left dark by a missed
+    command still comes back in the morning.
+    """
     print("Waking Display.")
-    # This is the morning wake-up, so it also ends sleep mode and restores the
-    # info panel to full brightness. The morning briefing clears sleep mode on
-    # its own when it is delivered (see talos/text/server.py); this job is the
-    # backstop, so the panel never stays dimmed into the day because the
-    # briefing was disabled, deferred, or had nothing worth saying.
     try:
-        if sleep_mode.is_asleep():
-            sleep_mode.wake(reason="morning wake_display job")
-            print("Sleep mode cleared for the morning.")
+        sleep_mode.wake(reason="morning wake_display job")
     except RuntimeError as exc:
         print(f"Could not clear sleep mode: {exc}")
-    TOPIC_PREFIX = "tv_display"
-    topic        = f"{TOPIC_PREFIX}/wake_status"
-    message      = "1"
-    client  = mqtt.Client()
-    client.connect(BROKER, PORT, keepalive=60)
-    client.publish(topic, message)
-    client.disconnect()
-    #tv_control.FireTvController.morning_turn_on() #This wont work because by morning tv is hard resting
+        # The flag could not be written, but the screen must still come up.
+        display_power.apply(asleep=False)
 
-def dim_display(): #This will require a script on the PI to listen on this MQTT port and then send the CEC signal to the TV
+def dim_display():
+    """Nightly quiet-down: enter sleep mode, which darkens the display with it.
+
+    This used to call ``tv_control.night_sleep()`` directly and leave the sleep
+    flag alone, so 11pm produced a dark TV over a system that still believed it
+    was awake -- the mirror image of asking for sleep mode and getting a lit
+    screen. Both now go through the one flag.
+    """
     print("Dimming Display.")
-    # TOPIC_PREFIX = "tv_display"
-    # topic        = f"{TOPIC_PREFIX}/wake_status"
-    # message      = "0"
-    # client  = mqtt.Client()
-    # client.connect(BROKER, PORT, keepalive=60)
-    # client.publish(topic, message)
-    # client.disconnect()
-    tv_control.night_sleep()
+    try:
+        sleep_mode.sleep(reason="nightly dim_display job")
+    except RuntimeError as exc:
+        print(f"Could not enter sleep mode: {exc}")
+        display_power.apply(asleep=True)
 
 def update_infopanel_information(gui_queue, central_queue=None):
     # fetch data here

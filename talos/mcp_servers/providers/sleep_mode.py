@@ -16,7 +16,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from talos.services import sleep_mode
+from talos.services import display_power, sleep_mode
 
 
 def register(server: FastMCP) -> None:
@@ -24,11 +24,16 @@ def register(server: FastMCP) -> None:
 
     @server.tool()
     def sleep_mode_control(action: str) -> str:
-        """Control night sleep mode. action: "sleep" (dim the info panel to 1%
-        and hold back noncritical spoken alerts), "wake" (restore both), or
-        "status". Call "wake" whenever the user asks for the screen back --
-        brighter, undim, "I can't see". Sleep mode also ends by itself at the
-        morning wake-up."""
+        """Control night sleep mode. This is also the screen control: sleep
+        mode and a dark screen are always the same thing.
+
+        action: "sleep" (darken the info panel, put the TV into standby, and
+        hold back noncritical spoken alerts), "wake" (restore all three), or
+        "status". Use this one tool for any request about the
+        screen or the lights on the panel -- dim it, turn it off, brighten it,
+        "I can't see", "turn the screen back on" -- there is no separate
+        display command to call afterwards. Sleep mode also ends by itself at
+        the morning wake-up."""
         normalized = str(action or "").strip().lower()
         try:
             if normalized == "sleep":
@@ -43,4 +48,8 @@ def register(server: FastMCP) -> None:
                 )
         except RuntimeError as exc:
             return json.dumps({"error": str(exc)})
-        return json.dumps(state, ensure_ascii=False)
+        # The display command is dispatched in the background, so report its
+        # last outcome rather than leaving "the screen did not change" to guesswork.
+        return json.dumps(
+            {**state, "display_command": display_power.last_result()}, ensure_ascii=False
+        )

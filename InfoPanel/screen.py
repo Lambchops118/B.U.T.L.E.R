@@ -364,20 +364,29 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         post.blit(vignette_surf, (0, 0))
         post.blit(scanlines_surf,(0, 0))
 
-        # Sleep mode: multiply the finished frame down to a few percent of its
-        # brightness. Applied last so every layer -- text, dynamos, CRT masks --
-        # dims together, and as a single BLEND_MULT fill so it costs one pass
-        # rather than a re-render. The panel stays lit but night-dark: the clock
-        # is still readable across a dark room, and an asleep panel is visibly
-        # different from a dead one.
-        asleep = sleep_mode.is_asleep()
-        if asleep and sleep_mode.DIM_LEVEL < 1.0:
-            level = int(round(255 * sleep_mode.DIM_LEVEL))
-            post.fill((level, level, level), special_flags=pygame.BLEND_MULT)
+        # Sleep mode: darken the finished frame to a few percent of its
+        # brightness. Every layer -- text, dynamos, CRT masks -- dims together,
+        # because this is the last thing that touches the picture. The panel
+        # stays lit but night-dark: an asleep panel is visibly different from a
+        # dead one.
+        #
+        # Where it happens depends on the path. On the GPU path the shader owns
+        # it (see GpuCRT.set_dim): its 1/gamma pass would otherwise take a 1%
+        # multiply back up to 10% on the glass, and the 8-bit multiply would
+        # crush the mid-tones on the way in. The plain-pygame fallback has no
+        # such pass, so a single BLEND_MULT fill is both correct and cheaper
+        # than a re-render there.
+        sleep_state = sleep_mode.state()
+        asleep = bool(sleep_state["asleep"])
+        display_level = float(sleep_state["display_level"])
 
         if crt is not None:
+            crt.set_dim(display_level)
             crt.draw_surface(post)
         else:
+            if display_level < 1.0:
+                level = int(round(255 * display_level))
+                post.fill((level, level, level), special_flags=pygame.BLEND_MULT)
             screen.blit(post, (0, fx.random_vertical_jitter_y(100)))
             pygame.display.flip()
         #last_frame = post

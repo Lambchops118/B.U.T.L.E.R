@@ -171,6 +171,195 @@ manual deletion when no longer wanted. This supersedes only ADR-042's
 no-transcript/ephemeral policy; its GUI bound, stdout transport, no-network
 endpoint, and remaining OQ-K gates continue to apply.
 
+## ADR-044 — Presence is explicit state; silence never expires it
+
+Date: 2026-09-08. Status: accepted. The owner reported an unrequested "welcome
+back" turn after any quiet stretch. Owner presence is an explicit fact about a
+person, not a sensor reading with a shelf life, so the `talos_agent` source is
+exempt from state expiry (`metadata.state_freshness_detection = false`) and only
+an explicit user statement may write `present = false` — exposed as the
+`set_owner_presence` tool, which the model is told never to infer from silence,
+elapsed time, or sleep mode.
+
+The exemption binds on three paths, not one: the freshness worker skips those
+rows, every read (`SituationBroker`, entity history) re-derives expiry through
+the same opt-out instead of aging the row at query time, and the seeded
+migrations clear the residue the old 15-minute deadline left behind. Speech is
+gated separately: a transition whose value is unchanged and whose status merely
+moved (`stale -> current`) is pipeline bookkeeping and is never spoken, so the
+recorded expiry/recovery pairs stay as audit evidence without becoming a
+homecoming the owner never made. The arrival briefing additionally requires a
+genuine `false`/`absent -> true` value change.
+
+## ADR-045 — Sleep mode and the physical display are one action
+
+Date: 2026-09-08. Status: accepted. The owner reported having to ask for sleep
+mode and for a dark screen separately. Sleep mode always means a dark screen and
+waking always means a lit one, so the display command is issued from
+`sleep_mode._set` — the single write path — rather than by each caller. No path
+can enter sleep mode and leave the display on: the spoken phrase matcher, the
+`sleep_mode_control` tool, the morning wake-up announcement, and both scheduler
+jobs all go through it, and the 23:00 job now enters sleep mode instead of
+darkening the TV behind the flag's back.
+
+The panel dim is separate from the TV and stays that way: it is a real
+brightness change on the pygame window, applied in the CRT fragment shader after
+its 1/gamma pass. Applying it on the CPU before that pass was self-defeating --
+a requested 1% arrived on the glass at roughly 18% of awake brightness, and the
+8-bit multiply crushed the mid-tones first. `DIM_LEVEL` is now obeyed literally
+and `TALOS_SLEEP_DIM_LEVEL` tunes it. The plain-pygame fallback path keeps the
+BLEND_MULT fill, which is correct there because it has no gamma pass.
+
+`talos.services.display_power` reuses the two mechanisms already proven in
+production — adb standby to go dark, an MQTT `tv_display/wake_status` = `"1"`
+publish to come back — and runs them on a daemon thread. The sleep flag stays
+authoritative: a display that cannot be reached records a failure in
+`last_result()` (surfaced by the tool's `status` action) and never turns a good
+night into an error, and `TALOS_DISPLAY_POWER_ENABLED=0` disables the coupling
+for a headless host.
+
+## ADR-046 — Accept Windows AEC barge-in on the ReSpeaker XVF3800
+
+Date: 2026-09-08. Status: accepted; resolves the barge-in half of ADR-041's
+fail-closed decision and OQ-P's far-end question for this microphone. Owner
+requested the probe and authorized the change on its result.
+
+ADR-041 disabled barge-in for the ReSpeaker because its far-end reference to the
+BenQ render path was unvalidated, and the microphone-profile work made
+`respeaker` the default. That combination silently removed barge-in: the
+`windows_aec` flag gates it in both the launcher (`_microphone_env` forces
+`TALOS_BARGE_IN=0`) and the voice worker (`run_voice_recognition` clears
+`_barge_in_runtime_ready`), so `TALOS_BARGE_IN=1` had no effect.
+
+The bounded live probe answered the open question directly. Windows reports
+acoustic echo cancellation, noise suppression, AGC and deep noise suppression
+active on the XVF3800 capture endpoint, and the far-end reference resolves as
+`system_default_verified` — the pinned render endpoint *is* the current system
+default, which is exactly the binding the driver requires when it exposes no
+explicit reference control. At amplitude 0.06 the probe measured **43.668 dB
+ERLE** (far-end RMS 278.863 -> 1.829), peak normalized correlation 0.546 -> 0.050,
+and 0 callback errors — comparable to the Yeti baseline that originally
+qualified this contract (45.696 dB at amplitude 0.03).
+
+`windows_aec` is therefore true for both deployed profiles. The suppression path
+in the launcher and the worker is unchanged and remains the fail-closed default
+for any profile added later, which must produce its own probe evidence first.
+The generic `TALOS_AUDIO_CAPTURE_ENDPOINT_ID` fallback, which still held the
+Yeti identity after the ReSpeaker became the default capture device, is brought
+back in step; the per-profile pins remain the values the worker actually reads.
+
+## ADR-047 — A sleep/wake claim requires evidence, never history
+
+Date: 2026-09-08. Status: accepted. The owner reported that the first "butler,
+sleep" dimmed the screen but later ones did not, and theorized the model was
+copying earlier turns instead of acting. The captured LLM I/O confirms it
+exactly: of six sleep/wake turns, two matched no phrase, so nothing was applied
+and the model was handed no context -- and, with two of its own "I am now in
+sleep mode. The screen is dimmed" replies sitting in history, it said it again
+over a screen that never changed.
+
+The deterministic layer is widened but that is not the fix. Whole-utterance
+anchors now tolerate a known conversational run-up (the recognizer drops the
+leading word often enough that "let's sleep mode" arrives as "'s sleep mode")
+and trailing politeness or repetition ("again" appears precisely when someone
+asks a second time). Lookalikes stay excluded: what remains after the strip must
+still match a complete phrase, so "set a sleep timer" and "wake me at seven"
+change nothing.
+
+The fix is that an unmatched turn is no longer silent. Any turn in the
+sleep/screen/panel vocabulary that matched no phrase now carries
+``UNVERIFIED_NOTE``: nothing changed, earlier announcements in this conversation
+say nothing about this turn, ``sleep_mode_control`` is the only way to act, and
+a state change must never be stated without a system note or tool result behind
+it. Detection is deliberately broad because a false positive costs one true
+sentence of context while a false negative costs a fabricated confirmation --
+and a confident sentence with no state change behind it is indistinguishable,
+to someone listening, from the feature working.
+
+## ADR-048 — The wake word is stripped as a pattern, not a slice
+
+Date: 2026-09-08. Status: accepted; supersedes the prefix handling assumed by
+ADR-047, whose note remains the backstop.
+
+The owner said "butler, sleep mode" every time, so the "'s sleep mode" seen in
+the transcripts had to come from the pipeline. It did: faster-whisper writes
+"butler's sleep mode" (short comma pause, following word starts with an s), and
+the wake-word removal sliced off exactly `len("butler")` then stripped
+" ,.:;!?-" -- a set with no apostrophe in it. The command handed on was
+"'s sleep mode". Removal is now a compiled pattern covering the possessive
+(straight and curly apostrophe) and the punctuation run.
+
+Replaying the captured request against the deployed model settles the "is the
+small model just not capable" question with measurements rather than opinion.
+Qwen3 14.8B Q4_K_M at temperature 0.2 called `sleep_mode_control` 6/6 for every
+well-formed phrasing -- with the full 26-tool list, the full system prompt,
+conversation history present, and `/no_think` set. Only the garbled turn failed,
+and only with history present: "'s sleep mode." scored 6/6 with no history and
+0/6 with it. The model is not incapable and thinking mode is not the variable;
+a degraded input is, because history then offers a nearby precedent to imitate.
+Fixing the transcript at the source removes the input that triggers it, the
+widened matcher means such a turn is applied deterministically anyway, and
+ADR-047's note covers whatever still reaches the model.
+
+## ADR-049 — The transcript is not evidence, and the broker owns the context budget
+
+Date: 2026-09-08. Status: accepted. The owner reported a long-standing suspicion
+that the assistant answers as though it had called tools when it had not. It is
+real, it is systemic, and it is two separate defects -- neither of them a limit
+of the model.
+
+**Stored history hides tool use.** ``_record_memory_turn`` persists only
+``(command, response_text)``, so the tool calls that produced past answers are
+dropped. After a few exchanges the replayed conversation is an unbroken run of
+"question, then a confident prose answer, no tools", and the model follows the
+pattern it can see over the instruction it was given. Replaying a captured
+production request against the deployed model (Qwen3 14.8B Q4_K_M, temp 0.2,
+full 26-tool list): "is the plant watering system online?" called a tool 5/5
+with six or fewer prior messages and **0/8 with eight**, answering "online and
+operational" having checked nothing. Restoring one real tool call to that same
+history returned it to **8/8** -- the pattern is the variable, not capability.
+
+The fix is a system notice placed after history and immediately before the user
+turn -- the same position, and the same reasoning, as the authoritative time
+block -- stating that the transcript records what was said, not what was
+verified, and that a state question must be answered from a tool result. That
+took the failing request to 8/8 while leaving conversational turns ("tell me a
+fact", "summarize our conversation") at 0/8, so it buys grounding without
+buying tool spam. Annotating past answers as unverified was also tried and did
+nothing (0/8). ``TALOS_INJECT_HISTORY_GROUNDING=0`` disables it. Persisting tool
+calls into history is the durable fix and remains open.
+
+**The context budget was being overridden downstream.** The awareness broker
+ranks candidates and fits them to ``situation_budget_tokens`` (600, ~2.4k
+characters), guaranteeing that critical alerts survive its selection.
+``_format_context`` then cut the result to 500 characters, discarding 1559 of
+2059 characters on the deployed box -- every STATE, health and transition line,
+which is to say every fact about the house, leaving three verbose announcement
+receipts. A critical alert the broker had deliberately protected could be
+discarded the same way. This is why a device-state question reached the model
+with no device state in context. The limit is now a backstop above the broker's
+budget (``TALOS_CONTEXT_SNAPSHOT_CHAR_LIMIT``, 4000), so the component that
+reasons about priority is the one that decides what survives. Recorded as a
+known defect in ``talos/todo/llm-turn-context-deep-dive.md``; this closes it.
+
+The 500 was an artifact, not a constraint. It entered on 2026-02-22 in
+``InfoPanel/voice_agent.py`` (commit d345ce5, "sending the command to openai as
+to not waste tokens on everything heard") as a cap on
+``StateStore.snapshot()`` -- an in-memory dict rendered as ``key:value(ttl)``
+pairs, typically well under 100 characters, on a metered hosted API. It was a
+guard against an unbounded dict, and generous at the time. The June 2026
+restructuring (d1a4a50) carried it across verbatim, the awareness broker was
+later built behind it with its own 600-token budget, and the two were never
+reconciled.
+
+Nothing about the local deployment required it. Measured on the box: the model
+occupies 10.29 GB of the 5080's 16 GB, ``num_ctx`` is 16384, and logged prompts
+run 5.0k-6.0k tokens -- a 36% peak with ~10.4k tokens spare. The KV cache is
+allocated from ``num_ctx``, not from tokens actually used, so filling more of an
+already-allocated window costs no additional VRAM at all. The real cost is
+prefill: restoring the full snapshot measured **+649 prompt tokens and +9 ms**
+to first token.
+
 ## New decision template
 
 ```text

@@ -38,6 +38,13 @@ def _fresh_sleep_mode(test: unittest.TestCase):
 
     state_path = Path(tempfile.mkdtemp(prefix="talos_sleep_test_")) / "sleep.json"
     test.enterContext(patch.object(module, "STATE_PATH", state_path))
+    # Every sleep/wake write now commands the physical display. Record the
+    # commands instead of reaching for the TV; `display_calls` is the evidence
+    # that the two really are one action.
+    test.display_calls = []
+    test.enterContext(
+        patch.object(module, "_apply_display", test.display_calls.append)
+    )
     _reset_cache(module)
     test.addCleanup(_reset_cache, module)
     return module
@@ -67,6 +74,56 @@ class PhraseRecognitionTest(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertEqual(self.sleep_mode.match_phrase(phrase), "sleep")
+
+    def test_repeat_request_phrasings_from_the_2026_09_08_session(self) -> None:
+        """Transcripts that fell through and let the model narrate a fake dim.
+
+        Verbatim from `llm_io_20260909T030229`. The first sleep/wake pair
+        matched and worked; these did not, so nothing changed and the model --
+        seeing its own two previous "I am now in sleep mode" replies in history
+        -- said it again over a screen that never dimmed.
+        """
+        for phrase in (
+            "'s sleep mode.",          # recognizer dropped the leading word
+            "go into sleep mode again.",  # trailing "again"
+            "dim the screen.",
+            "ok sleep mode",
+            "let's go to sleep",
+            "go back into sleep mode",
+            "sleep mode now please",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.sleep_mode.match_phrase(phrase), "sleep")
+
+    def test_widened_matching_still_refuses_lookalikes(self) -> None:
+        """The run-up strip must not turn a mention of sleep into a command."""
+        for phrase in (
+            "set a sleep timer for ten minutes",
+            "how did you sleep",
+            "wake me at seven",
+            "what time do you go to sleep",
+            "the baby is going to bed soon",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(self.sleep_mode.match_phrase(phrase, asleep=False))
+
+    def test_an_unmatched_sleep_topic_turn_tells_the_model_nothing_changed(self) -> None:
+        """The fix for the fabricated confirmation.
+
+        An unmatched turn used to return None, so the model got no context at
+        all and copied its own earlier announcements. It now gets an explicit
+        statement that nothing changed and that the tool is the only way to act.
+        """
+        note = self.sleep_mode.apply_phrase("is the screen still dimmed or what")
+        self.assertIs(note, self.sleep_mode.UNVERIFIED_NOTE)
+        self.assertIn("NOTHING has changed", note)
+        self.assertIn("sleep_mode_control", note)
+        self.assertFalse(self.sleep_mode.is_asleep())
+
+    def test_ordinary_turns_are_still_left_completely_alone(self) -> None:
+        for phrase in ("what time is it", "tell me a fact", "water the monstera"):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(self.sleep_mode.apply_phrase(phrase))
 
     def test_wake_phrases_match(self) -> None:
         for phrase in (
@@ -184,10 +241,35 @@ class StateTest(unittest.TestCase):
         note = self.sleep_mode.apply_phrase("good night")
         self.assertIn("entered sleep mode", note)
         self.assertTrue(self.sleep_mode.is_asleep())
+        self.assertEqual(self.sleep_mode.state()["display_level"], self.sleep_mode.DIM_LEVEL)
         self.assertIn("already on", self.sleep_mode.apply_phrase("sleep"))
         self.assertIn("left sleep mode", self.sleep_mode.apply_phrase("wake up"))
         self.assertFalse(self.sleep_mode.is_asleep())
+        self.assertEqual(self.sleep_mode.state()["display_level"], 1.0)
         self.assertIn("already awake", self.sleep_mode.apply_phrase("wake up"))
+
+    def test_sleep_and_wake_always_command_the_display(self) -> None:
+        """Sleep mode means a dark screen; waking means a lit one, every time.
+
+        Both directions are asserted through the single write path, so no
+        caller can enter sleep mode and leave the display on -- the split that
+        forced the user to ask for the screen separately.
+        """
+        self.sleep_mode.sleep(reason="test")
+        self.sleep_mode.wake(reason="test")
+        self.assertEqual(self.display_calls, [True, False])
+
+    def test_display_is_re_asserted_even_when_the_flag_does_not_change(self) -> None:
+        """A screen that drifted out of step is repaired at the next request."""
+        self.sleep_mode.sleep(reason="test")
+        self.sleep_mode.sleep(reason="test again")
+        self.assertEqual(self.display_calls, [True, True])
+
+    def test_relative_state_path_is_anchored_to_the_repository(self) -> None:
+        self.assertEqual(
+            self.sleep_mode.resolve_state_path("db/custom-sleep.json"),
+            self.sleep_mode.REPO_ROOT / "db" / "custom-sleep.json",
+        )
 
     def test_note_tells_the_model_to_speak_for_itself(self) -> None:
         note = self.sleep_mode.apply_phrase("good night")
@@ -348,3 +430,54 @@ class RouterAnnouncementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class WakeWordStripTest(unittest.TestCase):
+    """The wake-word prefix removed from a transcript before anything else sees it.
+
+    Regression: asked for "butler, sleep mode", faster-whisper writes
+    "butler's sleep mode" -- the comma pause is short and the next word starts
+    with an s. The old slice removed exactly len("butler") and stripped
+    " ,.:;!?-", which does not include an apostrophe, so the command became
+    "'s sleep mode": it matched no sleep phrase and reached the model as a
+    garbled turn, which the model then answered from conversational precedent
+    instead of calling the tool.
+    """
+
+    @staticmethod
+    def _pattern():
+        try:
+            from talos.voice.agent import _WAKE_WORD_PREFIX
+        except ImportError as exc:  # voice deps live in .venv-voice
+            raise unittest.SkipTest(f"voice dependencies not installed: {exc}")
+        return _WAKE_WORD_PREFIX
+
+    def _strip(self, transcript: str) -> str:
+        return self._pattern().sub("", transcript, count=1).strip()
+
+    def test_every_transcription_of_the_wake_word_yields_the_bare_command(self) -> None:
+        for transcript in (
+            "butler's sleep mode",
+            "butler’s sleep mode",   # curly apostrophe
+            "butlers sleep mode",
+            "butler, sleep mode",
+            "butler: sleep mode",
+            "butler sleep mode",
+            "butler - sleep mode",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertEqual(self._strip(transcript), "sleep mode")
+
+    def test_the_stripped_command_is_recognised_as_a_sleep_phrase(self) -> None:
+        import talos.services.sleep_mode as sleep_mode
+
+        for transcript in ("butler's sleep mode.", "butler, sleep mode."):
+            with self.subTest(transcript=transcript):
+                self.assertEqual(
+                    sleep_mode.match_phrase(self._strip(transcript)), "sleep"
+                )
+
+    def test_ordinary_commands_are_unchanged(self) -> None:
+        self.assertEqual(self._strip("butler what time is it"), "what time is it")
+        self.assertEqual(self._strip("butler"), "")

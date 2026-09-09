@@ -1,11 +1,14 @@
 """Sleep mode: one shared night-mode flag for the whole TALOS process tree.
 
-Sleep mode is the house going quiet for the night. Three things change while
+Sleep mode is the house going quiet for the night. Four things change while
 it is on:
 
-- the pygame info panel renders at 5% brightness -- dim, not off, so the clock
-  is still legible from across a dark room and the panel is visibly asleep
-  rather than visibly broken;
+- the pygame info panel renders at ``DIM_LEVEL`` brightness -- dim, not off, so
+  the clock is still legible from across a dark room and the panel is visibly
+  asleep rather than visibly broken;
+- the physical display the panel is shown on is put into standby, and lit again
+  on wake (:mod:`talos.services.display_power`). Sleep mode and a dark screen
+  are one action: neither can be asked for without the other;
 - unsolicited speech (awareness alerts, briefings, scheduled announcements) is
   held back unless it is tagged ``critical``;
 - nothing else. A command the user actually speaks is still answered out loud,
@@ -41,13 +44,19 @@ from talos.config import REPO_ROOT, env_float, load_environment
 load_environment()
 
 
-STATE_PATH = Path(
-    os.getenv("TALOS_SLEEP_STATE_PATH", "").strip()
-    or (REPO_ROOT / "db" / "talos_sleep_state.json")
-)
+def resolve_state_path(configured: str = "") -> Path:
+    """Resolve one shared path regardless of each process's working directory."""
+    path = Path(configured.strip()) if configured.strip() else Path("db/talos_sleep_state.json")
+    return path if path.is_absolute() else REPO_ROOT / path
 
-# Fraction of normal brightness the panel renders at while asleep. 0.01 is a
-# 99% dim: legible in a dark room, invisible from a lit one.
+
+STATE_PATH = resolve_state_path(os.getenv("TALOS_SLEEP_STATE_PATH", ""))
+
+# Fraction of normal brightness the panel renders at while asleep, and the
+# number the panel now literally obeys: the dim moved into the CRT shader, past
+# the 1/gamma pass that used to take a requested 1% back up to roughly 18% of
+# awake brightness on the glass. Turn it up with TALOS_SLEEP_DIM_LEVEL (0.05 to
+# 0.10 is a readable night-dark) if a true 1% is darker than you want.
 DIM_LEVEL = min(max(env_float("TALOS_SLEEP_DIM_LEVEL", 0.01), 0.0), 1.0)
 
 # How long a cached read stays good. Short enough that a spoken "butler, sleep"
@@ -75,14 +84,45 @@ _NOTE_FRAME = (
     "Acknowledge briefly, in your own voice.]"
 )
 _SLEEP_DETAIL = (
-    "The info panel is dimmed and noncritical spoken alerts are held back until "
-    "morning."
+    "The screen is going dark, the info panel is dimmed, and noncritical spoken "
+    "alerts are held back until morning."
 )
-_WAKE_DETAIL = "The panel is back to full brightness and alerts are audible again."
+_WAKE_DETAIL = (
+    "The screen is coming back up, the panel is at full brightness, and alerts "
+    "are audible again."
+)
 FAILURE_NOTE = (
     "[System note, not spoken by the user: the user asked to change sleep mode "
     "and it FAILED -- the state file could not be written, so nothing changed. "
     "Tell them plainly that it did not work.]"
+)
+# Sent when a turn is *about* sleep, the screen, or the panel but matched no
+# phrase, so nothing was applied before the model ran.
+#
+# Without it the model saw an ordinary turn plus a history in which it had
+# twice announced "I am now in sleep mode. The screen is dimmed" -- and said it
+# again, over a screen that never changed. The words are the only thing the user
+# can hear, so a confident sentence with no state change behind it is
+# indistinguishable from the feature working, which is worse than an error.
+UNVERIFIED_NOTE = (
+    "[System note, not spoken by the user: this turn was NOT recognised as a "
+    "sleep/wake command, so NOTHING has changed -- the panel, the screen and "
+    "the alert gate are exactly as they were. Earlier turns in this "
+    "conversation may show you announcing a sleep or wake change; those were "
+    "separate turns and say nothing about this one. If the user is asking you "
+    "to sleep, wake, dim or brighten now, you MUST call the "
+    "sleep_mode_control tool and report what it returns. Never state or imply "
+    "that the state changed unless a system note or a tool result says so; if "
+    "you are unsure what they meant, ask.]"
+)
+
+# Vocabulary that puts a turn in the sleep/screen domain. Used only to decide
+# whether an *unmatched* turn deserves the note above; it never changes state,
+# so a false positive costs one honest sentence of context and nothing else.
+_SLEEP_TOPIC = re.compile(
+    r"\b(?:sleep|sleeping|asleep|wake|waking|awake|good\s*night|goodnight|"
+    r"night\s*mode|nap|dim|dimmed|dimming|undim|bright|brighten|brighter|"
+    r"brightness|lights?\s+out|go\s+dark|screen|display|panel|monitor)\b"
 )
 
 # Titles of system announcements that end sleep mode by themselves. The morning
@@ -104,7 +144,7 @@ def _now_iso() -> str:
 
 
 def _default_state() -> dict:
-    return {"asleep": False, "since": None, "reason": ""}
+    return {"asleep": False, "since": None, "reason": "", "display_level": 1.0}
 
 
 def _read_file() -> dict:
@@ -121,6 +161,7 @@ def _read_file() -> dict:
     current["asleep"] = bool(payload.get("asleep"))
     current["since"] = payload.get("since") or None
     current["reason"] = str(payload.get("reason") or "")
+    current["display_level"] = DIM_LEVEL if current["asleep"] else 1.0
     return current
 
 
@@ -169,6 +210,9 @@ def _set(asleep: bool, reason: str) -> dict:
         "asleep": asleep,
         "since": _now_iso() if asleep else None,
         "reason": str(reason or ""),
+        # Sleep and display state are one atomic record. A caller can no longer
+        # put TALOS to sleep while leaving the panel's intended level awake.
+        "display_level": DIM_LEVEL if asleep else 1.0,
     }
     with _lock:
         try:
@@ -179,7 +223,25 @@ def _set(asleep: bool, reason: str) -> dict:
             raise RuntimeError(f"could not write sleep state: {exc}") from exc
         _cache = dict(new_state)
         _cache_read_at = time.monotonic()
+    _apply_display(asleep)
     return dict(new_state)
+
+
+def _apply_display(asleep: bool) -> None:
+    """Bring the physical display in line with the flag just written.
+
+    Sleep mode always means a dark screen and waking always means a lit one,
+    so this is driven from the single write path rather than from each caller:
+    there is no longer any way to enter sleep mode and leave the display on.
+    Imported lazily and best effort -- the flag is authoritative, and a TV that
+    cannot be reached must not turn a good night into a failure.
+    """
+    try:
+        from talos.services import display_power
+
+        display_power.apply(asleep)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[sleep-mode] display command not dispatched: {exc}")
 
 
 def sleep(reason: str = "") -> dict:
@@ -234,21 +296,40 @@ _PUNCTUATION = re.compile(r"[^\w\s]+")
 _WHITESPACE = re.compile(r"\s+")
 _LEADING_WAKE_WORD = re.compile(r"^(?:hey\s+)?butler\b[\s,]*")
 
+# Conversational run-up, stripped before matching so the whole-utterance anchors
+# below can stay strict without rejecting the way people actually speak. The
+# bare "s" is not a typo: the recognizer drops the first word of a short
+# utterance often enough that "let's sleep mode" arrives as "'s sleep mode",
+# which matched nothing and fell through to the model. Only a known run-up is
+# removed, and what remains must still match a complete phrase, so "set a sleep
+# timer" and "how did you sleep" are unaffected.
+_LEADING_FILLER = re.compile(
+    r"^(?:(?:ok|okay|alright|right|so|well|yeah|yep|yes|hey|please|now|"
+    r"lets|let s|its|it s|s|thats|that s|i want you to|i need you to|"
+    r"can you|could you|would you|will you|time to|its time to)\b[\s,]*)+"
+)
+
+# Trailing politeness or repetition, allowed on every whole-utterance pattern.
+# "go into sleep mode again" is the same request as "go into sleep mode", and
+# the second time someone asks is exactly when "again" shows up.
+_TAIL = r"(?:\s+(?:now|please|again|once\s+more|for\s+me))*$"
+
 _SLEEP_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"^(?:please\s+)?(?:go\s+to\s+|go\s+)?sleep(?:\s+mode)?(?:\s+now|\s+please)?$",
-        r"^(?:enter|activate|start|turn\s+on|engage|go\s+into)\s+(?:the\s+)?(?:sleep|night)\s+mode$",
-        r"^(?:sleep|night)\s+mode\s+(?:on|please)$",
-        r"^(?:can\s+you\s+|please\s+)?(?:go\s+to\s+sleep|put\s+yourself\s+to\s+sleep)(?:\s+now|\s+please)?$",
-        r"^(?:its\s+|it\s+is\s+)?time\s+(?:to\s+sleep|for\s+sleep)$",
-        r"^go\s+dark$",
-        r"^dim\s+(?:the\s+)?(?:screen|display|panel|monitor|lights)$",
-        r"^good\s*night(?:\s+butler)?$",
-        r"^night\s*night$",
-        r"^(?:i\s*am|im)\s+(?:going\s+to|off\s+to)\s+bed$",
-        r"^(?:time\s+for\s+bed|off\s+to\s+bed|going\s+to\s+bed)$",
-        r"^lights\s+out$",
+        r"^(?:please\s+)?(?:go\s+to\s+|go\s+)?sleep(?:\s+mode)?" + _TAIL,
+        r"^(?:enter|activate|start|turn\s+on|engage|go\s+into|go\s+back\s+into)"
+        r"\s+(?:the\s+)?(?:sleep|night)\s+mode" + _TAIL,
+        r"^(?:sleep|night)\s+mode\s+(?:on|please)" + _TAIL,
+        r"^(?:can\s+you\s+|please\s+)?(?:go\s+to\s+sleep|put\s+yourself\s+to\s+sleep)" + _TAIL,
+        r"^(?:its\s+|it\s+is\s+)?time\s+(?:to\s+sleep|for\s+sleep)" + _TAIL,
+        r"^go\s+dark" + _TAIL,
+        r"^dim\s+(?:the\s+)?(?:screen|display|panel|monitor|lights)" + _TAIL,
+        r"^good\s*night(?:\s+butler)?" + _TAIL,
+        r"^night\s*night" + _TAIL,
+        r"^(?:i\s*am|im)\s+(?:going\s+to|off\s+to)\s+bed" + _TAIL,
+        r"^(?:time\s+for\s+bed|off\s+to\s+bed|going\s+to\s+bed)" + _TAIL,
+        r"^lights\s+out" + _TAIL,
     )
 )
 
@@ -256,12 +337,13 @@ _SLEEP_PATTERNS = tuple(
 _WAKE_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"^(?:please\s+)?wake(?:\s+up)?(?:\s+now|\s+please)?$",
-        r"^(?:exit|leave|end|cancel|stop|turn\s+off|disable)\s+(?:the\s+)?(?:sleep|night)\s+mode$",
-        r"^(?:sleep|night)\s+mode\s+off$",
-        r"^good\s*morning(?:\s+butler)?$",
-        r"^rise\s+and\s+shine$",
-        r"^(?:i\s*am|im)\s+up$",
+        r"^(?:please\s+)?wake(?:\s+up)?" + _TAIL,
+        r"^(?:exit|leave|end|cancel|stop|turn\s+off|disable)"
+        r"\s+(?:the\s+)?(?:sleep|night)\s+mode" + _TAIL,
+        r"^(?:sleep|night)\s+mode\s+off" + _TAIL,
+        r"^good\s*morning(?:\s+butler)?" + _TAIL,
+        r"^rise\s+and\s+shine" + _TAIL,
+        r"^(?:i\s*am|im)\s+up" + _TAIL,
     )
 )
 
@@ -336,7 +418,8 @@ def _normalize(text: str) -> str:
     lowered = str(text or "").strip().lower()
     lowered = _LEADING_WAKE_WORD.sub("", lowered)
     lowered = _PUNCTUATION.sub(" ", lowered)
-    return _WHITESPACE.sub(" ", lowered).strip()
+    lowered = _WHITESPACE.sub(" ", lowered).strip()
+    return _LEADING_FILLER.sub("", lowered).strip()
 
 
 def match_phrase(command: str, *, asleep: bool | None = None) -> str | None:
@@ -367,6 +450,16 @@ def match_phrase(command: str, *, asleep: bool | None = None) -> str | None:
     return None
 
 
+def is_sleep_topic(command: str) -> bool:
+    """Whether this turn is about sleep mode, the screen, or the panel.
+
+    Deliberately broad. It gates a note that only tells the model the truth
+    (nothing changed, use the tool), so over-matching is cheap and
+    under-matching is what caused the bug.
+    """
+    return bool(_SLEEP_TOPIC.search(_normalize(command)))
+
+
 def apply_phrase(command: str, *, source: str = "voice") -> str | None:
     """Apply a recognised sleep/wake phrase; return a note for the model.
 
@@ -382,7 +475,10 @@ def apply_phrase(command: str, *, source: str = "voice") -> str | None:
     currently_asleep = is_asleep()
     intent = match_phrase(command, asleep=currently_asleep)
     if intent is None:
-        return None
+        # Nothing was applied. If the turn is nevertheless about sleep or the
+        # screen, say so explicitly rather than staying silent -- silence is
+        # what let the model narrate a change that never happened.
+        return UNVERIFIED_NOTE if is_sleep_topic(command) else None
 
     changed = (intent == "sleep") != currently_asleep
     if changed:

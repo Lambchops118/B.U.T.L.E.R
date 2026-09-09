@@ -44,6 +44,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from talos.awareness.config import AwarenessSettings
+from talos.awareness.state.freshness import (
+    effective_state_status,
+    freshness_detection_column,
+)
 from talos.awareness.db.models import (
     Alert,
     AttentionItem,
@@ -317,6 +321,7 @@ class SituationBroker:
                     CurrentState.state_status,
                     CurrentState.received_at,
                     Source.stale_after_seconds,
+                    freshness_detection_column(),
                 )
                 .join(Entity, Entity.entity_id == CurrentState.entity_id)
                 .join(Source, Source.source_id == CurrentState.source_id, isouter=True)
@@ -328,7 +333,11 @@ class SituationBroker:
 
         for row in rows:
             status = self._qualified_status(
-                row.state_status, row.received_at, row.stale_after_seconds, now
+                row.state_status,
+                row.received_at,
+                row.stale_after_seconds,
+                now,
+                row.state_freshness_detection,
             )
             value = (row.value_json or {}).get("value")
             if row.property_name == "present":
@@ -390,13 +399,21 @@ class SituationBroker:
         received_at: datetime | None,
         stale_after: float | None,
         now: datetime,
+        freshness_flag: Any = None,
     ) -> str:
-        """Reads never present overdue data as current (shared with state rows)."""
-        if state_status in ("current", "inferred") and received_at is not None:
-            deadline = stale_after or self._settings.default_stale_after_seconds
-            if (now - received_at).total_seconds() > deadline:
-                return "stale"
-        return state_status
+        """Reads never present overdue data as current (shared with state rows).
+
+        Sources that opt out of expiry are exempt here too, so a reading the
+        worker deliberately left alone is not quietly aged by the reader.
+        """
+        return effective_state_status(
+            state_status,
+            received_at,
+            stale_after,
+            now,
+            self._settings.default_stale_after_seconds,
+            freshness_flag,
+        )
 
     async def _presence_candidates(
         self, connection, now: datetime, focus: dict[str, Any]
@@ -504,6 +521,7 @@ class SituationBroker:
                 CurrentState.confidence,
                 CurrentState.source_id,
                 Source.stale_after_seconds,
+                freshness_detection_column(),
             )
             .join(Source, Source.source_id == CurrentState.source_id, isouter=True)
             .order_by(CurrentState.updated_at.desc())
@@ -514,11 +532,14 @@ class SituationBroker:
         rows = (await connection.execute(statement)).all()
         candidates = []
         for row in rows:
-            status = row.state_status
-            if status in ("current", "inferred") and row.received_at is not None:
-                deadline = row.stale_after_seconds or self._settings.default_stale_after_seconds
-                if (now - row.received_at).total_seconds() > deadline:
-                    status = "stale"  # reads never present overdue data as current
+            # Reads never present overdue data as current.
+            status = self._qualified_status(
+                row.state_status,
+                row.received_at,
+                row.stale_after_seconds,
+                now,
+                row.state_freshness_detection,
+            )
             value = (row.value_json or {}).get("value")
             text = (
                 f"STATE {row.entity_id}.{row.property_name} = {value!r} "

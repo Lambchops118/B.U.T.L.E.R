@@ -2,6 +2,45 @@
 
 This file reports implementation state, not documentation availability.
 
+## Latest bounded behavior fixes — presence, morning context, quad pump, sleep (2026-09-08)
+
+Four owner-reported defects. Morning briefing context and the quad-pump
+false-offline diagnosis were already implemented in the working tree and are
+**verified** here — the live database shows `quad_pump_canonical` healthy with no
+open alerts, the superseded `quad_pump_pico` (silent since 2026-08-30) reconciled
+to `unknown`, and the morning weather provider returning a real observation.
+
+Two needed completing. **Presence**: the worker-side expiry opt-out did not bind
+on the read path, so every `SituationBroker`/history read still aged owner
+presence at query time, and the `stale -> current` half of each expiry pair was
+still spoken as "your presence was detected again" — the welcome back itself.
+Reads now share `effective_state_status`, unchanged-value transitions are never
+spoken (`briefing-speech-v2`), the deployed 900 s presence timer is migrated
+away, and rows the old deadline left `stale` are reconciled. **Sleep mode**: the
+physical display was owned by two unrelated scheduler jobs, so sleep left a lit
+screen. New `talos/services/display_power.py` is driven from `sleep_mode._set`,
+the single write path, so no route can separate the two. The pygame dim was
+separately broken: applied on the CPU ahead of the CRT shader's 1/gamma pass, a
+requested 1% reached the glass at ~18% of awake brightness. It now lives in the
+shader after gamma and is verified by rendering real frames (1.1% measured
+against a 1% target). ADR-044 and ADR-045.
+
+Also repaired: `tests/test_awareness_presence_integration.py` held a corrupted
+token that made the module a `SyntaxError`, so the previous session's presence
+tests could not have run.
+
+Validation: **41 focused tests passed** in `.venv-main` and **33** in
+`.venv-awareness` against the live awareness Postgres; full `test_awareness*`
+discovery ran 212 tests with 3 errors from `mcp` being absent in
+`.venv-awareness` (those pass in `.venv-main`). All touched files compile and
+`git diff --check` passes. No process restart, GUI smoke test, live display
+command, or full-suite run occurred. One **pre-existing, unrelated** flake is
+documented rather than fixed: an outbox test compares a database-stamped
+`available_at` against a host-clock `now`, and the container clock is ~10 ms
+ahead. See `SESSION_HANDOFF_2026-09-08_FOUR_BEHAVIOR_FIXES.md`; restart the
+awareness backend and the main agent so the registry migrations and the
+sleep/display coupling take effect, then stop at this bounded fix.
+
 ## Latest bounded launcher enhancement — persistent exact LLM I/O (2026-09-08)
 
 The owner requested permanent capture after confirming the initial LLM I/O tab

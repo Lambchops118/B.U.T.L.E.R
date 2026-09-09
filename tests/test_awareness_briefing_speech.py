@@ -29,8 +29,27 @@ class BriefingSpeechTest(unittest.TestCase):
         self.assertEqual(transition_text("owner", "detail", {"log": "secret"}, "current"), "")
         self.assertEqual(transition_text("owner", "present", None, "unknown"),
                          "Your presence reading was uncertain earlier.")
+        self.assertEqual(transition_text("owner", "present", True, "stale"), "")
         self.assertEqual(transition_text("fan", "state", {"log": "secret"}, "current"),
                          "The fan's state changed earlier.")
+
+    def test_an_expiry_and_recovery_pair_is_never_spoken_as_a_homecoming(self):
+        """The idle timer's own bookkeeping is not a fact about the person.
+
+        A `stale -> current` transition carries the same value on both sides:
+        nobody arrived, a reading was simply re-confirmed. Speaking it produced
+        the "your presence was detected again" the user never triggered.
+        """
+        self.assertEqual(
+            transition_text("owner", "present", True, "current", True, "stale"), "")
+        # A real arrival still speaks: the value itself changed.
+        self.assertEqual(
+            transition_text("owner", "present", True, "current", False, "current"),
+            "Your presence was detected again.")
+        # A first-ever reading has no previous value and is still spoken.
+        self.assertEqual(
+            transition_text("owner", "present", True, "current", None, None),
+            "Your presence was detected again.")
 
     def test_continuations_do_not_repeat_greeting(self):
         self.assertEqual(render_batch([{"spoken_text": "The task completed."}], kind="arrival", part=1),

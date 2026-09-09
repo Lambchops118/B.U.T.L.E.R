@@ -162,10 +162,11 @@ def _microphone_env(base: dict[str, str], cfg: LauncherConfig) -> dict[str, str]
     env["TALOS_MICROPHONE_PROFILE"] = name
     env["TALOS_RECOGNIZER_ENERGY_THRESHOLD"] = profile.energy_threshold
     if not profile.windows_aec:
-        # The XVF3800 ASR channel is useful for idle recognition, but its
-        # hardware far-end reference is not connected to the BenQ render path.
-        # Do not compose it with the Yeti-specific Windows AEC/barge-in contract
-        # without the separately required room corpus.
+        # A microphone may only be composed with the Windows AEC/barge-in
+        # contract once its own far-end reference has been measured on this
+        # host (`python -m talos.voice.diagnostics.windows_aec_probe`). Both
+        # deployed profiles have now passed; this stays as the fail-closed path
+        # for any profile added later.
         env["TALOS_BARGE_IN"] = "0"
         env["TALOS_IDLE_VAD_ENDPOINTING"] = "0"
     return env
@@ -368,8 +369,8 @@ class Supervisor:
         self._say(f"voice microphone profile: {profile.label}")
         if not profile.windows_aec:
             self._say(
-                "ReSpeaker uses its explicit 16 kHz ASR channel; barge-in is "
-                "disabled until its far-end/AEC corpus passes."
+                f"{profile.label}: barge-in is disabled until this "
+                "microphone's far-end/AEC evidence passes on this host."
             )
         # The voice worker reaches the main agent over TALOS_TEXT_AGENT_URL. When
         # the launcher also starts the main agent locally, the worker must talk

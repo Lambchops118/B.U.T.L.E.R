@@ -150,6 +150,7 @@ class AwarenessProviderTest(unittest.TestCase):
                 "get_sensor_history",
                 "get_active_alerts",
                 "get_system_health",
+                "set_owner_presence",
                 "get_event_provenance",
                 "get_awareness_capabilities",
                 "search_memory",
@@ -163,6 +164,24 @@ class AwarenessProviderTest(unittest.TestCase):
                 "cancel_reminder",
             },
         )
+
+    def test_presence_tool_records_only_explicit_state(self) -> None:
+        import asyncio
+
+        from mcp.server.fastmcp import FastMCP
+        from talos.mcp_servers.providers.awareness import register
+
+        server = FastMCP("test-awareness")
+        register(server)
+        with mock.patch(
+            "talos.mcp_servers.providers.awareness.awareness_client.post_json",
+            return_value={"accepted": True, "disposition": "accepted"},
+        ) as post:
+            asyncio.run(server.call_tool("set_owner_presence", {"present": False}))
+        path, body = post.call_args.args
+        self.assertEqual(path, "/ingest")
+        self.assertFalse(body["payload"]["present"])
+        self.assertEqual(body["payload"]["modality"], "explicit_user_statement")
 
     def test_tool_returns_bounded_error_when_backend_down(self) -> None:
         import asyncio

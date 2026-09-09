@@ -32,7 +32,19 @@ MICROPHONE_PROFILES = {
         selected_channel=1,
         preferred_host_api="MME",
         energy_threshold="auto",
-        windows_aec=False,
+        # Windows AEC accepted on this microphone 2026-09-08, on the evidence
+        # the earlier fail-closed decision asked for. A bounded live probe at
+        # amplitude 0.06 measured 43.668 dB ERLE (far-end RMS 278.863 -> 1.829),
+        # peak normalized correlation 0.546 -> 0.050, and 0 callback errors --
+        # comparable to the Yeti baseline that qualified this contract
+        # (45.696 dB at amplitude 0.03). Windows reports the AEC, noise
+        # suppression, AGC and deep-noise-suppression effects active, and the
+        # far-end reference resolves as `system_default_verified`: the pinned
+        # render endpoint IS the current default, which is the reference the
+        # open question was about. Re-run
+        # `python -m talos.voice.diagnostics.windows_aec_probe` and set this
+        # back to False if the render path or the microphone changes.
+        windows_aec=True,
     ),
     "yeti": MicrophoneProfile(
         name="yeti",

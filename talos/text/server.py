@@ -564,7 +564,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             # panel that never dimmed.
             print(f"[text-agent] sleep mode change failed: {exc}")
             return sleep_mode.FAILURE_NOTE
-        if note is not None:
+        if note is sleep_mode.UNVERIFIED_NOTE:
+            # Logged distinctly: this is a near miss worth seeing. Every one of
+            # these is a phrasing the deterministic layer should probably learn.
+            print(f"[text-agent] sleep-topic turn matched no phrase, from {source}: {command!r}")
+        elif note is not None:
             print(f"[text-agent] sleep phrase from {source}: {command!r}")
         return note
 

@@ -89,7 +89,17 @@ class MicrophoneProfileTests(unittest.TestCase):
         profile = get_microphone_profile("respeaker")
         self.assertEqual(profile.source_channels, 2)
         self.assertEqual(profile.selected_channel, 1)
-        self.assertFalse(profile.windows_aec)
+
+    def test_both_deployed_profiles_carry_the_windows_aec_contract(self):
+        """Barge-in is gated on this flag alone, in the worker and the launcher.
+
+        The ReSpeaker was fail-closed until its far-end reference was measured
+        on this host; the probe recorded 43.7 dB ERLE with a verified
+        system-default render reference, so it now carries the contract.
+        """
+        for name in ("respeaker", "yeti"):
+            with self.subTest(profile=name):
+                self.assertTrue(get_microphone_profile(name).windows_aec)
 
     def test_respeaker_uses_calibrated_energy_threshold(self):
         profile = get_microphone_profile("respeaker")

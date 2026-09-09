@@ -3,21 +3,37 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
+from unittest.mock import patch
 
 from talos.launcher import config
 from talos.launcher.__main__ import _build_parser
 from talos.launcher.config import LauncherConfig
 from talos.launcher.core import _microphone_env
+from talos.voice.microphone_profiles import get_microphone_profile
 
 
 class LauncherMicrophoneProfileTests(unittest.TestCase):
-    def test_respeaker_profile_injects_safe_capture_contract(self):
+    def test_respeaker_profile_keeps_its_calibrated_capture_contract(self):
         cfg = LauncherConfig(microphone_profile="respeaker")
         env = _microphone_env({"TALOS_BARGE_IN": "1"}, cfg)
         self.assertEqual(env["TALOS_MICROPHONE_PROFILE"], "respeaker")
         self.assertEqual(env["TALOS_RECOGNIZER_ENERGY_THRESHOLD"], "auto")
+        # No longer forced off: the ReSpeaker's AEC evidence has been measured.
+        self.assertEqual(env["TALOS_BARGE_IN"], "1")
+
+    def test_a_profile_without_aec_evidence_still_fails_closed(self):
+        """The suppression path is the safety net for any profile added later."""
+        cfg = LauncherConfig(microphone_profile="respeaker")
+        unproven = replace(get_microphone_profile("respeaker"), windows_aec=False)
+        with patch(
+            "talos.launcher.core.get_microphone_profile", return_value=unproven
+        ):
+            env = _microphone_env(
+                {"TALOS_BARGE_IN": "1", "TALOS_IDLE_VAD_ENDPOINTING": "1"}, cfg
+            )
         self.assertEqual(env["TALOS_BARGE_IN"], "0")
         self.assertEqual(env["TALOS_IDLE_VAD_ENDPOINTING"], "0")
 

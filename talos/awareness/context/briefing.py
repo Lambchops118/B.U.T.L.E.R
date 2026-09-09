@@ -154,7 +154,8 @@ class BriefingAssembler:
             add(transitions, row, item_id=f"transition:{row.id}", category="transition",
                 priority=6, moment=row.occurred_at, source=row.source_id,
                 text=f"CHANGE {row.entity_id}.{row.property_name} -> {_one_line(repr((row.to_value or {}).get('value')))} [{row.to_status}]",
-                spoken=transition_text(row.entity_id, row.property_name, (row.to_value or {}).get("value"), row.to_status),
+                spoken=transition_text(row.entity_id, row.property_name, (row.to_value or {}).get("value"),
+                                       row.to_status, (row.from_value or {}).get("value"), row.from_status),
                 evidence={"transition_id": row.id, "source_event_id": str(row.source_event_id) if row.source_event_id else None,
                           "observed_at": _iso(row.observed_at), "confidence": row.confidence})
         for row in events.rows:

@@ -100,6 +100,13 @@ AGENT_MAX_OUTPUT_TOKENS = max(150, env_int("TALOS_AGENT_MAX_OUTPUT_TOKENS", 400)
 # Inject the authoritative current date/time into every turn's context so the
 # model reads ground truth instead of extrapolating a stale time from history.
 INJECT_CURRENT_TIME = env_bool("TALOS_INJECT_CURRENT_TIME", True)
+# Counter the strongest in-context pattern the assistant ever sees: its own
+# transcript. See :func:`_history_grounding_notice`.
+INJECT_HISTORY_GROUNDING = env_bool("TALOS_INJECT_HISTORY_GROUNDING", True)
+# Backstop only. The awareness broker's own token budget decides what the
+# snapshot contains; this just refuses an unbounded string. See
+# :func:`_format_context` for what happened when it was set below that budget.
+CONTEXT_SNAPSHOT_CHAR_LIMIT = env_int("TALOS_CONTEXT_SNAPSHOT_CHAR_LIMIT", 4000)
 # Local models sometimes print a tool call as plain text instead of returning a
 # structured tool call (the hosted Responses API could not). Recover it: parse
 # and execute the call, and keep the raw markup out of speech and stored history.
@@ -1019,12 +1026,73 @@ def _record_memory_turn(
 
 
 def _format_context(snapshot: str) -> str | None:
+    """Render the awareness situation snapshot for the turn.
+
+    The length limit here is a backstop, not the budget. The awareness broker
+    already ranks candidates and fits them to ``situation_budget_tokens`` (600
+    by default, about 2.4k characters), and it guarantees that every critical
+    alert survives its own selection. A 500-character cut applied afterwards
+    silently undid both: it discarded roughly three quarters of a full snapshot
+    -- measured at 1559 of 2059 characters on the deployed box -- and what it
+    kept was whatever sorted first, in practice a few verbose announcement
+    receipts. Every STATE, health and transition line, which is to say every
+    fact about the actual house, fell off the end, and a critical alert the
+    broker had deliberately protected could go with it.
+
+    That is why "is the plant watering system online?" reached the model with no
+    device state in context at all. Keep this comfortably above the broker's
+    budget so the component that reasons about priority is the one that decides
+    what survives.
+    """
     if not snapshot or snapshot == "no recent status":
         return None
     snapshot = " ".join(str(snapshot).split())
-    if len(snapshot) > 500:
-        snapshot = snapshot[:500].rsplit(" ", 1)[0] + "..."
+    if len(snapshot) > CONTEXT_SNAPSHOT_CHAR_LIMIT:
+        snapshot = snapshot[:CONTEXT_SNAPSHOT_CHAR_LIMIT].rsplit(" ", 1)[0] + "..."
     return f"Context (read-only): {snapshot}"
+
+
+def _history_grounding_notice(
+    history: list[dict[str, str]], tool_defs: list[dict[str, Any]] | None
+) -> str | None:
+    """Tell the model its own transcript is not evidence, just before it answers.
+
+    Stored history is the final *text* of each turn only -- ``_record_memory_turn``
+    persists ``(command, response_text)``, so the tool calls that produced those
+    answers are dropped. After a few exchanges the replayed conversation is an
+    unbroken run of "question, then a confident prose answer, no tools", and the
+    model follows the pattern it can see rather than the instruction it was
+    given: it stops calling tools and starts asserting device state from nothing.
+
+    Measured on the deployed model (Qwen3 14.8B Q4_K_M, temp 0.2, full 26-tool
+    list, replaying a captured request that failed in production): with six or
+    fewer prior messages "is the plant watering system online?" called a tool
+    5/5; with eight it called one 0/8 and answered "online and operational"
+    having checked nothing. Adding this notice took the same request to 8/8, and
+    restoring one real tool call to the history did the same -- so the pattern,
+    not the model's capability, is what decides. Conversational turns ("tell me
+    a fact", "summarize our conversation") stayed at 0/6 either way, so this
+    buys grounding without buying tool spam.
+
+    Placed after history and immediately before the user turn, for the same
+    reason the authoritative time is: whatever sits closest to the point of
+    generation wins against anything the transcript implies.
+
+    The durable fix is to persist tool calls into history so the pattern is
+    truthful in the first place; this makes the current turn honest meanwhile.
+    """
+    if not INJECT_HISTORY_GROUNDING or not history or not tool_defs:
+        return None
+    return (
+        "The messages above are a transcript of what was said, not a record of "
+        "what was verified. Statements in them about devices, sensors, services "
+        "or the state of the house may have been asserted without any check, and "
+        "the tool calls behind any that were checked are not shown. They are "
+        "therefore not evidence for this turn. If answering now depends on "
+        "runtime, device, service or file state, call a tool and answer from its "
+        "result; do not reuse or extend an earlier answer. If no tool can "
+        "establish it, say so plainly rather than describing what is likely."
+    )
 
 
 def _current_time_context() -> str | None:
@@ -1282,7 +1350,13 @@ def _format_kicad_backend_context(raw_output: str, command: str) -> str | None:
     try:
         payload = json.loads(stripped)
     except Exception:
-        return f"KiCad backend preflight (fresh): {_truncate_text(' '.join(stripped.split()), 500)}"
+        # Unparseable preflight output goes to the model as-is, so it is bounded
+        # by the same limit as any other tool output rather than by a number
+        # inherited from the 2026-02 hosted-API era (see ADR-049).
+        return (
+            "KiCad backend preflight (fresh): "
+            f"{_truncate_text(' '.join(stripped.split()))}"
+        )
 
     if not isinstance(payload, dict):
         return None
@@ -1634,6 +1708,9 @@ def _fallback_response_from_tool_error(
     last_event = tool_events[-1]
     tool_name = last_event.get("name", "the KiCad tool")
     raw_result = " ".join(last_event.get("raw_result", "").split())
+    # Not a prompt budget: this string is spoken to the user, and 500 characters
+    # is already a long sentence to hear read aloud. Unrelated to the ADR-049
+    # context caps, which fed the model rather than the speaker.
     raw_result = _truncate_text(raw_result, 500)
     tool_failed = bool(last_event.get("failed"))
 
@@ -2580,9 +2657,13 @@ def run_command_stream(
         _maybe_add_kicad_preflight(messages, mcp_client, tool_defs, command)
         _maybe_add_minecraft_context(messages, tool_defs, command)
         messages.extend(conversation_history)
-        # Authoritative current time goes after history and just before the user
-        # turn, so it is the freshest signal and overrides any stale time the
-        # model might otherwise copy from earlier messages.
+        # Both of these go after history and immediately before the user turn,
+        # so they are the freshest signals and outrank anything the transcript
+        # implies -- a stale time to copy, or a run of confident tool-free
+        # answers to imitate.
+        grounding_notice = _history_grounding_notice(conversation_history, tool_defs)
+        if grounding_notice:
+            messages.append({"role": "system", "content": grounding_notice})
         time_context = _current_time_context()
         if time_context:
             messages.append({"role": "system", "content": time_context})
