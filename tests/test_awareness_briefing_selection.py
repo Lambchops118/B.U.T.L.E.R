@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 try:
-    from talos.awareness.briefing.selection import OllamaSelector, PROMPT_VERSION, select
-    from talos.awareness.briefing.feedback import BriefingFeedback, apply_preferences
-    from talos.awareness.config import AwarenessSettings
+    from butler.awareness.briefing.selection import OllamaSelector, PROMPT_VERSION, select
+    from butler.awareness.briefing.feedback import BriefingFeedback, apply_preferences
+    from butler.awareness.config import AwarenessSettings
 except ImportError as exc:
     raise unittest.SkipTest(f"awareness dependencies unavailable: {exc}")
 
@@ -81,7 +81,7 @@ class SelectionTest(unittest.IsolatedAsyncioTestCase):
         _, audit = await select(items, config(briefing_prompt_max_chars=2000), model=model)
         self.assertLessEqual(len(model.call_args.args[0]), 2000)
         self.assertTrue(audit["prompt_truncated"])
-        with patch("talos.awareness.briefing.selection.httpx.AsyncClient") as client:
+        with patch("butler.awareness.briefing.selection.httpx.AsyncClient") as client:
             with self.assertRaises(ValueError):
                 await OllamaSelector(config(ollama_host="https://example.com"))("private")
             client.assert_not_called()

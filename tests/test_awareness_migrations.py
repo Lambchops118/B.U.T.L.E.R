@@ -1,7 +1,7 @@
 """Integration test: a clean database is created from migrations (Phase 1).
 
 Requires the awareness Postgres to be reachable (docker compose
--f docker-compose.awareness.yml up -d) and TALOS_AWARENESS_DB_PASSWORD to be
+-f docker-compose.awareness.yml up -d) and BUTLER_AWARENESS_DB_PASSWORD to be
 configured. Skips cleanly otherwise, so the unit suite never needs
 infrastructure. No cloud services are involved.
 
@@ -19,7 +19,7 @@ import uuid
 from urllib.parse import quote_plus
 
 try:
-    from talos.awareness.config import SettingsError, load_settings
+    from butler.awareness.config import SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -95,7 +95,7 @@ class MigrationIntegrationTest(unittest.TestCase):
             await connection.close()
 
     def test_clean_database_from_migrations(self) -> None:
-        from talos.awareness.db.migrate import expected_head_revision, upgrade_to_head
+        from butler.awareness.db.migrate import expected_head_revision, upgrade_to_head
 
         upgrade_to_head(self.scratch_url)
 
@@ -123,7 +123,7 @@ class MigrationIntegrationTest(unittest.TestCase):
         from alembic.migration import MigrationContext
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        from talos.awareness.db.models import Base
+        from butler.awareness.db.models import Base
 
         engine = create_async_engine(self.scratch_url)
         try:

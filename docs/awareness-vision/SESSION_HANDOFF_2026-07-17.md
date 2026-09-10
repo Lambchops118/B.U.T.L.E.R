@@ -46,7 +46,7 @@ Next permitted task: Owner review of V0. On approval, Phase V1 (anonymous captur
                      detection + occupancy) with locations migration + vision source seed.
 Required reading for next session: root AGENTS.md, this handoff, IMPLEMENTATION_STATUS.md,
                      parent + vision invariants, PHASE_V0_DISCOVERY.md, reference/EVENT_SCHEMA.md,
-                     existing talos/awareness/{schemas,registry,ingestion,state,history}.
+                     existing butler/awareness/{schemas,registry,ingestion,state,history}.
 Explicit stop point: V0 is documentation-only. Do not begin V1 until the owner reviews
                      V0 and explicitly authorizes it (CLAUDE.md, INV-19/INV-20).
 ```

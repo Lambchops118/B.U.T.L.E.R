@@ -38,7 +38,7 @@ Accepted event storage, state/measurement effects, rule effects and associated o
 
 ```mermaid
 flowchart TB
-  USER["User asks TALOS a question"] --> ROUTER["Main-agent router"]
+  USER["User asks Butler a question"] --> ROUTER["Main-agent router"]
   DATA[("Awareness records<br/>State, events, aggregates, alerts,<br/>attention, presence and delivery history")]
   DATA --> SNAP["Situation context broker<br/>Select relevant facts within a token budget<br/>Preserve critical alerts; audit inclusion"]
   SNAP --> CLIENT["HTTP awareness client<br/>Bounded timeout and short cache<br/>Legacy snapshot fallback on failure"]
@@ -61,7 +61,7 @@ flowchart TB
 
 The snapshot includes alerts, attention, qualified state, meaningful transitions, source health, interaction-based owner presence and recent accepted awareness announcements. Presence is not a whole-home occupancy sensor. Exact questions such as “Is the pump on?” or “What was the average temperature?” use structured records, not vector similarity. Main-agent SQLite conversation storage remains separate; raw transcripts and telemetry do not become awareness memories automatically.
 
-## 3. How TALOS speaks without a question
+## 3. How Butler speaks without a question
 
 ```mermaid
 flowchart TB
@@ -116,11 +116,11 @@ Health endpoints, metrics and audit records expose disconnected sources, stale d
 
 ## Source map and verification
 
-- `talos/awareness/ingestion/pipeline.py`: shared ingestion and transaction effects.
-- `talos/awareness/api/app.py`: composition and separate freshness, reminder, general-outbox and briefing workers.
-- `talos/awareness/context/broker.py`: bounded conversational situation context and announcement recall.
-- `talos/awareness/context/briefing.py` and `talos/awareness/briefing/selection.py`: candidate assembly and constrained model selection.
-- `talos/awareness/README.md`: persistence, memory, delivery, actions and operational contracts.
+- `butler/awareness/ingestion/pipeline.py`: shared ingestion and transaction effects.
+- `butler/awareness/api/app.py`: composition and separate freshness, reminder, general-outbox and briefing workers.
+- `butler/awareness/context/broker.py`: bounded conversational situation context and announcement recall.
+- `butler/awareness/context/briefing.py` and `butler/awareness/briefing/selection.py`: candidate assembly and constrained model selection.
+- `butler/awareness/README.md`: persistence, memory, delivery, actions and operational contracts.
 - `docs/awareness-memory/IMPLEMENTATION_STATUS.md`: latest implementation and deployment limitations; newer repairs supersede historical snapshots.
 - `docs/awareness-memory/ARCHITECTURAL_INVARIANTS.md`: permanent boundaries.
 

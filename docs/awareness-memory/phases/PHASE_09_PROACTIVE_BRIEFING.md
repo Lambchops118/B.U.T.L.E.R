@@ -5,7 +5,7 @@
 Give the system the ability to decide **what is worth saying, unprompted**, at
 moments that occur deterministically. Today every spoken output is either a
 direct reply or a fixed payload rendered by a rule; the morning report
-(`talos/scheduler/tasks.py:morning_report_job`) reads a hardcoded list of
+(`butler/scheduler/tasks.py:morning_report_job`) reads a hardcoded list of
 fields regardless of whether anything in it matters. This phase separates the
 *moment* (deterministic) from the *content* (selected), and introduces the
 first sanctioned model call in a proactive output path — bounded, auditable,
@@ -31,7 +31,7 @@ Root `AGENTS.md`, `IMPLEMENTATION_STATUS.md`, this phase document,
 ADR-050..054 in [`../DECISIONS.md`](../DECISIONS.md), the
 `SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry) handoff, the "Human context"
 and "Situation, context, and read tools" sections of
-[`talos/awareness/README.md`](../../../talos/awareness/README.md), and
+[`butler/awareness/README.md`](../../../butler/awareness/README.md), and
 [`../reference/TEST_STRATEGY.md`](../reference/TEST_STRATEGY.md).
 
 ## Documents not normally needed
@@ -43,10 +43,10 @@ broker is read through its code, not its phase document.
 ## Repository discovery required for this phase
 
 Before editing, confirm by inspection: the situation broker's candidate and
-audit shape (`talos/awareness/context/broker.py`); the attention lifecycle and
-`delivery_status` handling (`talos/awareness/alerts/service.py`); outbox work
-types and the notification adapters (`talos/awareness/outbox/worker.py`,
-`talos/awareness/notifications/`); the reminder worker as the existing example
+audit shape (`butler/awareness/context/broker.py`); the attention lifecycle and
+`delivery_status` handling (`butler/awareness/alerts/service.py`); outbox work
+types and the notification adapters (`butler/awareness/outbox/worker.py`,
+`butler/awareness/notifications/`); the reminder worker as the existing example
 of a due-time trigger; the continuous aggregates available for measurements;
 how `morning_report_job` currently reaches the voice path via `central_queue`;
 and the embedding client as the existing precedent for calling Ollama from
@@ -154,7 +154,7 @@ the same kind of object the situation broker already produces. Reuse the Phase
 Assembler service and its bounded queries; trigger workers; selection module
 with prompt versioning and fallback; delivery bookkeeping; feedback capture;
 any narrow migration proven necessary (see below); tests per sub-phase;
-documentation in `talos/awareness/README.md`; ADR entries; status and handoff.
+documentation in `butler/awareness/README.md`; ADR entries; status and handoff.
 
 ## Detailed implementation requirements
 

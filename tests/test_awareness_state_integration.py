@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -57,7 +57,7 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -100,13 +100,13 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.history.queries import query_events, read_entity_state
-        from talos.awareness.history.telemetry import QueryBoundsError, query_measurements
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.registry.sources import SourceRepository
-        from talos.awareness.state.freshness import FreshnessWorker
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.history.queries import query_events, read_entity_state
+        from butler.awareness.history.telemetry import QueryBoundsError, query_measurements
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.registry.sources import SourceRepository
+        from butler.awareness.state.freshness import FreshnessWorker
 
         engine = build_engine(self.settings)
         try:
@@ -303,10 +303,10 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
 
     async def _conflict_scenario(self, engine, sources) -> None:
         """Equal comparison time + different value marks the row conflicting."""
-        from talos.awareness.registry.sources import SourceRecord
-        from talos.awareness.schemas.events import EventEnvelope, Provenance
-        from talos.awareness.state.classification import StateUpdate
-        from talos.awareness.state.manager import StateManager
+        from butler.awareness.registry.sources import SourceRecord
+        from butler.awareness.schemas.events import EventEnvelope, Provenance
+        from butler.awareness.state.classification import StateUpdate
+        from butler.awareness.state.manager import StateManager
 
         moment = datetime.now(timezone.utc)
         source = sources.get("sim_device")
@@ -330,7 +330,7 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
 
         import sqlalchemy as sa
 
-        from talos.awareness.db.models import Event
+        from butler.awareness.db.models import Event
 
         async with engine.begin() as connection:
             for value in ("on", "off"):
@@ -356,7 +356,7 @@ class StateTelemetryIntegrationTest(unittest.TestCase):
                     source,
                 )
 
-        from talos.awareness.history.queries import read_entity_state
+        from butler.awareness.history.queries import read_entity_state
 
         state = await read_entity_state(engine, self.settings, "sim_greenhouse")
         pump = next(

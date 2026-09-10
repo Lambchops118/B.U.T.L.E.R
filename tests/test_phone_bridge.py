@@ -13,18 +13,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.phone import PhoneCallStore
+from butler.phone import PhoneCallStore
 
 try:
     from starlette.testclient import TestClient
-    from talos.phone_bridge import create_app
+    from butler.phone_bridge import create_app
 
-    # talos/phone_bridge/__init__.py does `from talos.phone_bridge.app import app, ...`,
-    # which rebinds the `app` attribute on the `talos.phone_bridge` package to the
+    # butler/phone_bridge/__init__.py does `from butler.phone_bridge.app import app, ...`,
+    # which rebinds the `app` attribute on the `butler.phone_bridge` package to the
     # Starlette instance. That shadows the submodule for any attribute-chain lookup
-    # (including `import talos.phone_bridge.app as x` and mock.patch's dotted-string
+    # (including `import butler.phone_bridge.app as x` and mock.patch's dotted-string
     # resolution), so fetch the real module straight from sys.modules instead.
-    phone_bridge_app_module = sys.modules["talos.phone_bridge.app"]
+    phone_bridge_app_module = sys.modules["butler.phone_bridge.app"]
     _push_call_to_main = phone_bridge_app_module._push_call_to_main
 except ModuleNotFoundError:  # pragma: no cover - depends on local test environment
     TestClient = None
@@ -152,7 +152,7 @@ class PhoneBridgePushTests(unittest.TestCase):
     def test_push_call_to_main_skips_silently_when_url_unset(self) -> None:
         if _push_call_to_main is None:
             self.skipTest("starlette is not installed in this test environment")
-        from talos.phone.provider import PhoneConfig
+        from butler.phone.provider import PhoneConfig
 
         config = PhoneConfig(
             enabled=True,

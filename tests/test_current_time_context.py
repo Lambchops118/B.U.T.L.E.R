@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import runtime
+from butler.agent import runtime
 
 
 class CurrentTimeContextTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class CurrentTimeContextTests(unittest.TestCase):
 
     def test_time_source_failure_degrades_to_none(self):
         with mock.patch.object(runtime, "INJECT_CURRENT_TIME", True), mock.patch(
-            "talos.services.home_automation.get_current_datetime",
+            "butler.services.home_automation.get_current_datetime",
             side_effect=RuntimeError("clock unavailable"),
         ):
             self.assertIsNone(runtime._current_time_context())

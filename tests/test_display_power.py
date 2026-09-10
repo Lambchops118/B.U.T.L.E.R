@@ -19,12 +19,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.services import display_power
+from butler.services import display_power
 
 
 class DisplayPowerTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.enterContext(patch.dict("os.environ", {"TALOS_DISPLAY_POWER_ENABLED": "1"}))
+        self.enterContext(patch.dict("os.environ", {"BUTLER_DISPLAY_POWER_ENABLED": "1"}))
 
     def test_sleep_goes_dark_and_wake_illuminates(self) -> None:
         with patch.object(display_power, "_go_dark") as dark, \
@@ -51,7 +51,7 @@ class DisplayPowerTest(unittest.TestCase):
         self.assertIn("no route", result["detail"])
 
     def test_disabled_configuration_touches_no_hardware(self) -> None:
-        with patch.dict("os.environ", {"TALOS_DISPLAY_POWER_ENABLED": "0"}), \
+        with patch.dict("os.environ", {"BUTLER_DISPLAY_POWER_ENABLED": "0"}), \
              patch.object(display_power, "_go_dark") as dark:
             display_power.apply(True, block=True)
         dark.assert_not_called()

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from talos.awareness.briefing.morning import build_morning_context
+from butler.awareness.briefing.morning import build_morning_context
 
 
 def settings():
@@ -25,7 +25,7 @@ class MorningContextTest(unittest.TestCase):
     def test_time_weather_and_empty_agenda_are_always_rendered(self):
         async def flow():
             with patch(
-                "talos.awareness.briefing.morning._todays_reminders",
+                "butler.awareness.briefing.morning._todays_reminders",
                 new=AsyncMock(return_value=([], False)),
             ):
                 result = await build_morning_context(
@@ -48,7 +48,7 @@ class MorningContextTest(unittest.TestCase):
 
         async def flow():
             with patch(
-                "talos.awareness.briefing.morning._todays_reminders",
+                "butler.awareness.briefing.morning._todays_reminders",
                 new=AsyncMock(return_value=([], False)),
             ):
                 result = await build_morning_context(

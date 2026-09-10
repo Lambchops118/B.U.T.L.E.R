@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.text.server import TextAgentHTTPServer, TextServerConfig
+from butler.text.server import TextAgentHTTPServer, TextServerConfig
 
 
 def _fresh_sleep_mode(test: unittest.TestCase):
@@ -34,9 +34,9 @@ def _fresh_sleep_mode(test: unittest.TestCase):
     server and the pygame panel, and a reload would leave the real one pointing
     at a temp path (and possibly asleep) for every test that runs afterwards.
     """
-    import talos.services.sleep_mode as module
+    import butler.services.sleep_mode as module
 
-    state_path = Path(tempfile.mkdtemp(prefix="talos_sleep_test_")) / "sleep.json"
+    state_path = Path(tempfile.mkdtemp(prefix="butler_sleep_test_")) / "sleep.json"
     test.enterContext(patch.object(module, "STATE_PATH", state_path))
     # Every sleep/wake write now commands the physical display. Record the
     # commands instead of reaching for the TV; `display_calls` is the evidence
@@ -159,7 +159,7 @@ class PhraseRecognitionTest(unittest.TestCase):
 
     def test_model_phrasing_cannot_undo_the_sleep_it_just_announced(self) -> None:
         # The reply is the model's own wording now, and it is spoken with the
-        # mic live while barge-in does not require the wake word -- so TALOS can
+        # mic live while barge-in does not require the wake word -- so Butler can
         # hear itself. A good night is very likely to mention waking or the
         # morning, and none of those may bounce back as a wake command.
         plausible_replies = (
@@ -421,7 +421,7 @@ class TextServerSleepTest(unittest.TestCase):
 
 class RouterAnnouncementTest(unittest.TestCase):
     def test_severity_is_read_from_the_title_tag(self) -> None:
-        from talos.router import _announcement_severity
+        from butler.router import _announcement_severity
 
         self.assertEqual(_announcement_severity("[CRITICAL] Pump down"), "critical")
         self.assertEqual(_announcement_severity("[NOTICE] Morning briefing"), "notice")
@@ -448,7 +448,7 @@ class WakeWordStripTest(unittest.TestCase):
     @staticmethod
     def _pattern():
         try:
-            from talos.voice.agent import _WAKE_WORD_PREFIX
+            from butler.voice.agent import _WAKE_WORD_PREFIX
         except ImportError as exc:  # voice deps live in .venv-voice
             raise unittest.SkipTest(f"voice dependencies not installed: {exc}")
         return _WAKE_WORD_PREFIX
@@ -470,7 +470,7 @@ class WakeWordStripTest(unittest.TestCase):
                 self.assertEqual(self._strip(transcript), "sleep mode")
 
     def test_the_stripped_command_is_recognised_as_a_sleep_phrase(self) -> None:
-        import talos.services.sleep_mode as sleep_mode
+        import butler.services.sleep_mode as sleep_mode
 
         for transcript in ("butler's sleep mode.", "butler, sleep mode."):
             with self.subTest(transcript=transcript):

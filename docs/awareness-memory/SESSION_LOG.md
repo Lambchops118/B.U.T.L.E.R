@@ -61,17 +61,17 @@ PostgreSQL owns validated semantic/episodic long-term memory and situation
 data.
 
 **Limitations:** Conversation prompt context is a bounded compact summary (last
-eight stored messages, subject to TALOS_PROMPT_MEMORY_CHAR_LIMIT), not an
+eight stored messages, subject to BUTLER_PROMPT_MEMORY_CHAR_LIMIT), not an
 unlimited transcript. A live model/voice smoke test still requires restarting
 the main and voice processes and starting awareness for situation data.
 
-**Deployment:** Restart the main TALOS process so import-time memory
+**Deployment:** Restart the main Butler process so import-time memory
 configuration and code changes take effect. Start the separate awareness
 process for house situation/state context; voice continuity itself degrades to
 SQLite and does not depend on awareness availability.
 
 **Security:** Conversation turns persist locally in ignored
-db/talos_memory.sqlite3 by default. TALOS_MEMORY_ENABLED=0 remains an explicit
+db/talos_memory.sqlite3 by default. BUTLER_MEMORY_ENABLED=0 remains an explicit
 privacy opt-out. Session reset deletes stored turns/summary but preserves
 explicit durable facts.
 
@@ -84,18 +84,18 @@ after the cutover from hosted OpenAI Chat Completions.
 **Shipped:** Added dynamic per-request reasoning control for the streamed lane.
 Qwen3's /no_think and /think soft switches are appended to the outgoing user
 turn based on a complexity heuristic (auto), with always/never/off overrides
-via TALOS_LLM_THINK_MODE. Only the live outgoing turn is decorated; the
+via BUTLER_LLM_THINK_MODE. Only the live outgoing turn is decorated; the
 original command is persisted to memory, so stored history stays clean and
 continuity is unaffected.
 
-**Decisions:** Default TALOS_LLM_THINK_MODE=auto. auto suppresses thinking on
+**Decisions:** Default BUTLER_LLM_THINK_MODE=auto. auto suppresses thinking on
 quick commands/chit-chat/status and enables it on analytical requests
 (why/how/explain/compare/debug/plan/long or background-lane work). The
 heuristic errs toward off because latency is the point. off exists for swapping
 to non-Qwen models that would otherwise receive a literal /no_think token.
 
 **Deployment:** Restart the streamed text-agent/voice process so it loads the
-new code. Set TALOS_LLM_THINK_MODE in the live .env only if overriding the auto
+new code. Set BUTLER_LLM_THINK_MODE in the live .env only if overriding the auto
 default.
 
 ## 2026-07-18 — Spoken Tool-Call JSON (Leaked Tool Calls)
@@ -117,7 +117,7 @@ alarm path buffers a turn that starts with '{' until completion, a minor
 latency cost for that rare case only.
 
 **Deployment:** RESTART the streamed text-agent/voice process to load the
-change. No new env required (TALOS_RECOVER_LEAKED_TOOL_CALLS defaults on).
+change. No new env required (BUTLER_RECOVER_LEAKED_TOOL_CALLS defaults on).
 
 ## 2026-07-18 — Local Ollama Inference
 <a id="session-handoff-2026-07-18-local-ollama"></a>
@@ -135,8 +135,8 @@ tested the profile. Correction follow-up: recovered the exact latest pre-
 cutover live `.env` from VS Code Local History and merged the eight new
 settings, restoring all prior machine-specific values without displaying them.
 
-**Decisions:** ADR-017 records TALOS_LLM_BACKEND=ollama,
-TALOS_LLM_BASE_URL=http://127.0.0.1:11434/v1, and TALOS_LLM_MODEL=mb-
+**Decisions:** ADR-017 records BUTLER_LLM_BACKEND=ollama,
+BUTLER_LLM_BASE_URL=http://127.0.0.1:11434/v1, and BUTLER_LLM_MODEL=mb-
 core-v1:latest for the default streamed lane. Remote STT and voice LLM fallback
 default off to preserve the local-only boundary.
 
@@ -147,7 +147,7 @@ separately bounded migrations are required before claiming the entire voice
 stack has no network dependency. Weather and other explicitly hosted
 integrations also remain network-dependent.
 
-**Deployment:** Restart the main TALOS/text-agent process and voice worker so
+**Deployment:** Restart the main Butler/text-agent process and voice worker so
 they load the new .env. Ollama must be running and mb-core-v1:latest must
 remain installed. The ignored .env is machine-local and is not included in
 source control.
@@ -163,7 +163,7 @@ confirmation, and audit boundaries are unchanged.
 Make the active home-agent personality feel like a persistent household
 presence rather than a customer-service chatbot.
 
-**Shipped:** Confirmed talos/personality/monkey_butler.md is the active base
+**Shipped:** Confirmed butler/personality/monkey_butler.md is the active base
 soul document for voice and text; added persistent-home framing, terse routine
 confirmations, direct yes/no behavior, clean stopping behavior, prohibited
 generic follow-up offers, explanation-length limits, and tool/device-confirmed
@@ -177,7 +177,7 @@ authoritative; overlays and response code remain unchanged.
 hard response post-processor was added because it could damage substantive
 answers and was unnecessary for the requested smallest change.
 
-**Deployment:** Restart the main TALOS process to reload the base personality
+**Deployment:** Restart the main Butler process to reload the base personality
 content for subsequent turns.
 
 **Security:** The existing evidence requirement was strengthened; an action may
@@ -205,7 +205,7 @@ this session. Time injection adds ~200 chars/turn.
 
 **Deployment:** RESTART the streamed text-agent/voice process to load the time-
 injection code. The history reset needs no restart. No new env required
-(TALOS_INJECT_CURRENT_TIME defaults on).
+(BUTLER_INJECT_CURRENT_TIME defaults on).
 
 ## 2026-07-18 — Tool Scoping & Local-Model Behavior
 <a id="session-handoff-2026-07-18-tool-scoping-behavior"></a>
@@ -220,7 +220,7 @@ what is fixable without making tool use so rigid that inferential behavior
 **Decisions:** Preserve inference over rigidity — scope tools by intent
 (structural) and steer behavior with balanced prompt guidance, rather than
 forbidding tool calls that don't exact-match (owner-declined item 2).
-TALOS_SCOPE_TOOL_SURFACE defaults on; only the kitchen group is scoped today,
+BUTLER_SCOPE_TOOL_SURFACE defaults on; only the kitchen group is scoped today,
 mechanism is extensible.
 
 **Limitations:** Only the kitchen group is intent-scoped; other large future
@@ -230,7 +230,7 @@ mid-recipe could drop kitchen tools for that turn. Scoping keys off the current
 command only, not conversation state.
 
 **Deployment:** Restart the streamed text-agent/voice process to load the new
-code and prompt overlay. No new env required (TALOS_SCOPE_TOOL_SURFACE defaults
+code and prompt overlay. No new env required (BUTLER_SCOPE_TOOL_SURFACE defaults
 on).
 
 ## 2026-07-18 — Streamed Voice Context
@@ -255,7 +255,7 @@ remain separate.
 messages and 4,000 characters. Older conversation relies on summaries/facts and
 is not guaranteed to preserve pronoun-level references.
 
-**Deployment:** Restart the main TALOS process to load the code. The voice
+**Deployment:** Restart the main Butler process to load the code. The voice
 worker may also be restarted for a clean operational smoke test.
 
 ## 2026-07-20 — Proactive Presence
@@ -286,14 +286,14 @@ set_reminder tool trusts the LLM to compute the absolute due_at; a wrong offset
 yields a wrong fire time. The API guards only against past/naive timestamps. -
 No recurring reminders (one-shot only) and no "snooze"; add later if wanted.
 
-**Deployment:** run migrations (`python -m talos.awareness migrate`) before
+**Deployment:** run migrations (`python -m butler.awareness migrate`) before
 serving — the reminders table is new. New env vars (all optional, sensible
-defaults): TALOS_AWARENESS_NOTIFY_VOICE_ENABLED, _REMINDER_INTERVAL_SECONDS,
+defaults): BUTLER_AWARENESS_NOTIFY_VOICE_ENABLED, _REMINDER_INTERVAL_SECONDS,
 _REMINDER_INTERRUPTIBILITY, _REMINDER_CHANNEL.
 
 **Security:** /speak reuses the same text-server auth as /notify (bearer +
 allowed-network). Reminder write routes use require_write_auth (loopback-
-trusted; bearer-gated when TALOS_AWARENESS_API_TOKEN is set) — not fail-closed
+trusted; bearer-gated when BUTLER_AWARENESS_API_TOKEN is set) — not fail-closed
 like physical actions, since a reminder performs no physical action.
 
 ## 2026-07-24 — Pipeline Telemetry
@@ -329,8 +329,8 @@ timings add observability but do not themselves correct the suspected
 regression.
 
 **Deployment:** Telemetry is enabled by default through
-`TALOS_PIPELINE_TELEMETRY_ENABLED=1` and writes under `talos/logs` unless
-`TALOS_PIPELINE_TELEMETRY_DIR` overrides it. The directory must be writable. No
+`BUTLER_PIPELINE_TELEMETRY_ENABLED=1` and writes under `butler/logs` unless
+`BUTLER_PIPELINE_TELEMETRY_DIR` overrides it. The directory must be writable. No
 schema or service dependency was added.
 
 **Security:** The new JSONL telemetry excludes conversational and tool-argument
@@ -366,12 +366,12 @@ incomplete.
 
 **Deployment:** - Restart the voice worker to load the fail-closed code/config
 default and new observability. - Normal deployment should leave both
-`TALOS_BARGE_IN=0` and `TALOS_BARGE_IN_FIXTURE_RECORDING=0`. - An operator
+`BUTLER_BARGE_IN=0` and `BUTLER_BARGE_IN_FIXTURE_RECORDING=0`. - An operator
 fixture session needs deliberate configuration and should be handled as
 sensitive room audio.
 
 **Security:** - Raw room audio is off by default and requires
-`TALOS_BARGE_IN_FIXTURE_RECORDING=1`. - The recorder prints a visible warning,
+`BUTLER_BARGE_IN_FIXTURE_RECORDING=1`. - The recorder prints a visible warning,
 stores only locally, writes under an ignored local data directory by default,
 enforces duration/byte/session bounds, and deletes only prefix-matched
 directories containing its manifest. - Privacy-safe barge-in telemetry contains
@@ -407,7 +407,7 @@ room response, and native WebRTC binding choice were not available from the
 repository. - Current "audible prefix" bookkeeping marks a whole sentence at
 its first PCM block, not the exact text heard.
 
-**Deployment:** Safe interim posture is `TALOS_BARGE_IN=0`. A production
+**Deployment:** Safe interim posture is `BUTLER_BARGE_IN=0`. A production
 redesign requires a Windows endpoint/AEC capability spike on the deployed host.
 AEC failure must degrade to ordinary wake-word operation without barge-in,
 never silently back to the RMS heuristic.
@@ -544,7 +544,7 @@ no-click failure therefore requires direct GP0-GP3 voltage, polarity, power,
 common-ground, logic-level, and wiring bench checks. Channel-to-physical-pot
 wiring remains unverified.
 
-**Deployment:** Stop and restart TALOS from the launcher. Confirm awareness is
+**Deployment:** Stop and restart Butler from the launcher. Confirm awareness is
 healthy on port 8600 before testing. Leave the Pico running `main.py` without
 interrupting it from Thonny. Issue one explicit command with a channel number
 and observe the action record, acknowledgement, and relay.
@@ -569,13 +569,13 @@ selector policy is installed. The selector policy is also retained for non-
 Uvicorn asyncio CLI commands.
 
 **Limitations:** The already-running launcher-owned awareness process on port
-8600 loaded the old code and remains MQTT-degraded until TALOS is restarted.
+8600 loaded the old code and remains MQTT-degraded until Butler is restarted.
 The activated plant-waterer board still has not emitted state, health, or a
 heartbeat during a 35-second direct broker subscription (OQ-G). Physical
 channel mapping, relay operation, and fuse limitations remain as documented in
 the plant-waterer handoff.
 
-**Deployment:** Restart TALOS/the launcher so the awareness subprocess loads
+**Deployment:** Restart Butler/the launcher so the awareness subprocess loads
 the new loop configuration. Verify /health/components reports
 mqtt.state=connected before another action. Then diagnose the Pico over its
 serial console and require a heartbeat before physical pump testing.
@@ -629,11 +629,11 @@ snapshots, not per frame. Exact prompts and detailed tool calls are
 unavailable. Conversation messages and pipeline request IDs cannot always be
 correlated because current memory metadata does not store request IDs. Service
 health is probe-based, not launcher-process authority. Remote hardware cards
-remain `NOT_CONFIGURED` until a TALOS-host metrics endpoint is selected and
-supplied through `TALOS_DEBUG_SYSTEM_METRICS_URL`.
+remain `NOT_CONFIGURED` until a Butler-host metrics endpoint is selected and
+supplied through `BUTLER_DEBUG_SYSTEM_METRICS_URL`.
 
 **Deployment:** Start separately with `.venv-main\Scripts\python.exe -m
-talos.debug_dashboard`; default URL is `http://127.0.0.1:8787`. The launcher
+butler.debug_dashboard`; default URL is `http://127.0.0.1:8787`. The launcher
 was intentionally not changed.
 
 **Security:** The page exposes private conversation content. It binds to
@@ -657,7 +657,7 @@ idle commands before queued barge-in confirmations.
 
 **Decisions:** ADR-025. SpeechRecognition segmentation is not a second
 transcription pass. Experimental idle VAD cannot activate unless both
-`TALOS_IDLE_VAD_ENDPOINTING=1` and `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`.
+`BUTLER_IDLE_VAD_ENDPOINTING=1` and `BUTLER_IDLE_VAD_CORPUS_ACCEPTED=1`.
 
 **Limitations:** Faster-whisper remains a finished-utterance batch backend.
 Speculative chunk decoding was not added because it would reintroduce redundant
@@ -666,7 +666,7 @@ supported streaming backend and its own accepted corpus. The independent idle
 endpoint retains the conservative 480 ms trailing-silence setting until real
 command-pause evidence exists.
 
-**Deployment:** Restart the voice worker to pick up `TALOS_VAD_ENDPOINTING=0`.
+**Deployment:** Restart the voice worker to pick up `BUTLER_VAD_ENDPOINTING=0`.
 Production uses SpeechRecognition segmentation immediately. The new idle Silero
 lane remains inactive under tracked settings. Faster-whisper begins loading
 asynchronously during voice-worker startup.
@@ -863,7 +863,7 @@ message into it by hand while debugging.
 
 **Shipped:** Seven refactoring steps plus a manual-input endpoint, all
 authorized by the owner in this session: 1. Registered `owner` (person) and
-`talos` (agent) as entities, and the `talos_agent` source, in registry
+`butler` (agent) as entities, and the `talos_agent` source, in registry
 bootstrap. 2. Made ingestion transport-plural: the pipeline is built at API
 startup independently of MQTT and is shared by both ingress paths. 3.
 Conversation reported as bounded interaction *facts* (started/ended, modality,
@@ -909,7 +909,7 @@ setting either to 0 restores the previous behavior.
 
 **Security:** `POST /ingest` is loopback-bound and bearer-gated by the same
 `require_write_auth` as other mutations, and can be disabled outright with
-TALOS_AWARENESS_INGEST_API_ENABLED=0. It grants no authority the broker path
+BUTLER_AWARENESS_INGEST_API_ENABLED=0. It grants no authority the broker path
 does not already have: registry topic ownership still applies, so it cannot
 write on behalf of an unregistered source. ADR-052 is a net security
 *improvement*: internal sources are now unforgeable from the unauthenticated
@@ -976,9 +976,9 @@ deterministic fallback. The model decides neither the moment nor detection nor
 severity. 9D: explicit dismissal/interest/neutral feedback using existing
 memory writes, structured exact-key retrieval, filtering before prompt and
 before delivery, and bearer-gated API/MCP operations. Critical items cannot be
-dismissed. The work landed as `talos/awareness/briefing/` (service, worker,
-selection, feedback), `talos/awareness/context/briefing.py`,
-`talos/awareness/history/briefing.py`, `talos/awareness/api/routes/briefing.py`,
+dismissed. The work landed as `butler/awareness/briefing/` (service, worker,
+selection, feedback), `butler/awareness/context/briefing.py`,
+`butler/awareness/history/briefing.py`, `butler/awareness/api/routes/briefing.py`,
 and four briefing test modules.
 
 **Decisions:** ADR-033/034 (9A), ADR-035 (dedicated outbox/ledger), ADR-036
@@ -987,7 +987,7 @@ durable preferences). OQ-M/N resolved. OQ-O records production acceptance still
 outstanding.
 
 **Limitations:** Proactive delivery defaults off. Enable
-TALOS_AWARENESS_BRIEFING_ENABLED=1 on restart; defaults are 08:00 host local,
+BUTLER_AWARENESS_BRIEFING_ENABLED=1 on restart; defaults are 08:00 host local,
 arrival enabled, cap 3, voice channel. Optional ranking defaults off. It uses
 configured CHAT_MODEL on loopback Ollama when enabled, otherwise explicit
 deterministic fallback. Adapter acceptance is the delivery boundary. Existing
@@ -1065,7 +1065,7 @@ quiet stretch, a morning briefing that said only "plant waterer offline", a
 failing sleep/dim tool call, and 500-character response truncation.
 
 **Shipped:** (1) Presence staleness is now resolved through one shared helper,
-`effective_state_status` in `talos/awareness/state/freshness.py`, so the read
+`effective_state_status` in `butler/awareness/state/freshness.py`, so the read
 path (`SituationBroker._qualified_status`, `history/queries.py`) honors the same
 `state_freshness_detection = false` opt-out the worker does; transitions whose
 value is unchanged are suppressed for owner presence, and a source migration
@@ -1125,7 +1125,7 @@ Determine whether exact LLM I/O was permanently logged and, when it was not,
 create a persistent location under the logs folder.
 
 **Shipped:** Confirmed the existing feed was stdout/GUI memory only. Added
-best-effort per-run JSONL persistence at `talos/logs/llm_io_<UTC
+best-effort per-run JSONL persistence at `butler/logs/llm_io_<UTC
 timestamp>_<pid>.jsonl`. Launcher-managed main-agent processes enable both the
 existing stdout feed and the new file sink. The GUI identifies the saved-file
 pattern. Exact transcript files are git-ignored.
@@ -1141,7 +1141,7 @@ Directly launched main agents remain opt-out unless the log-directory variable
 is explicitly supplied.
 
 **Deployment:** Restart the launcher and its managed main agent. New files will
-appear under `talos/logs` on the first LLM debug event.
+appear under `butler/logs` on the first LLM debug event.
 
 **Security:** These files contain unredacted prompts, conversation history,
 memory, awareness context, tool schemas, tool arguments/results, and model
@@ -1188,11 +1188,11 @@ child process environment.
 
 Investigate the severe STT accuracy regression after replacing the Blue Yeti
 with a Seeed Studio ReSpeaker XVF3800 USB 4-mic array, and identify whether the
-cause is in TALOS or the device.
+cause is in Butler or the device.
 
 **Shipped:** Traced the configured and live Windows capture paths, enumerated
 the exact PortAudio devices used by the voice environment, compared fresh voice
-telemetry before and after the fallback, inspected the TALOS capture/STT code,
+telemetry before and after the fallback, inspected the Butler capture/STT code,
 checked current official ReSpeaker documentation and firmware history, and
 queried the connected XVF3800 through its official USB control protocol in
 read-only mode.
@@ -1209,4 +1209,4 @@ snapshot measures pipeline acceptance rather than WER against ground truth.
 **Deployment:** The deployed voice worker is presently on the generic
 SpeechRecognition fallback, not the pinned AEC/idle-VAD path described by the
 tracked settings. Merely changing Windows's default microphone is insufficient
-because TALOS separately pins full MMDevice identities.
+because Butler separately pins full MMDevice identities.

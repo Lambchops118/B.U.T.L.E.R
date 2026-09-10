@@ -17,8 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import runtime as agent_runtime
-from talos.text.server import TextAgentHTTPServer, TextServerConfig
+from butler.agent import runtime as agent_runtime
+from butler.text.server import TextAgentHTTPServer, TextServerConfig
 
 
 def _make_config(*, api_token: str) -> TextServerConfig:

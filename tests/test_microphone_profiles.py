@@ -3,12 +3,12 @@ from __future__ import annotations
 import array
 import unittest
 
-from talos.voice.microphone_profiles import (
+from butler.voice.microphone_profiles import (
     get_microphone_profile,
     normalize_microphone_profile,
     resolve_energy_threshold,
 )
-from talos.voice.streaming.portaudio_input import (
+from butler.voice.streaming.portaudio_input import (
     PortAudioChannelMicrophone,
     find_input_device,
     select_pcm16_channel,

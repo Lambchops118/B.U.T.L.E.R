@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.memory import MemoryStore
+from butler.memory import MemoryStore
 
 
 class MemoryStoreTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class MemoryStoreTests(unittest.TestCase):
 
             store = MemoryStore(db_path)
             store.upsert_summary("user", "default", "User prefers compact engineering updates.")
-            store.upsert_summary("project", "Talos", "TALOS uses MCP tools for grounded actions.")
+            store.upsert_summary("project", "Butler", "Butler uses MCP tools for grounded actions.")
             store.upsert_fact(
                 "user",
                 "response_style",
@@ -38,7 +38,7 @@ class MemoryStoreTests(unittest.TestCase):
             reopened.close()
 
         self.assertIn("compact engineering updates", memory)
-        self.assertIn("TALOS uses MCP tools", memory)
+        self.assertIn("Butler uses MCP tools", memory)
         self.assertIn("response_style", memory)
         self.assertIn("Recent session turns", memory)
         self.assertIn("Remember this detail.", memory)

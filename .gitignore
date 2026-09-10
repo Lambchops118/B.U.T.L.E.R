@@ -35,7 +35,7 @@ launcher.config.json
 # contain prompts, conversation, context, and tool data). All machine output,
 # never source.
 logs/
-talos/logs/
+butler/logs/
 
 # Local artifact/data directory for the awareness subsystem
 db/awareness/

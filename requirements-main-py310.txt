@@ -1,6 +1,6 @@
-# TALOS main agent/display process.
+# Butler main agent/display process.
 # Intended for the Python 3.10+ environment used to run:
-#   python3.10 -m talos
+#   python3.10 -m butler
 
 APScheduler==3.11.1
 boto3==1.40.65

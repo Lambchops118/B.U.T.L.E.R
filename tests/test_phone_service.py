@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.phone import (
+from butler.phone import (
     PhoneCallStore,
     ingest_phone_bridge_snapshot,
     phone_call_status,
@@ -23,10 +23,10 @@ from talos.phone import (
     reset_default_phone_store,
     summarize_phone_call,
 )
-from talos.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
-from talos.phone.provider import OutboundCallRequest, PhoneConfig, PhoneProvider
-from talos.phone.service import _build_call_transcript_digest
-from talos.phone.store import PhoneCallRecord
+from butler.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
+from butler.phone.provider import OutboundCallRequest, PhoneConfig, PhoneProvider
+from butler.phone.service import _build_call_transcript_digest
+from butler.phone.store import PhoneCallRecord
 
 
 class _FakeProvider(PhoneProvider):
@@ -74,11 +74,11 @@ class PhoneServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_ENABLED": "1",
-                "TALOS_PHONE_ALLOWED_OUTBOUND": "1",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
-                "TALOS_PHONE_CONTACTS": json.dumps({"mom": "+15555550123"}),
-                "TALOS_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
+                "BUTLER_PHONE_ENABLED": "1",
+                "BUTLER_PHONE_ALLOWED_OUTBOUND": "1",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_CONTACTS": json.dumps({"mom": "+15555550123"}),
+                "BUTLER_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
             },
             clear=False,
         ):
@@ -89,25 +89,25 @@ class PhoneServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_ENABLED": "1",
-                "TALOS_PHONE_ALLOWED_OUTBOUND": "1",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
-                "TALOS_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
+                "BUTLER_PHONE_ENABLED": "1",
+                "BUTLER_PHONE_ALLOWED_OUTBOUND": "1",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
             },
             clear=False,
         ):
-            with self.assertRaisesRegex(RuntimeError, "not in TALOS_PHONE_ALLOWLIST"):
+            with self.assertRaisesRegex(RuntimeError, "not in BUTLER_PHONE_ALLOWLIST"):
                 place_phone_call("+15555550999", session_id="main-pc")
 
     def test_place_phone_call_uses_configured_contact_and_returns_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_ENABLED": "1",
-                "TALOS_PHONE_ALLOWED_OUTBOUND": "1",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
-                "TALOS_PHONE_CONTACTS": json.dumps({"mom": "+15555550123"}),
-                "TALOS_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
+                "BUTLER_PHONE_ENABLED": "1",
+                "BUTLER_PHONE_ALLOWED_OUTBOUND": "1",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_CONTACTS": json.dumps({"mom": "+15555550123"}),
+                "BUTLER_PHONE_ALLOWLIST": json.dumps(["+15555550123"]),
             },
             clear=False,
         ):
@@ -131,7 +131,7 @@ class PhoneServiceTests(unittest.TestCase):
                     brief_context="At the train station.",
                     status="initiated",
                 ),
-            ) as start_mock, mock.patch("talos.phone.service._build_provider", return_value=fake_provider):
+            ) as start_mock, mock.patch("butler.phone.service._build_provider", return_value=fake_provider):
                 result = place_phone_call(
                     "mom",
                     purpose="Pickup",
@@ -150,17 +150,17 @@ class PhoneServiceTests(unittest.TestCase):
             outbound_request.message_to_deliver,
             "Tell her I am arriving at 6:20 PM and need a pickup.",
         )
-        self.assertIn("identify yourself as TALOS", outbound_request.brief_context)
+        self.assertIn("identify yourself as Butler", outbound_request.brief_context)
         self.assertIn("Exact message to deliver", outbound_request.brief_context)
 
     def test_phone_call_status_refreshes_from_bridge_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
-                "TALOS_PHONE_BRIDGE_URL": "https://bridge.example.com",
-                "TALOS_PHONE_BRIDGE_TOKEN": "bridge-token",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
+                "BUTLER_PHONE_BRIDGE_URL": "https://bridge.example.com",
+                "BUTLER_PHONE_BRIDGE_TOKEN": "bridge-token",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
             },
             clear=False,
         ):
@@ -201,7 +201,7 @@ class PhoneServiceTests(unittest.TestCase):
                     }
                 ]
             }
-            with mock.patch("talos.phone.service._build_provider", return_value=provider), mock.patch(
+            with mock.patch("butler.phone.service._build_provider", return_value=provider), mock.patch(
                 "urllib.request.urlopen",
                 return_value=_UrlOpenResponse(bridge_payload),
             ):
@@ -216,8 +216,8 @@ class PhoneServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
             },
             clear=False,
         ):
@@ -238,7 +238,7 @@ class PhoneServiceTests(unittest.TestCase):
                 brief_context="Deliver a weather update.",
                 status="initiated",
             )
-            with mock.patch("talos.phone.service._build_provider", return_value=provider), mock.patch.object(
+            with mock.patch("butler.phone.service._build_provider", return_value=provider), mock.patch.object(
                 provider,
                 "fetch_call_details",
                 return_value=store.update_call(
@@ -259,15 +259,15 @@ class PhoneServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
-                "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
+                "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
             },
             clear=False,
         ):
             store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
             config = PhoneConfig.from_env()
             provider = ElevenLabsTwilioProvider(config, store=store)
-            with mock.patch("talos.phone.service._build_provider", return_value=provider):
+            with mock.patch("butler.phone.service._build_provider", return_value=provider):
                 ingest_phone_bridge_snapshot(
                     {
                         "call_id": "conv_456",
@@ -321,7 +321,7 @@ class TranscriptDigestTests(unittest.TestCase):
         digest = _build_call_transcript_digest(record)
         self.assertEqual(
             digest,
-            "Caller: Can you pick me up?\nTALOS: Sure, what time?\nCaller: Six PM.",
+            "Caller: Can you pick me up?\nButler: Sure, what time?\nCaller: Six PM.",
         )
 
     def test_empty_transcript_returns_empty_string(self) -> None:
@@ -330,7 +330,7 @@ class TranscriptDigestTests(unittest.TestCase):
 
     def test_skips_turns_without_message_text(self) -> None:
         record = _make_call_record([{"role": "user", "message": ""}, {"role": "agent", "message": "Hello."}])
-        self.assertEqual(_build_call_transcript_digest(record), "TALOS: Hello.")
+        self.assertEqual(_build_call_transcript_digest(record), "Butler: Hello.")
 
     def test_truncates_oversized_transcript_keeping_head_and_tail(self) -> None:
         turns = [{"role": "user", "message": f"Message number {i} with some extra padding text."} for i in range(200)]
@@ -348,16 +348,16 @@ class PhoneCallMemoryTests(unittest.TestCase):
         reset_default_phone_store()
 
     def test_ingest_writes_transcript_fact_findable_by_search(self) -> None:
-        from talos.memory import MemoryStore
+        from butler.memory import MemoryStore
 
         tmpdir = tempfile.mkdtemp()
         try:
             with mock.patch.dict(
                 os.environ,
                 {
-                    "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
-                    "TALOS_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
-                    "TALOS_MEMORY_ENABLED": "1",
+                    "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
+                    "BUTLER_PHONE_DB_PATH": str(Path(tmpdir) / "phone.sqlite3"),
+                    "BUTLER_MEMORY_ENABLED": "1",
                 },
                 clear=False,
             ):
@@ -380,8 +380,8 @@ class PhoneCallMemoryTests(unittest.TestCase):
                     ],
                 }
                 try:
-                    with mock.patch("talos.phone.service._build_provider", return_value=provider), mock.patch(
-                        "talos.phone.service.get_default_memory_store", return_value=memory_store
+                    with mock.patch("butler.phone.service._build_provider", return_value=provider), mock.patch(
+                        "butler.phone.service.get_default_memory_store", return_value=memory_store
                     ):
                         ingest_phone_bridge_snapshot(snapshot)
                         facts_first = memory_store.search_facts("pharmacy")

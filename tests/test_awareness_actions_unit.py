@@ -13,9 +13,9 @@ try:
     from fastapi import HTTPException
     from pydantic import SecretStr
 
-    from talos.awareness.actions.registry import RegistryError, load_registry
-    from talos.awareness.api.routes.actions import require_action_auth
-    from talos.awareness.simulator.publisher import SimulatedDevice
+    from butler.awareness.actions.registry import RegistryError, load_registry
+    from butler.awareness.api.routes.actions import require_action_auth
+    from butler.awareness.simulator.publisher import SimulatedDevice
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 

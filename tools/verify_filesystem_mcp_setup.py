@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.mcp_client.client import (
+from butler.mcp_client.client import (
     LocalMcpClient,
     _load_mcp_server_configs,
     _resolve_allowed_root_paths,
@@ -21,8 +21,8 @@ def _expect(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    roots = _resolve_allowed_root_paths(__import__("os").getenv("TALOS_FILESYSTEM_ROOTS", ""))
-    _expect(bool(roots), "TALOS_FILESYSTEM_ROOTS is not configured")
+    roots = _resolve_allowed_root_paths(__import__("os").getenv("BUTLER_FILESYSTEM_ROOTS", ""))
+    _expect(bool(roots), "BUTLER_FILESYSTEM_ROOTS is not configured")
 
     configs = _load_mcp_server_configs()
     client = LocalMcpClient(configs)
@@ -38,7 +38,7 @@ def main() -> int:
         listing = client.call_tool("fs_list_directory", {"path": str(root)})
         _expect(listing.strip() != "", "filesystem MCP returned an empty root listing")
 
-        marker = root / ".talos-fs-verify.txt"
+        marker = root / ".butler-fs-verify.txt"
         search_preview_source = "existing-files fallback"
         try:
             marker.write_text("filesystem verify marker\n", encoding="utf-8")

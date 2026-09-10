@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from talos.awareness.context.broker import (
+    from butler.awareness.context.broker import (
         PRIORITY_CRITICAL_ALERTS,
         PRIORITY_HEALTH,
         PRIORITY_STATE,

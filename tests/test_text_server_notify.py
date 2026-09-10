@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.text.server import TextAgentHTTPServer, TextServerConfig
+from butler.text.server import TextAgentHTTPServer, TextServerConfig
 
 
 def _make_config(*, api_token: str) -> TextServerConfig:
@@ -73,9 +73,9 @@ class NotifyEndpointTest(unittest.TestCase):
         from unittest.mock import patch
         import tempfile
 
-        import talos.services.sleep_mode as sleep_mode
+        import butler.services.sleep_mode as sleep_mode
 
-        state_path = Path(tempfile.mkdtemp(prefix="talos_notify_test_")) / "sleep.json"
+        state_path = Path(tempfile.mkdtemp(prefix="butler_notify_test_")) / "sleep.json"
         self.enterContext(patch.object(sleep_mode, "STATE_PATH", state_path))
         sleep_mode._cache, sleep_mode._cache_read_at = None, 0.0
 
@@ -86,7 +86,7 @@ class NotifyEndpointTest(unittest.TestCase):
 
     def test_speak_routes_exact_text_without_task_or_presence(self) -> None:
         from unittest.mock import patch
-        from talos import router
+        from butler import router
         running = _RunningServer(_make_config(api_token="secret-token"))
         try:
             text = "The user just arrived home. A background job completed."

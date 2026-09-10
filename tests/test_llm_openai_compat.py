@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.voice.backends.base import (
+from butler.voice.backends.base import (
     LLMCompletion,
     LLMTextDelta,
     LLMToolCall,
@@ -19,8 +19,8 @@ from talos.voice.backends.base import (
     responses_tools_to_chat_tools,
     tool_calls_to_assistant_message,
 )
-from talos.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
-from talos.voice.backends import factory, llm_openai_compat
+from butler.voice.backends.llm_openai_compat import OpenAICompatibleChatBackend
+from butler.voice.backends import factory, llm_openai_compat
 
 
 def _delta_chunk(content=None, tool_calls=None, finish_reason=None, usage=None):
@@ -238,7 +238,7 @@ class BackendFactoryTests(unittest.TestCase):
         with (
             mock.patch.dict(
                 os.environ,
-                {"TALOS_LLM_MODEL": "mb-core-v1:latest"},
+                {"BUTLER_LLM_MODEL": "mb-core-v1:latest"},
                 clear=True,
             ),
             mock.patch.object(factory, "load_environment"),

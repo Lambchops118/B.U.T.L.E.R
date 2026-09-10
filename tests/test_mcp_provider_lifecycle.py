@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.mcp_client import client as local_mcp_client
+from butler.mcp_client import client as local_mcp_client
 from tests.test_local_mcp_client_resources import FakeConnection, Obj, TestableLocalMcpClient
 
 
@@ -43,12 +43,12 @@ class ProviderLifecycleModeTests(unittest.TestCase):
 class DiscoveryIsolationTests(unittest.TestCase):
     def _client_with_eager_and_deferred(self, deferred_mode: str):
         configs = [
-            _config("talos-local"),
+            _config("butler-local"),
             _config("kicad", mode=deferred_mode, tool_prefix="kicad_"),
         ]
         client = TestableLocalMcpClient(configs, reconnect_backoff_seconds=0)
         eager = FakeConnection(
-            name="talos-local",
+            name="butler-local",
             tools=[Obj(name="ping", description="Ping", inputSchema={"type": "object"})],
         )
         deferred = FakeConnection(
@@ -56,7 +56,7 @@ class DiscoveryIsolationTests(unittest.TestCase):
             tools=[Obj(name="open_project", description="Open", inputSchema={"type": "object"})],
         )
         deferred.is_running = False
-        client._connections = {"talos-local": eager, "kicad": deferred}
+        client._connections = {"butler-local": eager, "kicad": deferred}
         return client, eager, deferred
 
     def test_deferred_provider_not_started_during_tool_discovery(self) -> None:
@@ -77,12 +77,12 @@ class DiscoveryIsolationTests(unittest.TestCase):
         # must gate on readiness (marked healthy), not is_running, or it will
         # block on / surface a provider that is not actually ready yet.
         configs = [
-            _config("talos-local"),
+            _config("butler-local"),
             _config("kicad", mode="sidecar_autostart", tool_prefix="kicad_"),
         ]
         client = TestableLocalMcpClient(configs, reconnect_backoff_seconds=0)
         eager = FakeConnection(
-            name="talos-local",
+            name="butler-local",
             tools=[Obj(name="ping", description="Ping", inputSchema={"type": "object"})],
         )
         warming = FakeConnection(
@@ -90,7 +90,7 @@ class DiscoveryIsolationTests(unittest.TestCase):
             list_tools_error=RuntimeError("kicad should never be listed while warming"),
         )
         warming.is_running = True  # session opened, but handshake not yet done
-        client._connections = {"talos-local": eager, "kicad": warming}
+        client._connections = {"butler-local": eager, "kicad": warming}
         # Provider is mid-handshake: running but not marked healthy.
         client._status["kicad"].status = "warming"
         client._status["kicad"].healthy = False
@@ -111,7 +111,7 @@ class DiscoveryIsolationTests(unittest.TestCase):
         tools = client.list_tools(refresh=True)
         self.assertEqual([t["name"] for t in tools], ["ping"])
         statuses = {s["name"]: s for s in client.list_server_status()}
-        self.assertEqual(statuses["talos-local"]["status"], "healthy")
+        self.assertEqual(statuses["butler-local"]["status"], "healthy")
         self.assertIn(statuses["kicad"]["status"], {"degraded", "failed"})
         self.assertIn("backend crashed", statuses["kicad"]["last_error"])
 
@@ -119,12 +119,12 @@ class DiscoveryIsolationTests(unittest.TestCase):
 class BackgroundWarmupTests(unittest.TestCase):
     def _client(self, *, start_delay: float = 0.0, start_error: Exception | None = None):
         configs = [
-            _config("talos-local"),
+            _config("butler-local"),
             _config("kicad", mode="sidecar_autostart", tool_prefix="kicad_"),
         ]
         client = TestableLocalMcpClient(configs, reconnect_backoff_seconds=0)
         eager = FakeConnection(
-            name="talos-local",
+            name="butler-local",
             tools=[Obj(name="ping", description="Ping", inputSchema={"type": "object"})],
         )
         kicad = FakeConnection(
@@ -134,7 +134,7 @@ class BackgroundWarmupTests(unittest.TestCase):
             start_error=start_error,
         )
         kicad.is_running = False
-        client._connections = {"talos-local": eager, "kicad": kicad}
+        client._connections = {"butler-local": eager, "kicad": kicad}
         return client, eager, kicad
 
     def test_autostart_transitions_not_started_to_warming_to_ready(self) -> None:
@@ -247,7 +247,7 @@ class ExplicitStartTests(unittest.TestCase):
 class KicadConfigModeTests(unittest.TestCase):
     def test_kicad_defaults_to_sidecar_autostart(self) -> None:
         env = {
-            "TALOS_MCP_SERVERS": "",
+            "BUTLER_MCP_SERVERS": "",
             "KICAD_MCP_SERVER_PATH": "/tmp/kicad-mcp",
             "KICAD_MCP_MODE": "",
             "KICAD_MCP_AUTOSTART": "",
@@ -261,7 +261,7 @@ class KicadConfigModeTests(unittest.TestCase):
 
     def test_kicad_mode_stdio_preserves_eager_path(self) -> None:
         env = {
-            "TALOS_MCP_SERVERS": "",
+            "BUTLER_MCP_SERVERS": "",
             "KICAD_MCP_SERVER_PATH": "/tmp/kicad-mcp",
             "KICAD_MCP_MODE": "stdio",
             "KICAD_MCP_AUTOSTART": "",
@@ -274,7 +274,7 @@ class KicadConfigModeTests(unittest.TestCase):
 
     def test_kicad_autostart_false_demotes_to_lazy(self) -> None:
         env = {
-            "TALOS_MCP_SERVERS": "",
+            "BUTLER_MCP_SERVERS": "",
             "KICAD_MCP_SERVER_PATH": "/tmp/kicad-mcp",
             "KICAD_MCP_MODE": "",
             "KICAD_MCP_AUTOSTART": "false",
@@ -287,7 +287,7 @@ class KicadConfigModeTests(unittest.TestCase):
 
     def test_kicad_sidecar_manual_uses_http_url_without_server_path(self) -> None:
         env = {
-            "TALOS_MCP_SERVERS": "",
+            "BUTLER_MCP_SERVERS": "",
             "KICAD_MCP_SERVER_PATH": "",
             "KICAD_MCP_MODE": "sidecar_manual",
             "KICAD_MCP_AUTOSTART": "",

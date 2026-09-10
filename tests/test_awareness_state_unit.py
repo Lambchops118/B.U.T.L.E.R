@@ -6,15 +6,15 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 try:
-    from talos.awareness.config import AwarenessSettings
+    from butler.awareness.config import AwarenessSettings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
-from talos.awareness.history.telemetry import QueryBoundsError, validate_range
-from talos.awareness.registry.sources import SourceRecord
-from talos.awareness.schemas.events import EventEnvelope, Provenance
-from talos.awareness.state.classification import classify, value_type_of
-from talos.awareness.state.manager import comparison_time
+from butler.awareness.history.telemetry import QueryBoundsError, validate_range
+from butler.awareness.registry.sources import SourceRecord
+from butler.awareness.schemas.events import EventEnvelope, Provenance
+from butler.awareness.state.classification import classify, value_type_of
+from butler.awareness.state.manager import comparison_time
 
 RECEIVED_AT = datetime(2026, 7, 16, 12, 0, 0, tzinfo=timezone.utc)
 OBSERVED_AT = datetime(2026, 7, 16, 11, 59, 30, tzinfo=timezone.utc)

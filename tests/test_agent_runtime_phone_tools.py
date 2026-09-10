@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import runtime as agent_runtime
+from butler.agent import runtime as agent_runtime
 
 
 class AgentRuntimePhoneToolTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class AgentRuntimePhoneToolTests(unittest.TestCase):
 
     def test_phone_meta_tool_forwards_to_legacy_implementation(self) -> None:
         with mock.patch(
-            "talos.phone.place_phone_call",
+            "butler.phone.place_phone_call",
             return_value={"success": True, "call": {"call_id": "conv_123"}},
         ) as place_mock:
             payload = agent_runtime._invoke_host_tool(
@@ -88,7 +88,7 @@ class AgentRuntimePhoneToolTests(unittest.TestCase):
 
     def test_host_tool_forwards_session_and_runtime_lane(self) -> None:
         with mock.patch(
-            "talos.phone.place_phone_call",
+            "butler.phone.place_phone_call",
             return_value={"success": True, "call": {"call_id": "conv_123"}},
         ) as place_mock:
             payload = agent_runtime._invoke_host_tool(

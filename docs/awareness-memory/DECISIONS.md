@@ -75,7 +75,7 @@ physical-action capability is introduced. HTTP 200 remains enqueue confirmation.
 | ADR-008 | Accepted | Implementation is phase-gated; every phase ends with tests, docs, status/handoff, report, and a stop. | Original sections 4, 12, 19. Phase 0 owner review is mandatory unless explicitly waived. |
 | ADR-009 | Accepted default | Integrate additively and prefer a modular monolith unless discovery shows an established suitable architecture. | P9-P10. This is a default, not authorization to rewrite existing systems. |
 | ADR-010 | Accepted default | Existing suitable repository technology takes precedence; otherwise use the documented Python/PostgreSQL/TimescaleDB/pgvector/FastAPI/SQLAlchemy/Alembic/Pydantic/Docker defaults where applicable. | Original section 5. Substitution must preserve required properties and be documented. |
-| ADR-011 | Accepted (owner, 2026-07-15) | Adopt the default stack with repo-fit adaptations: new `talos/awareness/` package as its own Python 3.12 process/venv (mirrors the main/voice split); PostgreSQL 17 + TimescaleDB + pgvector via Docker Compose (`timescale/timescaledb-ha:pg17`, loopback :5433); FastAPI + SQLAlchemy 2 async + Alembic + Pydantic v2 + aiomqtt; no Redis. | `DISCOVERY.md` §11. Existing repo tech evaluated first (OPS-001); no suitable DB/ORM existed. |
+| ADR-011 | Accepted (owner, 2026-07-15) | Adopt the default stack with repo-fit adaptations: new `butler/awareness/` package as its own Python 3.12 process/venv (mirrors the main/voice split); PostgreSQL 17 + TimescaleDB + pgvector via Docker Compose (`timescale/timescaledb-ha:pg17`, loopback :5433); FastAPI + SQLAlchemy 2 async + Alembic + Pydantic v2 + aiomqtt; no Redis. | `DISCOVERY.md` §11. Existing repo tech evaluated first (OPS-001); no suitable DB/ORM existed. |
 | ADR-012 | Accepted (owner, 2026-07-15) | LLM (Qwen via Ollama), PostgreSQL, and the awareness backend run on one machine; every cross-component link (Ollama host, DB host, broker) stays network-configurable, never localhost-assumed. | Owner decision recorded in `DISCOVERY.md` §14. |
 | ADR-013 | Accepted (owner, 2026-07-15) | A test-only ephemeral Mosquitto (Docker, compose profile `test`, loopback :1885) is approved for integration tests and the simulator; production uses the existing Pi broker exclusively. | ADR-002 remains intact — this is not a second production broker. |
 | ADR-014 | Accepted (owner, 2026-07-15) | Simulated hardware only for now: no firmware changes in scope; device-facing acceptance criteria run against the simulator. | Firmware risks (shared client ID, `status/16` collision, no reconnect/NTP) stay documented, not fixed. |
@@ -89,10 +89,10 @@ physical-action capability is introduced. HTTP 200 remains enqueue confirmation.
 | ADR-021 | Accepted (2026-07-26) | Keep the canonical pump actions at `idempotency_behavior = "at_most_once"`, and add an additive `cooldown_scope`/`cooldown_parameter` to the action registry so `run_pump` rate-limits per channel instead of action-wide. | Device-side persistent deduplication is implemented and covered by host tests but has not been power-loss tested on hardware; acks alone do not make retries safe. Action-wide cooldown remains the default so `water_plants`, `toggle_fan`, and `sim_command` behavior is unchanged; setting the global cooldown to zero was explicitly rejected. |
 | ADR-022 | Superseded (2026-08-28; see ADR-028) | Correct the plant-waterer hardware map to **GP9-GP12** for relay channels 1-4 and **GP1/GP2/GP4/GP5** for the unavailable fuse inputs. Relays remain active-high. | The owner's known-working MicroPython script instantiated `Pin(9)`, `Pin(10)`, `Pin(11)`, and `Pin(12)` and successfully activated every relay with `value(1)`. This proves the original table used GPIO identifiers rather than physical header positions and explains why the deployed GP0-GP3 firmware acknowledged commands without any relay click. Supersedes only the GPIO mapping portion of ADR-018. **Never verified against hardware** and superseded by ADR-028. |
 | ADR-023 | Accepted (owner authorized Phase A, 2026-07-26) | Fail closed with the legacy room barge-in heuristic disabled by both tracked configuration and code default. Permit synchronized room-audio fixture recording only through a separate explicit operator opt-in, with a visible warning, local-only storage, a non-blocking bounded queue, per-session duration/PCM limits, and bounded owned-session retention. | The completed design review found that RMS plus unconstrained ASR cannot establish trustworthy speech and can redispatch false commands. Phase A must contain that risk while enabling privacy-conscious measurement without silently recording the room. AEC/VAD backend selection remains separately gated by OQ-H and Phase B. |
-| ADR-024 | Accepted from deployed-host evidence (owner authorized Phases B-F, 2026-07-27) | Select Windows communications-mode AudioGraph AEC on the pinned Yeti capture and BenQ render MMDevice endpoints behind `DuplexAudioProcessor`. Use clean AEC capture with Silero probability VAD and evidence-gated local faster-whisper. Never silently fall back to the RMS heuristic; AEC or endpoint failure disables barge-in while ordinary wake-word capture remains available. Keep `TALOS_BARGE_IN=0` until the owner-visible Phase F corpus and soak pass. | Windows exposed active AEC/NS/AGC/deep-NS and a verified system-default render reference. The in-memory live probe measured 45.696 dB ERLE and no callback errors. Direct WebRTC bindings available to this Python/Windows deployment had materially higher maintenance risk. |
+| ADR-024 | Accepted from deployed-host evidence (owner authorized Phases B-F, 2026-07-27) | Select Windows communications-mode AudioGraph AEC on the pinned Yeti capture and BenQ render MMDevice endpoints behind `DuplexAudioProcessor`. Use clean AEC capture with Silero probability VAD and evidence-gated local faster-whisper. Never silently fall back to the RMS heuristic; AEC or endpoint failure disables barge-in while ordinary wake-word capture remains available. Keep `BUTLER_BARGE_IN=0` until the owner-visible Phase F corpus and soak pass. | Windows exposed active AEC/NS/AGC/deep-NS and a verified system-default render reference. The in-memory live probe measured 45.696 dB ERLE and no callback errors. Direct WebRTC bindings available to this Python/Windows deployment had materially higher maintenance risk. |
 | ADR-025 | Accepted (owner, 2026-08-09) | Restore SpeechRecognition as the production idle utterance segmenter while retaining one local faster-whisper transcription, AEC, and Silero barge-in. Keep an independent idle Silero lane behind both an enable request and explicit corpus-acceptance acknowledgement; preload local STT asynchronously and serialize ASR through a bounded queue that prioritizes fresh idle commands over queued interruption confirmations. | Commit `e33c2f1` shortened usable wake-word lead-in from about 390 ms to 224 ms by treating SpeechRecognition segmentation as redundant transcription. General ASR then commonly decoded the clipped leading "Butler" as "but there." The independent idle lane uses 640 ms pre-roll and cannot be deployed from configuration intent alone. |
 | ADR-026 | Accepted (owner request, 2026-08-09) | Add the initial debug console as a standalone, read-only, loopback web service. It consumes bounded existing log/database artifacts and service probes; it does not join or modify the main agent, voice, awareness, or safety loops. | The owner requested an expandable information-centric debug page while forbidding major main-system changes. Existing JSONL telemetry, voice benchmark CSV, SQLite conversation history, and health surfaces supply useful data. Exact prompts/tool arguments and continuous audio frames remain unavailable until a separate bounded, privacy-reviewed producer is authorized. |
-| ADR-027 | Accepted (owner correction, 2026-08-09) | The debug-console computer is not the TALOS system host. Never label console-local CPU/GPU/memory/disk as TALOS metrics; hardware metrics are remote-only and remain explicitly not configured until a system-host endpoint is supplied. | Local sampling produced authoritative-looking data for the wrong machine. `TALOS_DEBUG_SYSTEM_METRICS_URL` is now the read-only adapter seam; exporter selection, authentication, and deployment remain separate from this page task. |
+| ADR-027 | Accepted (owner correction, 2026-08-09) | The debug-console computer is not the Butler system host. Never label console-local CPU/GPU/memory/disk as Butler metrics; hardware metrics are remote-only and remain explicitly not configured until a system-host endpoint is supplied. | Local sampling produced authoritative-looking data for the wrong machine. `BUTLER_DEBUG_SYSTEM_METRICS_URL` is now the read-only adapter seam; exporter selection, authentication, and deployment remain separate from this page task. |
 | ADR-028 | Accepted from board netlist evidence (2026-08-28) | Correct the plant-waterer hardware map to **GP6/GP7/GP8/GP9** for relay channels 1-4 and **GP0/GP1/GP2/GP3** for the unavailable fuse inputs. Channels are numbered in output-connector order J2-J5; pot assignment is made by which terminal a pump is plugged into, not in firmware. Relays remain active-high. | `Controller_Board_mk2.kicad_pcb` routes GP6->R1->Q1->K4->J2, GP7->R4->Q4->K3->J3, GP8->R3->Q3->K2->J4, and GP9->R2->Q2->K1->J5, with the fuse dividers reaching GP0-GP3 through R5-R8. The same netlist marks GP10, GP11 and GP12 `unconnected`, so ADR-022's GP9-GP12 table drove floating pins on channels 2-4 and no relay could move. ADR-022 was never verified against hardware - its own session handoff records that no physical command was issued after the change. Q1-Q4 are low-side NPN switches, confirming active-high. Supersedes the GPIO mapping portion of ADR-022 and ADR-018. |
 | ADR-029 | Accepted (2026-08-28) | Raise `water_plants` `timeout_seconds` from 20 s to 45 s in the action registry. | Commit `25e3fd2` raised the firmware's `DEFAULT_RUN_SECONDS` from 8 to 30, and the legacy path publishes `status/{pin} = 0` only after the cycle completes. A 20 s state-confirmation timeout therefore marked every successful 30 s watering run as timed out. 45 s matches the canonical `run_pump` timeout and still bounds the request well inside the firmware's 30 s hard ceiling plus dispatch latency. |
 
@@ -134,7 +134,7 @@ launcher choice between ReSpeaker and Yeti. Persist one explicit profile and
 inject it into the voice worker. ReSpeaker opens its named PortAudio endpoint at
 16 kHz stereo, selects USB channel 2 (the documented auto-selected ASR beam), and
 uses the recognizer's measured ambient threshold. It does not use the Yeti's
-Windows AEC/barge-in or unaccepted idle-VAD contract because Talos renders on
+Windows AEC/barge-in or unaccepted idle-VAD contract because Butler renders on
 BenQ and does not supply the XVF3800 hardware far-end reference. Yeti preserves
 the pinned Windows communications-AEC contract and fixed threshold, with a
 named-device ordinary-capture fallback if Windows's active defaults do not
@@ -163,7 +163,7 @@ sensitive telemetry feeds retain their existing gates.
 Date: 2026-09-08. Status: accepted. Owner explicitly requested permanent
 logging after reviewing the live debug view. In addition to the existing stdout
 feed, a launcher-managed main agent appends the identical structured events to
-`talos/logs/llm_io_<UTC timestamp>_<pid>.jsonl`. Create the directory lazily,
+`butler/logs/llm_io_<UTC timestamp>_<pid>.jsonl`. Create the directory lazily,
 use one file per process run, preserve full payloads without redaction, and do
 not prune them automatically. Git-ignore the file pattern to reduce accidental
 source-control disclosure. Filesystem and serialization failures remain
@@ -208,15 +208,15 @@ brightness change on the pygame window, applied in the CRT fragment shader after
 its 1/gamma pass. Applying it on the CPU before that pass was self-defeating --
 a requested 1% arrived on the glass at roughly 18% of awake brightness, and the
 8-bit multiply crushed the mid-tones first. `DIM_LEVEL` is now obeyed literally
-and `TALOS_SLEEP_DIM_LEVEL` tunes it. The plain-pygame fallback path keeps the
+and `BUTLER_SLEEP_DIM_LEVEL` tunes it. The plain-pygame fallback path keeps the
 BLEND_MULT fill, which is correct there because it has no gamma pass.
 
-`talos.services.display_power` reuses the two mechanisms already proven in
+`butler.services.display_power` reuses the two mechanisms already proven in
 production — adb standby to go dark, an MQTT `tv_display/wake_status` = `"1"`
 publish to come back — and runs them on a daemon thread. The sleep flag stays
 authoritative: a display that cannot be reached records a failure in
 `last_result()` (surfaced by the tool's `status` action) and never turns a good
-night into an error, and `TALOS_DISPLAY_POWER_ENABLED=0` disables the coupling
+night into an error, and `BUTLER_DISPLAY_POWER_ENABLED=0` disables the coupling
 for a headless host.
 
 ## ADR-046 — Accept Windows AEC barge-in on the ReSpeaker XVF3800
@@ -229,8 +229,8 @@ ADR-041 disabled barge-in for the ReSpeaker because its far-end reference to the
 BenQ render path was unvalidated, and the microphone-profile work made
 `respeaker` the default. That combination silently removed barge-in: the
 `windows_aec` flag gates it in both the launcher (`_microphone_env` forces
-`TALOS_BARGE_IN=0`) and the voice worker (`run_voice_recognition` clears
-`_barge_in_runtime_ready`), so `TALOS_BARGE_IN=1` had no effect.
+`BUTLER_BARGE_IN=0`) and the voice worker (`run_voice_recognition` clears
+`_barge_in_runtime_ready`), so `BUTLER_BARGE_IN=1` had no effect.
 
 The bounded live probe answered the open question directly. Windows reports
 acoustic echo cancellation, noise suppression, AGC and deep noise suppression
@@ -245,7 +245,7 @@ qualified this contract (45.696 dB at amplitude 0.03).
 `windows_aec` is therefore true for both deployed profiles. The suppression path
 in the launcher and the worker is unchanged and remains the fail-closed default
 for any profile added later, which must produce its own probe evidence first.
-The generic `TALOS_AUDIO_CAPTURE_ENDPOINT_ID` fallback, which still held the
+The generic `BUTLER_AUDIO_CAPTURE_ENDPOINT_ID` fallback, which still held the
 Yeti identity after the ReSpeaker became the default capture device, is brought
 back in step; the per-profile pins remain the values the worker actually reads.
 
@@ -327,7 +327,7 @@ verified, and that a state question must be answered from a tool result. That
 took the failing request to 8/8 while leaving conversational turns ("tell me a
 fact", "summarize our conversation") at 0/8, so it buys grounding without
 buying tool spam. Annotating past answers as unverified was also tried and did
-nothing (0/8). ``TALOS_INJECT_HISTORY_GROUNDING=0`` disables it. Persisting tool
+nothing (0/8). ``BUTLER_INJECT_HISTORY_GROUNDING=0`` disables it. Persisting tool
 calls into history is the durable fix and remains open.
 
 **The context budget was being overridden downstream.** The awareness broker
@@ -339,9 +339,9 @@ which is to say every fact about the house, leaving three verbose announcement
 receipts. A critical alert the broker had deliberately protected could be
 discarded the same way. This is why a device-state question reached the model
 with no device state in context. The limit is now a backstop above the broker's
-budget (``TALOS_CONTEXT_SNAPSHOT_CHAR_LIMIT``, 4000), so the component that
+budget (``BUTLER_CONTEXT_SNAPSHOT_CHAR_LIMIT``, 4000), so the component that
 reasons about priority is the one that decides what survives. Recorded as a
-known defect in ``talos/todo/llm-turn-context-deep-dive.md``; this closes it.
+known defect in ``butler/todo/llm-turn-context-deep-dive.md``; this closes it.
 
 The 500 was an artifact, not a constraint. It entered on 2026-02-22 in
 ``InfoPanel/voice_agent.py`` (commit d345ce5, "sending the command to openai as
@@ -370,7 +370,7 @@ work was in progress on a diverged branch; content is unchanged.
 
 Record human presence, bounded interaction facts, and agent job/tool outcomes
 as ordinary events through the existing ingestion pipeline, with the human
-(`owner`) and the agent (`talos`) registered as first-class entities. Never
+(`owner`) and the agent (`butler`) registered as first-class entities. Never
 record utterance text. The subsystem knew a great deal about devices and
 nothing about the person it serves; `/situation` was a device dashboard. No
 migration was required — `ENTITY_TYPES` already permitted `person`/`agent` and
@@ -437,8 +437,8 @@ A source may opt out of offline detection with `metadata.offline_detection =
 false`, and the agent's internal signal source does. Every other source is a
 device that reports on a schedule, so silence is evidence of a fault. The
 agent source reports only when a human interacts, so silence means nobody was
-home. Without the opt-out, leaving the machine off for a day would make TALOS
-announce that TALOS is offline on the next startup — alarming and false,
+home. Without the opt-out, leaving the machine off for a day would make Butler
+announce that Butler is offline on the next startup — alarming and false,
 violating INV-14's truthfulness requirement. Implemented as an explicit `IS
 NULL OR != 'false'` predicate because a bare `NOT(key = 'false')` yields NULL
 for sources lacking the key and would have silently disabled offline detection

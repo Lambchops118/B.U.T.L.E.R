@@ -1,8 +1,8 @@
-# TALOS Async Background Execution Plan
+# Butler Async Background Execution Plan
 
 ## Purpose
 
-This document describes how to evolve TALOS from a synchronous request/response agent into a hybrid system with:
+This document describes how to evolve Butler from a synchronous request/response agent into a hybrid system with:
 
 - a fast conversational lane that can acknowledge requests immediately
 - a background execution lane for long-running MCP work
@@ -16,18 +16,18 @@ This is intended to be usable later by a developer or coding agent as an impleme
 The system should support interactions like:
 
 1. User says: "I need you to design a basic RLC circuit."
-2. TALOS replies immediately: "I can do that. Give me a minute."
-3. TALOS starts a background job that may use MCP tools, planning, retries, and long-running CAD actions.
-4. TALOS later delivers the result through the active client, linked session, or a status/query API.
+2. Butler replies immediately: "I can do that. Give me a minute."
+3. Butler starts a background job that may use MCP tools, planning, retries, and long-running CAD actions.
+4. Butler later delivers the result through the active client, linked session, or a status/query API.
 
 The main agent process should remain responsive while background work is in progress.
 
 ## Why This Change Is Needed
 
-The current TALOS flow is synchronous:
+The current Butler flow is synchronous:
 
-- [talos/router.py](../talos/router.py) pulls a message from the central queue
-- it calls `talos.agent.runtime.run_command(...)`
+- [butler/router.py](../butler/router.py) pulls a message from the central queue
+- it calls `butler.agent.runtime.run_command(...)`
 - it waits for the full LLM and MCP workflow to finish
 - only then does it reply to the caller
 
@@ -40,7 +40,7 @@ This has several problems for the target architecture:
 
 The text server is also built around this blocking assumption:
 
-- [talos/text/server.py](../talos/text/server.py) sends a request into `central_queue`
+- [butler/text/server.py](../butler/text/server.py) sends a request into `central_queue`
 - then blocks on `reply_queue.get(...)` until the full request completes
 
 ## Current Constraints
@@ -50,7 +50,7 @@ The current codebase has these useful properties:
 - the main agent process is already persistent
 - there is already a central queue
 - there is already session-aware text interaction
-- `talos.agent.runtime` is already a reusable execution boundary
+- `butler.agent.runtime` is already a reusable execution boundary
 
 The current codebase also has these limitations:
 
@@ -61,7 +61,7 @@ The current codebase also has these limitations:
 
 ## Target Architecture
 
-TALOS should be split conceptually into two lanes.
+Butler should be split conceptually into two lanes.
 
 ### 1. Conversational Lane
 
@@ -98,11 +98,11 @@ Implement a `JobManager` and one or more background workers, while preserving th
 At a high level:
 
 1. Client sends a message.
-2. TALOS classifies it as either:
+2. Butler classifies it as either:
    - foreground request
    - background-capable request
 3. If foreground:
-   - execute using the current `talos.agent.runtime.run_command(...)` style path
+   - execute using the current `butler.agent.runtime.run_command(...)` style path
 4. If background:
    - create a durable job record
    - return an immediate acknowledgment
@@ -127,7 +127,7 @@ This is especially important for:
 
 Create a new module, for example:
 
-- `talos/jobs.py`
+- `butler/jobs.py`
 
 Responsibilities:
 
@@ -174,7 +174,7 @@ Suggested job fields:
 
 Create a worker module, for example:
 
-- `talos/background_worker.py`
+- `butler/background_worker.py`
 
 Responsibilities:
 
@@ -190,7 +190,7 @@ The first version can use Python threads. A later version can move certain workl
 
 Create a lightweight classifier module, for example:
 
-- `talos/request_classifier.py`
+- `butler/request_classifier.py`
 
 Responsibilities:
 
@@ -202,7 +202,7 @@ Initial implementation should be rule-based, not LLM-based.
 Suggested initial background triggers:
 
 - KiCad / PCB / schematic / CAD design requests
-- anything explicitly asking TALOS to "work on" something
+- anything explicitly asking Butler to "work on" something
 - requests expected to need multi-step tool use
 - requests that call out creation, generation, planning, or execution over time
 
@@ -217,7 +217,7 @@ Examples:
 
 Create a session-aware notification module, for example:
 
-- `talos/session_events.py`
+- `butler/session_events.py`
 
 Responsibilities:
 
@@ -347,13 +347,13 @@ Voice should use the same job model as text.
 Suggested behavior:
 
 1. user speaks a request
-2. TALOS transcribes it
+2. Butler transcribes it
 3. classifier marks it foreground or background
 4. if background:
-   - TALOS immediately speaks a short acknowledgment
+   - Butler immediately speaks a short acknowledgment
    - background worker starts the job
 5. when the job completes:
-   - if the voice session is active, TALOS can speak the completion
+   - if the voice session is active, Butler can speak the completion
    - otherwise store a pending session event and deliver it on next interaction
 
 Important rule:
@@ -440,7 +440,7 @@ Good foreground candidates:
 - local house-control actions with fast tools
 - short "do you want me to continue?" follow-ups
 
-The foreground path can continue using `talos.agent.runtime.run_command(...)` at first.
+The foreground path can continue using `butler.agent.runtime.run_command(...)` at first.
 
 Longer term, it may be worth adding:
 
@@ -497,7 +497,7 @@ If the user says:
 - "Cancel that."
 - "Use a 10uH inductor instead."
 
-TALOS should not treat that as unrelated free text.
+Butler should not treat that as unrelated free text.
 
 Recommended behavior:
 
@@ -626,7 +626,7 @@ Tasks:
 
 Outcome:
 
-- TALOS behaves more like a real long-lived service
+- Butler behaves more like a real long-lived service
 
 ### Phase 5: Advanced Scheduling
 
@@ -645,20 +645,20 @@ Tasks:
 
 Possible new files:
 
-- `talos/jobs.py`
-- `talos/background_worker.py`
-- `talos/request_classifier.py`
-- `talos/session_events.py`
-- `talos/job_store.py`
+- `butler/jobs.py`
+- `butler/background_worker.py`
+- `butler/request_classifier.py`
+- `butler/session_events.py`
+- `butler/job_store.py`
 
 Possible files to modify:
 
-- `talos/router.py`
-- `talos/text/server.py`
-- `talos/voice/agent.py`
-- `talos/messages.py`
-- `talos/agent/runtime.py`
-- `talos/main.py`
+- `butler/router.py`
+- `butler/text/server.py`
+- `butler/voice/agent.py`
+- `butler/messages.py`
+- `butler/agent/runtime.py`
+- `butler/main.py`
 
 ## Suggested First Implementation Slice
 
@@ -700,7 +700,7 @@ The first version should optimize for:
 
 ## Open Questions To Resolve Before Implementation
 
-1. Should one TALOS session allow multiple concurrent background jobs by default?
+1. Should one Butler session allow multiple concurrent background jobs by default?
 2. Should KiCad jobs share one persistent MCP instance or get isolated worker-specific instances?
 3. What is the preferred completion delivery for remote text clients: polling, SSE, or WebSocket?
 4. What should happen if the user continues chatting while a long-running job is modifying a project?
@@ -708,7 +708,7 @@ The first version should optimize for:
 
 ## Recommendation Summary
 
-For TALOS, the recommended direction is:
+For Butler, the recommended direction is:
 
 - keep a lightweight foreground path for quick interactions
 - add a durable background job system for long-running MCP work

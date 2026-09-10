@@ -1,7 +1,7 @@
 """Tests for switching MCP servers / provider groups off at startup.
 
 Covers the whole path the launcher checkboxes take: the saved selection becomes
-``TALOS_MCP_DISABLED_SERVERS`` / ``TALOS_MCP_DISABLED_PROVIDERS`` in the main
+``BUTLER_MCP_DISABLED_SERVERS`` / ``BUTLER_MCP_DISABLED_PROVIDERS`` in the main
 agent's environment, which the MCP client turns into a shorter server list and a
 ``--disable-provider`` argument for the built-in aggregate server.
 """
@@ -19,14 +19,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.launcher.config import LauncherConfig
-from talos.launcher.core import _mcp_env
-from talos.mcp_client import client as local_mcp_client
+from butler.launcher.config import LauncherConfig
+from butler.launcher.core import _mcp_env
+from butler.mcp_client import client as local_mcp_client
 
 
 _EXPLICIT_SERVERS = json.dumps(
     [
-        {"name": "talos-local", "transport": "stdio", "command": "python", "args": ["-m", "talos.mcp_server"]},
+        {"name": "butler-local", "transport": "stdio", "command": "python", "args": ["-m", "butler.mcp_server"]},
         {"name": "extra", "transport": "stdio", "command": "node", "args": ["extra.js"]},
     ]
 )
@@ -34,13 +34,13 @@ _EXPLICIT_SERVERS = json.dumps(
 
 def _load(**env: str) -> list[local_mcp_client.McpServerConfig]:
     base = {
-        "TALOS_MCP_DISABLED_SERVERS": "",
-        "TALOS_MCP_DISABLED_PROVIDERS": "",
-        "TALOS_FILESYSTEM_ROOTS": "",
+        "BUTLER_MCP_DISABLED_SERVERS": "",
+        "BUTLER_MCP_DISABLED_PROVIDERS": "",
+        "BUTLER_FILESYSTEM_ROOTS": "",
         "MINECRAFT_SERVER_DIR": "",
         "KICAD_MCP_SERVER_PATH": "",
         "KICAD_MCP_URL": "",
-        "TALOS_DISABLE_ALL_TOOLS": "",
+        "BUTLER_DISABLE_ALL_TOOLS": "",
     }
     base.update(env)
     with patch.dict(os.environ, base, clear=False):
@@ -49,43 +49,43 @@ def _load(**env: str) -> list[local_mcp_client.McpServerConfig]:
 
 class DisabledServerTests(unittest.TestCase):
     def test_nothing_disabled_keeps_every_server(self) -> None:
-        configs = _load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS)
-        self.assertEqual([config.name for config in configs], ["talos-local", "extra"])
-        self.assertEqual(configs[0].args, ["-m", "talos.mcp_server"])
+        configs = _load(BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS)
+        self.assertEqual([config.name for config in configs], ["butler-local", "extra"])
+        self.assertEqual(configs[0].args, ["-m", "butler.mcp_server"])
 
     def test_named_server_is_dropped(self) -> None:
-        configs = _load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS, TALOS_MCP_DISABLED_SERVERS="extra")
-        self.assertEqual([config.name for config in configs], ["talos-local"])
+        configs = _load(BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS, BUTLER_MCP_DISABLED_SERVERS="extra")
+        self.assertEqual([config.name for config in configs], ["butler-local"])
 
     def test_disable_list_accepts_json_and_is_case_insensitive(self) -> None:
         configs = _load(
-            TALOS_MCP_SERVERS=_EXPLICIT_SERVERS,
-            TALOS_MCP_DISABLED_SERVERS=json.dumps(["Extra", "talos-local"]),
+            BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS,
+            BUTLER_MCP_DISABLED_SERVERS=json.dumps(["Extra", "butler-local"]),
         )
         self.assertEqual(configs, [])
 
     def test_default_server_list_can_be_filtered_too(self) -> None:
-        configs = _load(TALOS_MCP_SERVERS="", TALOS_MCP_DISABLED_SERVERS="talos-local")
+        configs = _load(BUTLER_MCP_SERVERS="", BUTLER_MCP_DISABLED_SERVERS="butler-local")
         self.assertEqual(configs, [])
 
 
 class DisabledProviderTests(unittest.TestCase):
     def test_providers_are_passed_to_the_aggregate_server(self) -> None:
         configs = _load(
-            TALOS_MCP_SERVERS=_EXPLICIT_SERVERS,
-            TALOS_MCP_DISABLED_PROVIDERS="awareness, home_automation",
+            BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS,
+            BUTLER_MCP_DISABLED_PROVIDERS="awareness, home_automation",
         )
         self.assertEqual(
             configs[0].args,
-            ["-m", "talos.mcp_server", "--disable-provider", "awareness,home_automation"],
+            ["-m", "butler.mcp_server", "--disable-provider", "awareness,home_automation"],
         )
         # Only the aggregate server is rewritten.
         self.assertEqual(configs[1].args, ["extra.js"])
 
     def test_default_aggregate_config_is_rewritten(self) -> None:
-        configs = _load(TALOS_MCP_SERVERS="", TALOS_MCP_DISABLED_PROVIDERS="awareness")
+        configs = _load(BUTLER_MCP_SERVERS="", BUTLER_MCP_DISABLED_PROVIDERS="awareness")
         self.assertEqual(
-            configs[0].args, ["-m", "talos.mcp_server", "--disable-provider", "awareness"]
+            configs[0].args, ["-m", "butler.mcp_server", "--disable-provider", "awareness"]
         )
 
 
@@ -124,14 +124,14 @@ class EveryServerDisabledTests(unittest.TestCase):
 
 class GlobalToolKillSwitchTests(unittest.TestCase):
     def test_no_servers_are_configured(self) -> None:
-        self.assertEqual(_load(TALOS_DISABLE_ALL_TOOLS="1"), [])
+        self.assertEqual(_load(BUTLER_DISABLE_ALL_TOOLS="1"), [])
 
     def test_switch_is_off_by_default(self) -> None:
-        self.assertTrue(_load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS))
+        self.assertTrue(_load(BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS))
 
     def test_explicit_servers_are_ignored_while_on(self) -> None:
         self.assertEqual(
-            _load(TALOS_MCP_SERVERS=_EXPLICIT_SERVERS, TALOS_DISABLE_ALL_TOOLS="true"), []
+            _load(BUTLER_MCP_SERVERS=_EXPLICIT_SERVERS, BUTLER_DISABLE_ALL_TOOLS="true"), []
         )
 
 
@@ -141,16 +141,16 @@ class LauncherEnvTests(unittest.TestCase):
         cfg.disabled_mcp_servers = ["kicad", "minecraft-search"]
         cfg.disabled_mcp_providers = ["home_automation"]
         env = _mcp_env({}, cfg)
-        self.assertEqual(env["TALOS_MCP_DISABLED_SERVERS"], "kicad,minecraft-search")
-        self.assertEqual(env["TALOS_MCP_DISABLED_PROVIDERS"], "home_automation")
+        self.assertEqual(env["BUTLER_MCP_DISABLED_SERVERS"], "kicad,minecraft-search")
+        self.assertEqual(env["BUTLER_MCP_DISABLED_PROVIDERS"], "home_automation")
 
     def test_empty_selection_clears_inherited_values(self) -> None:
         env = _mcp_env(
-            {"TALOS_MCP_DISABLED_SERVERS": "kicad", "TALOS_MCP_DISABLED_PROVIDERS": "awareness"},
+            {"BUTLER_MCP_DISABLED_SERVERS": "kicad", "BUTLER_MCP_DISABLED_PROVIDERS": "awareness"},
             LauncherConfig(),
         )
-        self.assertNotIn("TALOS_MCP_DISABLED_SERVERS", env)
-        self.assertNotIn("TALOS_MCP_DISABLED_PROVIDERS", env)
+        self.assertNotIn("BUTLER_MCP_DISABLED_SERVERS", env)
+        self.assertNotIn("BUTLER_MCP_DISABLED_PROVIDERS", env)
 
 
 if __name__ == "__main__":

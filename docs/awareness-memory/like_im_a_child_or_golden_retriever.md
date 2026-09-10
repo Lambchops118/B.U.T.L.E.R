@@ -1,17 +1,17 @@
-# TALOS Awareness and Memory, Explained Like You Are a Child or a Golden Retriever
+# Butler Awareness and Memory, Explained Like You Are a Child or a Golden Retriever
 
 This is the **start here** guide for a new operator or intern. It explains what
-the subsystem does, how to start it, how TALOS uses it, where the code lives,
+the subsystem does, how to start it, how Butler uses it, where the code lives,
 and how to change it without accidentally teaching the robot house unsafe
 tricks.
 
 For the exhaustive reference, use
-[`talos/awareness/README.md`](../../talos/awareness/README.md). For the current
+[`butler/awareness/README.md`](../../butler/awareness/README.md). For the current
 implementation state, use [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## The 30-second version
 
-Imagine TALOS has:
+Imagine Butler has:
 
 - **Ears**: MQTT messages from devices.
 - **A mailroom**: validates, sorts, timestamps, and stores every message.
@@ -28,20 +28,20 @@ The LLM can read the briefing card and use narrow tools. It is **not** the
 mailroom, database, watchdog, retry loop, or safety controller.
 
 The subsystem is a separate Python process. PostgreSQL is its source of truth.
-MQTT is only the delivery truck. The main TALOS process talks to it over a
+MQTT is only the delivery truck. The main Butler process talks to it over a
 loopback HTTP API at `http://127.0.0.1:8600` by default.
 
-## First important distinction: TALOS has two related memory systems
+## First important distinction: Butler has two related memory systems
 
 Do not mix these up.
 
 | System | Simple description | Storage | Used for |
 |---|---|---|---|
-| Main-agent prompt memory | TALOS's conversational notebook | SQLite, normally `db/talos_memory.sqlite3` | Session summaries, explicit facts, and compact prompt memory |
+| Main-agent prompt memory | Butler's conversational notebook | SQLite, normally `db/talos_memory.sqlite3` | Session summaries, explicit facts, and compact prompt memory |
 | Awareness long-term memory | The house's evidence-backed scrapbook | PostgreSQL + pgvector | Validated semantic facts, preferences, episodic incidents, provenance, and search |
 
 When the host tool `remember_memory_fact` is used, the main-agent SQLite copy
-is written first. TALOS then tries to mirror that fact into awareness memory.
+is written first. Butler then tries to mirror that fact into awareness memory.
 The tool result says whether the awareness copy synced. The SQLite copy remains
 authoritative for the existing prompt-memory path.
 
@@ -52,7 +52,7 @@ Current state and telemetry are **not** semantic memory:
 - "Jack prefers the office at 70 degrees" can be long-term semantic memory.
 - "The basement overflowed three times last week" can become episodic memory.
 
-This separation prevents TALOS from answering an exact current question with
+This separation prevents Butler from answering an exact current question with
 a fuzzy memory search result.
 
 ## What happens when a device says something
@@ -75,7 +75,7 @@ One database transaction
           └── physical-action dispatch / timeout
 
 PostgreSQL-backed API on 127.0.0.1:8600
-  ├── compact situation snapshot ──► TALOS router ──► LLM prompt
+  ├── compact situation snapshot ──► Butler router ──► LLM prompt
   ├── bounded read/search tools ───► aggregate MCP server ──► LLM tools
   └── validated action requests ──► audited MQTT command lifecycle
 ```
@@ -96,32 +96,32 @@ You need:
 
 - Docker Desktop running.
 - Python 3.12 for `.venv-awareness`.
-- The main TALOS environment, `.venv-main`, if you also want to talk to TALOS.
+- The main Butler environment, `.venv-main`, if you also want to talk to Butler.
 - A repository `.env` file.
 - Access to the Raspberry Pi MQTT broker for live devices, or MQTT disabled for
   a safe API-only desk setup.
 
-Do not replace an existing `.env`; it may already contain working TALOS
+Do not replace an existing `.env`; it may already contain working Butler
 secrets. Add or edit the awareness settings in it.
 
 At minimum:
 
 ```dotenv
-TALOS_AWARENESS_DB_PASSWORD=replace-with-a-real-local-password
+BUTLER_AWARENESS_DB_PASSWORD=replace-with-a-real-local-password
 ```
 
 Strongly recommended, and required for physical actions:
 
 ```dotenv
-# Use the same value in the awareness process and main TALOS process.
+# Use the same value in the awareness process and main Butler process.
 # It must contain at least 16 characters.
-TALOS_AWARENESS_API_TOKEN=replace-with-a-long-random-local-token
+BUTLER_AWARENESS_API_TOKEN=replace-with-a-long-random-local-token
 ```
 
 For an API-only start that does not ingest live device messages:
 
 ```dotenv
-TALOS_AWARENESS_MQTT_ENABLED=0
+BUTLER_AWARENESS_MQTT_ENABLED=0
 ```
 
 That switch disables the ingestion connection. It is **not** a physical-action
@@ -130,9 +130,9 @@ Do not request actions in this mode. For full development isolation, start the
 compose test broker and point all MQTT traffic at it:
 
 ```dotenv
-TALOS_AWARENESS_MQTT_ENABLED=1
-TALOS_AWARENESS_MQTT_HOST=127.0.0.1
-TALOS_AWARENESS_MQTT_PORT=1885
+BUTLER_AWARENESS_MQTT_ENABLED=1
+BUTLER_AWARENESS_MQTT_HOST=127.0.0.1
+BUTLER_AWARENESS_MQTT_PORT=1885
 ```
 
 ```bash
@@ -153,8 +153,8 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 python3.12 -m venv .venv-awareness
 .venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
 
-.venv-awareness/bin/python -m talos.awareness migrate
-.venv-awareness/bin/python -m talos.awareness check
+.venv-awareness/bin/python -m butler.awareness migrate
+.venv-awareness/bin/python -m butler.awareness check
 ```
 
 Migrations are deliberately explicit. Starting the API never applies them for
@@ -167,19 +167,19 @@ Use separate terminals.
 Terminal 1, awareness backend:
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness serve
+.venv-awareness/bin/python -m butler.awareness serve
 ```
 
-Terminal 2, main TALOS app:
+Terminal 2, main Butler app:
 
 ```bash
-.venv-main/bin/python -m talos
+.venv-main/bin/python -m butler
 ```
 
 Terminal 3, optional local microphone worker:
 
 ```bash
-.venv-voice/bin/python -m talos.voice.worker
+.venv-voice/bin/python -m butler.voice.worker
 ```
 
 The awareness backend is usable without the voice worker. The main app is
@@ -213,9 +213,9 @@ The CLI health command uses these exit codes:
 | `2` | Unavailable |
 | `3` | Configuration error |
 
-## Use it through TALOS
+## Use it through Butler
 
-Once the awareness backend and main TALOS process are running, normal text or
+Once the awareness backend and main Butler process are running, normal text or
 voice requests use awareness automatically. You do not manually paste house
 state into prompts.
 
@@ -238,12 +238,12 @@ For a physical action:
 - "Water plant 1."
 - "Turn the fan on."
 
-An accepted action is not the same as a completed action. TALOS returns a
+An accepted action is not the same as a completed action. Butler returns a
 durable request ID and lifecycle state. It should use `get_action_status` to
 verify acknowledgement and completion. Never interpret `dispatched` or
 silence as physical success.
 
-## The tools TALOS gets
+## The tools Butler gets
 
 The built-in aggregate MCP server registers these awareness tools:
 
@@ -274,15 +274,15 @@ Tool selection rule:
 | "What do you remember about me?" | Long-term memory search |
 | "Why do you think that?" | Provenance and health |
 
-## How it plugs into TALOS
+## How it plugs into Butler
 
 There are four integration points.
 
 ### 1. Situation injection
 
-[`talos/router.py`](../../talos/router.py) calls
+[`butler/router.py`](../../butler/router.py) calls
 `awareness_client.snapshot_with_fallback(...)` for voice, text, and LLM event
-requests. [`talos/services/awareness_client.py`](../../talos/services/awareness_client.py)
+requests. [`butler/services/awareness_client.py`](../../butler/services/awareness_client.py)
 fetches `/situation`, caches it for five seconds, and gives the router a compact
 briefing.
 
@@ -291,20 +291,20 @@ The command still runs, but with reduced awareness. Disable situation injection
 explicitly with:
 
 ```dotenv
-TALOS_AWARENESS_SITUATION_ENABLED=0
+BUTLER_AWARENESS_SITUATION_ENABLED=0
 ```
 
 ### 2. MCP tools
 
-[`talos/mcp_servers/aggregate.py`](../../talos/mcp_servers/aggregate.py)
+[`butler/mcp_servers/aggregate.py`](../../butler/mcp_servers/aggregate.py)
 registers the awareness provider from
-[`talos/mcp_servers/providers/awareness.py`](../../talos/mcp_servers/providers/awareness.py).
+[`butler/mcp_servers/providers/awareness.py`](../../butler/mcp_servers/providers/awareness.py).
 Those tools make bounded HTTP calls through `awareness_client`; they do not
 give the model SQL, filesystem, or raw MQTT access.
 
 ### 3. Explicit memory facts
 
-[`talos/agent/runtime.py`](../../talos/agent/runtime.py) handles
+[`butler/agent/runtime.py`](../../butler/agent/runtime.py) handles
 `remember_memory_fact`. It writes the existing SQLite prompt-memory store, then
 posts a deterministic, user-evidenced copy to `/memory/deterministic`. A failed
 awareness sync is reported as `awareness_memory_synced: false`; it is not
@@ -312,7 +312,7 @@ silently called successful.
 
 ### 4. Physical actions
 
-[`talos/services/home_automation.py`](../../talos/services/home_automation.py)
+[`butler/services/home_automation.py`](../../butler/services/home_automation.py)
 routes `water_plants` and `toggle_fan` to `/actions/request`. The action service
 validates registry policy, parameters, actor, current-state safety rules,
 cooldown, confirmation, and idempotency before durable outbox dispatch.
@@ -320,13 +320,13 @@ cooldown, confirmation, and idempotency before durable outbox dispatch.
 ## Daily operator checklist
 
 1. Confirm Docker Desktop and `talos-awareness-db` are running.
-2. Run `.venv-awareness/bin/python -m talos.awareness check`.
+2. Run `.venv-awareness/bin/python -m butler.awareness check`.
 3. Inspect `/health/components` if the result is degraded.
 4. Confirm MQTT is connected if live devices are expected.
 5. Check outbox backlog and oldest pending age in `/metrics`.
 6. Check active alerts and stale/offline sources.
 7. Confirm the most recent backup age in `/metrics`.
-8. Start the awareness process before or alongside main TALOS.
+8. Start the awareness process before or alongside main Butler.
 
 Useful read-only calls:
 
@@ -357,8 +357,8 @@ These are explicit commands, not background magic.
 ### Back up
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness backup
-.venv-awareness/bin/python -m talos.awareness backup --verify
+.venv-awareness/bin/python -m butler.awareness backup
+.venv-awareness/bin/python -m butler.awareness backup --verify
 ```
 
 The second command restores into a scratch database and verifies the backup.
@@ -370,13 +370,13 @@ example cron entry is in [`.env.example`](../../.env.example).
 Always preview first:
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness retention
+.venv-awareness/bin/python -m butler.awareness retention
 ```
 
 Only after checking the cutoffs, eligible counts, and protections:
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness retention --execute
+.venv-awareness/bin/python -m butler.awareness retention --execute
 ```
 
 Retention is batched and resumable. It protects open alert evidence and active
@@ -385,7 +385,7 @@ memory provenance. Raw measurement deletion refreshes aggregates first.
 ### Consolidate memory
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness consolidate
+.venv-awareness/bin/python -m butler.awareness consolidate
 ```
 
 This summarizes repeated incidents with provenance links and decays old weak
@@ -396,8 +396,8 @@ model inferences. It does not decay user-confirmed memory.
 After pulling code that contains a migration:
 
 ```bash
-.venv-awareness/bin/python -m talos.awareness migrate
-.venv-awareness/bin/python -m talos.awareness check
+.venv-awareness/bin/python -m butler.awareness migrate
+.venv-awareness/bin/python -m butler.awareness check
 ```
 
 Never make startup auto-migrate. Never fix a revision mismatch by editing the
@@ -409,24 +409,24 @@ Start with one path through the system; do not read every file at once.
 
 | Path | Responsibility |
 |---|---|
-| [`talos/awareness/config.py`](../../talos/awareness/config.py) | Typed env configuration and sanitized summaries |
-| [`talos/awareness/schemas/events.py`](../../talos/awareness/schemas/events.py) | Strict canonical event envelope |
-| [`talos/awareness/registry/`](../../talos/awareness/registry/) | Known sources, entities, topic ownership, freshness policy |
-| [`talos/awareness/ingestion/`](../../talos/awareness/ingestion/) | MQTT connection, normalization, ordering, dedupe, dead letters, transaction orchestration |
-| [`talos/awareness/db/models.py`](../../talos/awareness/db/models.py) | SQLAlchemy source of the database model |
-| [`talos/awareness/db/migrations/`](../../talos/awareness/db/migrations/) | Explicit Alembic schema history |
-| [`talos/awareness/state/`](../../talos/awareness/state/) | Current state, authority, conflict, freshness, transitions |
-| [`talos/awareness/history/`](../../talos/awareness/history/) | Bounded event and telemetry queries |
-| [`talos/awareness/rules/`](../../talos/awareness/rules/) | Versioned deterministic policy and evaluation |
-| [`talos/awareness/alerts/`](../../talos/awareness/alerts/) | Incident lifecycle and attention records |
-| [`talos/awareness/outbox/`](../../talos/awareness/outbox/) | Crash-recoverable bounded background work |
-| [`talos/awareness/notifications/`](../../talos/awareness/notifications/) | GUI and log notification adapters |
-| [`talos/awareness/context/`](../../talos/awareness/context/) | Compact situation and provenance rendering |
-| [`talos/awareness/memory/`](../../talos/awareness/memory/) | Validated memory, relationships, search, embeddings, consolidation |
-| [`talos/awareness/actions/`](../../talos/awareness/actions/) | Registered actions and audited lifecycle |
-| [`talos/awareness/retention/`](../../talos/awareness/retention/) | Dry-run and protected batched deletion |
-| [`talos/awareness/api/`](../../talos/awareness/api/) | FastAPI lifecycle and narrow routes |
-| [`talos/awareness/__main__.py`](../../talos/awareness/__main__.py) | `serve`, `migrate`, `check`, `retention`, `consolidate`, and `backup` CLI |
+| [`butler/awareness/config.py`](../../butler/awareness/config.py) | Typed env configuration and sanitized summaries |
+| [`butler/awareness/schemas/events.py`](../../butler/awareness/schemas/events.py) | Strict canonical event envelope |
+| [`butler/awareness/registry/`](../../butler/awareness/registry/) | Known sources, entities, topic ownership, freshness policy |
+| [`butler/awareness/ingestion/`](../../butler/awareness/ingestion/) | MQTT connection, normalization, ordering, dedupe, dead letters, transaction orchestration |
+| [`butler/awareness/db/models.py`](../../butler/awareness/db/models.py) | SQLAlchemy source of the database model |
+| [`butler/awareness/db/migrations/`](../../butler/awareness/db/migrations/) | Explicit Alembic schema history |
+| [`butler/awareness/state/`](../../butler/awareness/state/) | Current state, authority, conflict, freshness, transitions |
+| [`butler/awareness/history/`](../../butler/awareness/history/) | Bounded event and telemetry queries |
+| [`butler/awareness/rules/`](../../butler/awareness/rules/) | Versioned deterministic policy and evaluation |
+| [`butler/awareness/alerts/`](../../butler/awareness/alerts/) | Incident lifecycle and attention records |
+| [`butler/awareness/outbox/`](../../butler/awareness/outbox/) | Crash-recoverable bounded background work |
+| [`butler/awareness/notifications/`](../../butler/awareness/notifications/) | GUI and log notification adapters |
+| [`butler/awareness/context/`](../../butler/awareness/context/) | Compact situation and provenance rendering |
+| [`butler/awareness/memory/`](../../butler/awareness/memory/) | Validated memory, relationships, search, embeddings, consolidation |
+| [`butler/awareness/actions/`](../../butler/awareness/actions/) | Registered actions and audited lifecycle |
+| [`butler/awareness/retention/`](../../butler/awareness/retention/) | Dry-run and protected batched deletion |
+| [`butler/awareness/api/`](../../butler/awareness/api/) | FastAPI lifecycle and narrow routes |
+| [`butler/awareness/__main__.py`](../../butler/awareness/__main__.py) | `serve`, `migrate`, `check`, `retention`, `consolidate`, and `backup` CLI |
 
 ### Best first code-reading walk
 
@@ -442,8 +442,8 @@ For an event:
 
 For a user question:
 
-1. `talos/router.py`
-2. `talos/services/awareness_client.py`
+1. `butler/router.py`
+2. `butler/services/awareness_client.py`
 3. `api/routes/context.py` or `api/routes/reads.py`
 4. `context/broker.py` or `history/queries.py`
 
@@ -453,7 +453,7 @@ For memory:
 2. `memory/service.py`
 3. `memory/embeddings.py`
 4. `outbox/worker.py`
-5. `talos/mcp_servers/providers/awareness.py`
+5. `butler/mcp_servers/providers/awareness.py`
 
 For a physical action:
 
@@ -523,7 +523,7 @@ Do not accept a topic merely because it arrived on the broker.
 
 ### Add or change an alert rule
 
-1. Edit `talos/awareness/rules/rules.toml`.
+1. Edit `butler/awareness/rules/rules.toml`.
 2. Keep it deterministic and typed.
 3. Add tests for match, non-match, dedupe, resolution, cooldown, and critical
    behavior.
@@ -607,7 +607,7 @@ Simulator suite:
 ```bash
 docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 
-.venv-awareness/bin/python -m talos.awareness.simulator \
+.venv-awareness/bin/python -m butler.awareness.simulator \
   --host 127.0.0.1 --port 1885 --scenario suite
 ```
 
@@ -617,9 +617,9 @@ The simulator defaults above target the test broker, not the Raspberry Pi.
 
 | Symptom | First checks |
 |---|---|
-| Configuration error | Read the named `TALOS_AWARENESS_*` variables in the error; settings come from env or `.env` |
+| Configuration error | Read the named `BUTLER_AWARENESS_*` variables in the error; settings come from env or `.env` |
 | Database unavailable | Docker Desktop, `docker compose ... ps`, password/port, then migrations |
-| Migration mismatch | Run `python -m talos.awareness migrate`, then `check`; never auto-migrate in startup |
+| Migration mismatch | Run `python -m butler.awareness migrate`, then `check`; never auto-migrate in startup |
 | MQTT disconnected | `/health/components` ingestion state, broker address, reachability, auth/TLS, `last_error` |
 | Events missing | Dead-letter reason and ingestion counters; verify source registration and allowed topics |
 | State is stale/offline | Source receipt time, freshness thresholds, device/broker connectivity |
@@ -627,7 +627,7 @@ The simulator defaults above target the test broker, not the Raspberry Pi.
 | Alert repeats | Check one incident's `occurrence_count` and evidence; dedupe is expected |
 | GUI notification missing | Text server at `:8420`, notify token, delivery records, then log fallback |
 | Memory keyword search works but semantic ranking does not | Ollama/model availability and embedding outbox backlog; full-text search should still work |
-| Physical action route returns `503` | Set the same 16+ character `TALOS_AWARENESS_API_TOKEN` for backend and main TALOS, then restart both |
+| Physical action route returns `503` | Set the same 16+ character `BUTLER_AWARENESS_API_TOKEN` for backend and main Butler, then restart both |
 | Action is stuck or failed | Inspect `GET /actions/{id}` transitions, outbox health, MQTT, timeout, and acknowledgement evidence |
 | Disk/backups look bad | `/metrics`, data directory, last backup age, backup logs, and a `backup --verify` run |
 
@@ -658,7 +658,7 @@ The simulator defaults above target the test broker, not the Raspberry Pi.
 - [ ] Run migrations and `check`.
 - [ ] Start the awareness API and inspect health, metrics, capabilities, and
       situation.
-- [ ] Start main TALOS and ask one current-state question and one health
+- [ ] Start main Butler and ask one current-state question and one health
       question.
 - [ ] Run the unit tests.
 - [ ] Start the test broker and run the simulator suite.

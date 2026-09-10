@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent.prompting import PromptAssembler, PromptContext
+from butler.agent.prompting import PromptAssembler, PromptContext
 
 
 class PromptAssemblerTests(unittest.TestCase):

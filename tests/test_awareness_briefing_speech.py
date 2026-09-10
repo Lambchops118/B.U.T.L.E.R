@@ -1,12 +1,12 @@
 """Speech stays concise even for diagnostic records queued before the fix."""
 import unittest
 
-from talos.awareness.briefing.speech import candidate_text, novelty_text, render_batch, transition_text
+from butler.awareness.briefing.speech import candidate_text, novelty_text, render_batch, transition_text
 
 
 class BriefingSpeechTest(unittest.TestCase):
     def test_legacy_job_is_not_read_as_diagnostics(self):
-        candidate = {"category": "agent_outcome", "text": 'EVENT talos: agent.job.completed [info] (recorded 2026-09-06; source=talos_agent) {"log": "secret"}'}
+        candidate = {"category": "agent_outcome", "text": 'EVENT butler: agent.job.completed [info] (recorded 2026-09-06; source=talos_agent) {"log": "secret"}'}
         self.assertEqual(render_batch([candidate, candidate], kind="arrival"),
                          "Welcome back. A background job completed earlier.")
 

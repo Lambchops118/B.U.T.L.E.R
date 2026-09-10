@@ -4,7 +4,7 @@ This documentation divides the robust distributed presence, awareness, event-pro
 
 New operator or intern? Start with
 [`like_im_a_child_or_golden_retriever.md`](like_im_a_child_or_golden_retriever.md)
-for the plain-language mental model, copy/paste startup path, TALOS integration
+for the plain-language mental model, copy/paste startup path, Butler integration
 map, maintenance checklist, code-reading route, and troubleshooting guide.
 
 > **Do not load everything.** A normal session should load only root `AGENTS.md`, `IMPLEMENTATION_STATUS.md`, the current phase document, and the few shared references named by that phase.
@@ -23,7 +23,7 @@ The [original specification](../ROBUST_HOME_AUTOMATION_MEMORY_IMPLEMENTATION_PRO
   production acceptance pending. See the
   [`Phase 9 handoff`](SESSION_LOG.md#session-handoff-2026-09-06-phase-09-complete).
 - [`prompts/`](prompts/) contains concise launcher prompts, not duplicate specifications.
-- [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md), [`DECISIONS.md`](DECISIONS.md), [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md), and [`SESSION_HANDOFF_TEMPLATE.md`](SESSION_HANDOFF_TEMPLATE.md) support fresh-session handoff.
+- [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md), [`DECISIONS.md`](DECISIONS.md), [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md), [`SESSION_LOG.md`](SESSION_LOG.md), and [`SESSION_HANDOFF_TEMPLATE.md`](SESSION_HANDOFF_TEMPLATE.md) support fresh-session handoff.
 
 ## Starting or resuming work
 

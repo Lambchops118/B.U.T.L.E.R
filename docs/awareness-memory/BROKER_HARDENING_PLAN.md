@@ -6,7 +6,7 @@ verifiable from the off-LAN dev machine). Phase 8 delivers this plan instead
 of live changes: every step below touches the Pi or devices on the LAN and
 therefore requires owner execution. The awareness backend is already
 prepared — username/password and TLS (CA + mutual) are configuration-only
-(`TALOS_AWARENESS_MQTT_USERNAME/_PASSWORD/_TLS/_CA_PATH/...`).
+(`BUTLER_AWARENESS_MQTT_USERNAME/_PASSWORD/_TLS/_CA_PATH/...`).
 
 ## Current risk
 
@@ -22,10 +22,10 @@ prepared — username/password and TLS (CA + mutual) are configuration-only
    `cat /etc/mosquitto/mosquitto.conf /etc/mosquitto/conf.d/*` — confirm
    `allow_anonymous` state and listeners. Record findings in OPEN_QUESTIONS.
 2. **Create credentials** (per client identity, not shared):
-   `mosquitto_passwd -c /etc/mosquitto/passwd talos-awareness` then `-b` for
-   `talos-scheduler`, `fan-pico`, `pump-pico`, `pi-display`.
+   `mosquitto_passwd -c /etc/mosquitto/passwd butler-awareness` then `-b` for
+   `butler-scheduler`, `fan-pico`, `pump-pico`, `pi-display`.
 3. **Add an ACL file** (`/etc/mosquitto/acl`):
-   - `talos-awareness`: read `status/#`, `home/#`; write `quad_pump/#`,
+   - `butler-awareness`: read `status/#`, `home/#`; write `quad_pump/#`,
      `fan/#`, `home/#` (action dispatch).
    - `fan-pico`: write `status/16`; read `fan/16`.
    - `pump-pico`: write `status/17`, `status/18`, `status/19`; read `quad_pump/#`.

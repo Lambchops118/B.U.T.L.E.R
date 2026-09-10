@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from talos.voice.streaming.vad import (
+from butler.voice.streaming.vad import (
     BargeInVadGate,
     VadGateConfig,
     select_vad_lane,

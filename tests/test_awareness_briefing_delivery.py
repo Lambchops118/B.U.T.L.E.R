@@ -9,16 +9,16 @@ from unittest.mock import AsyncMock, patch
 try:
     import sqlalchemy as sa
     from tests import test_awareness_state_integration as fixture
-    from talos.awareness.briefing.feedback import BriefingFeedback, record_feedback
-    from talos.awareness.briefing.service import BriefingStore
-    from talos.awareness.briefing.worker import BriefingHandler
-    from talos.awareness.context.briefing import BriefingAssembler
-    from talos.awareness.context.broker import SituationBroker
-    from talos.awareness.db.models import Alert, AttentionItem, Event, Memory, NotificationDelivery, OutboxItem, StateTransition
-    from talos.awareness.db.session import build_engine
-    from talos.awareness.notifications.base import DeliveryResult
-    from talos.awareness.outbox.worker import OutboxWorker
-    from talos.awareness.registry.bootstrap import seed_registry
+    from butler.awareness.briefing.feedback import BriefingFeedback, record_feedback
+    from butler.awareness.briefing.service import BriefingStore
+    from butler.awareness.briefing.worker import BriefingHandler
+    from butler.awareness.context.briefing import BriefingAssembler
+    from butler.awareness.context.broker import SituationBroker
+    from butler.awareness.db.models import Alert, AttentionItem, Event, Memory, NotificationDelivery, OutboxItem, StateTransition
+    from butler.awareness.db.session import build_engine
+    from butler.awareness.notifications.base import DeliveryResult
+    from butler.awareness.outbox.worker import OutboxWorker
+    from butler.awareness.registry.bootstrap import seed_registry
 except ImportError as exc:
     raise unittest.SkipTest(f"awareness dependencies unavailable: {exc}")
 
@@ -256,7 +256,7 @@ class BriefingDeliveryTest(unittest.TestCase):
                 adapter = AsyncMock(); adapter.send.return_value = DeliveryResult(True)
                 context = {"text": "Good morning. It is 8:00 AM. Clear and 60 degrees. No reminders today.",
                            "audit": {"version": "morning-context-v1"}}
-                with patch("talos.awareness.briefing.worker.build_morning_context",
+                with patch("butler.awareness.briefing.worker.build_morning_context",
                            new=AsyncMock(return_value=context)):
                     await BriefingHandler(engine, settings, {"voice": adapter})(
                         {"key": "briefing:morning:test"})
@@ -273,8 +273,8 @@ class BriefingDeliveryTest(unittest.TestCase):
             from fastapi import FastAPI
             from pydantic import SecretStr
             import httpx
-            from talos.awareness.api.routes.briefing import router
-            from talos.awareness.api.app import create_app
+            from butler.awareness.api.routes.briefing import router
+            from butler.awareness.api.app import create_app
             engine, settings, store = await self.setup_flow()
             try:
                 settings = settings.model_copy(update={"api_token": SecretStr("test-briefing-token")})

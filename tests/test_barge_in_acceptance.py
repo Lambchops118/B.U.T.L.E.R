@@ -1,6 +1,6 @@
 import unittest
 
-from talos.voice.diagnostics.barge_in_acceptance import (
+from butler.voice.diagnostics.barge_in_acceptance import (
     AcceptanceCaseResult,
     summarize_results,
 )

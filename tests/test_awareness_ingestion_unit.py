@@ -7,14 +7,14 @@ import unittest
 from datetime import datetime, timezone
 
 try:
-    from talos.awareness.ingestion.mqtt_client import backoff_delay
+    from butler.awareness.ingestion.mqtt_client import backoff_delay
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
-from talos.awareness.ingestion.normalization import NormalizationError, normalize
-from talos.awareness.ingestion.pipeline import IngestionMetrics
-from talos.awareness.ingestion.sequence import assess_sequence
-from talos.awareness.registry.sources import SourceRecord, topic_matches
+from butler.awareness.ingestion.normalization import NormalizationError, normalize
+from butler.awareness.ingestion.pipeline import IngestionMetrics
+from butler.awareness.ingestion.sequence import assess_sequence
+from butler.awareness.registry.sources import SourceRecord, topic_matches
 
 RECEIVED_AT = datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -218,9 +218,9 @@ class PipelineNeverRaisesTest(unittest.TestCase):
         import asyncio
         import logging
 
-        from talos.awareness.config import AwarenessSettings
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.registry.sources import SourceRepository
+        from butler.awareness.config import AwarenessSettings
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.registry.sources import SourceRepository
 
         settings = AwarenessSettings(_env_file=None, db_password="unit-test")
         engine = _BrokenEngine()

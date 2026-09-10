@@ -19,7 +19,7 @@ import unittest
 import uuid
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -53,7 +53,7 @@ class ContextIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
         asyncio.run(self._populate())
@@ -93,13 +93,13 @@ class ContextIntegrationTest(unittest.TestCase):
 
     async def _populate(self) -> None:
         """Ingest telemetry + a critical overflow through the real pipeline."""
-        from talos.awareness.alerts.service import AlertService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.registry.sources import SourceRepository
-        from talos.awareness.rules.engine import RuleEngine
-        from talos.awareness.rules.policy import load_policy
+        from butler.awareness.alerts.service import AlertService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.registry.sources import SourceRepository
+        from butler.awareness.rules.engine import RuleEngine
+        from butler.awareness.rules.policy import load_policy
 
         engine = build_engine(self.settings)
         try:
@@ -139,7 +139,7 @@ class ContextIntegrationTest(unittest.TestCase):
     def test_situation_provenance_capabilities(self) -> None:
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:

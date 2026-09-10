@@ -1,30 +1,32 @@
-# PostgreSQL (TimescaleDB + pgvector) for the TALOS awareness subsystem.
+# PostgreSQL (TimescaleDB + pgvector) for the Butler awareness subsystem.
 #
 #   docker compose -f docker-compose.awareness.yml up -d
 #
 # Credentials come from the repo .env (docker compose loads it automatically):
-#   TALOS_AWARENESS_DB_PASSWORD is required; the rest have defaults matching
-#   talos/awareness/config.py. The port binds to loopback only — the awareness
+#   BUTLER_AWARENESS_DB_PASSWORD is required; the rest have defaults matching
+#   butler/awareness/config.py. The port binds to loopback only — the awareness
 #   backend runs on this same machine (owner decision, DISCOVERY.md §14).
 
 services:
   awareness-db:
     image: timescale/timescaledb-ha:pg17
+    # The container, volume, database, and role keep their talos_* names: they
+    # are live Postgres objects and renaming them would orphan the data volume.
     container_name: talos-awareness-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${TALOS_AWARENESS_DB_NAME:-talos_awareness}
-      POSTGRES_USER: ${TALOS_AWARENESS_DB_USER:-talos}
-      POSTGRES_PASSWORD: ${TALOS_AWARENESS_DB_PASSWORD:?set TALOS_AWARENESS_DB_PASSWORD in .env}
+      POSTGRES_DB: ${BUTLER_AWARENESS_DB_NAME:-talos_awareness}
+      POSTGRES_USER: ${BUTLER_AWARENESS_DB_USER:-talos}
+      POSTGRES_PASSWORD: ${BUTLER_AWARENESS_DB_PASSWORD:?set BUTLER_AWARENESS_DB_PASSWORD in .env}
     ports:
-      - "127.0.0.1:${TALOS_AWARENESS_DB_PORT:-5433}:5432"
+      - "127.0.0.1:${BUTLER_AWARENESS_DB_PORT:-5433}:5432"
     volumes:
       - awareness-db-data:/home/postgres/pgdata
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${TALOS_AWARENESS_DB_USER:-talos} -d ${TALOS_AWARENESS_DB_NAME:-talos_awareness}",
+          "pg_isready -U ${BUTLER_AWARENESS_DB_USER:-talos} -d ${BUTLER_AWARENESS_DB_NAME:-talos_awareness}",
         ]
       interval: 5s
       timeout: 3s

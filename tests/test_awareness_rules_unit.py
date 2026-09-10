@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from talos.awareness.rules.policy import (
+    from butler.awareness.rules.policy import (
         PolicyError,
         RulePolicy,
         load_policy,
@@ -16,8 +16,8 @@ try:
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
-from talos.awareness.alerts.service import parse_quiet_hours, quiet_hours_deferral
-from talos.awareness.notifications.handler import render_fallback
+from butler.awareness.alerts.service import parse_quiet_hours, quiet_hours_deferral
+from butler.awareness.notifications.handler import render_fallback
 
 
 class PolicyLoadTest(unittest.TestCase):
@@ -68,7 +68,7 @@ class RuleMatchTest(unittest.TestCase):
         )
 
     def test_glob_and_severity_matching(self) -> None:
-        from talos.awareness.rules.policy import Match
+        from butler.awareness.rules.policy import Match
 
         match = Match(event_type="sim.telemetry.*", min_severity="warning")
         self.assertTrue(match.matches("sim.telemetry.temperature", "critical", {}))
@@ -76,7 +76,7 @@ class RuleMatchTest(unittest.TestCase):
         self.assertFalse(match.matches("sim.state.reported", "critical", {}))
 
     def test_numeric_conditions(self) -> None:
-        from talos.awareness.rules.policy import Condition
+        from butler.awareness.rules.policy import Condition
 
         self.assertTrue(Condition(field="v", op="gt", value=5).evaluate({"v": 6}))
         self.assertFalse(Condition(field="v", op="gt", value=5).evaluate({"v": 5}))

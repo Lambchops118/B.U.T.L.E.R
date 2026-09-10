@@ -53,12 +53,12 @@ def static_drawings(screen, screen_width, screen_height, circle_time):
     # A helper to quickly draw scaled text
     def draw_text(text, x, y, color, size=30):
         # Create a font scaled to the user’s resolution
-        font_scaled = pygame.font.Font(r"C:\Users\Liam\Desktop\Talos\Talos\InfoPanel\VT323-Regular.ttf", int(size * ((scale_x + scale_y) / 2)))
+        font_scaled = pygame.font.Font(r"C:\Users\Liam\Desktop\Talos\Butler\InfoPanel\VT323-Regular.ttf", int(size * ((scale_x + scale_y) / 2)))
         surface = font_scaled.render(str(text), True, color)
         screen.blit(surface, (int(x * scale_x), int(y * scale_y)))
 
     def draw_text_centered(text, x, y, color, size=30):
-        font_scaled = pygame.font.Font(r"C:\Users\Liam\Desktop\Talos\Talos\InfoPanel\VT323-Regular.ttf", 
+        font_scaled = pygame.font.Font(r"C:\Users\Liam\Desktop\Talos\Butler\InfoPanel\VT323-Regular.ttf", 
                                     int(size * ((scale_x + scale_y) / 2)))
         surface = font_scaled.render(str(text), True, color)
         text_width = surface.get_width()

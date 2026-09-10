@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import runtime as agent_runtime
+from butler.agent import runtime as agent_runtime
 
 
 class _RecordingBackend:
@@ -240,7 +240,7 @@ class StreamBackendCacheTest(unittest.TestCase):
             return backend
 
         with mock.patch(
-            "talos.voice.backends.factory.get_llm_backend", side_effect=factory
+            "butler.voice.backends.factory.get_llm_backend", side_effect=factory
         ):
             first = agent_runtime._get_stream_backend()
             second = agent_runtime._get_stream_backend()
@@ -266,7 +266,7 @@ class StreamBackendCacheTest(unittest.TestCase):
             seen.append(agent_runtime._get_stream_backend())
 
         with mock.patch(
-            "talos.voice.backends.factory.get_llm_backend", side_effect=factory
+            "butler.voice.backends.factory.get_llm_backend", side_effect=factory
         ):
             threads = [threading.Thread(target=worker) for _ in range(8)]
             for thread in threads:

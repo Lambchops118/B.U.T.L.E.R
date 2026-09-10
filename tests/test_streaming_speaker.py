@@ -9,8 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.voice.streaming.speaker import StreamingSpeaker
-from talos.voice.streaming.sentence_chunker import SentenceChunker
+from butler.voice.streaming.speaker import StreamingSpeaker
+from butler.voice.streaming.sentence_chunker import SentenceChunker
 
 
 class StreamingSpeakerTests(unittest.TestCase):
