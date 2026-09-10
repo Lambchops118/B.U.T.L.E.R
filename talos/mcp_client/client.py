@@ -1469,8 +1469,8 @@ def _strip_schema_annotations(node: Any) -> Any:
     on them -- but they are re-sent with every tool on every round.
 
     The walk is schema-aware on purpose: a tool may legitimately declare a
-    parameter *named* ``title`` (``kitchen_screen_set_recipe_header`` does), and
-    a blind key-delete would silently remove that parameter from the surface.
+    parameter *named* ``title``, and a blind key-delete would silently remove
+    that parameter from the surface.
     """
     if isinstance(node, list):
         return [_strip_schema_annotations(item) for item in node]

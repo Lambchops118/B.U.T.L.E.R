@@ -21,7 +21,7 @@ The [original specification](../ROBUST_HOME_AUTOMATION_MEMORY_IMPLEMENTATION_PRO
   implemented; [`phases/PHASE_09_PROACTIVE_BRIEFING.md`](phases/PHASE_09_PROACTIVE_BRIEFING.md)
   is implemented through all four sub-phases (9A-9D), with opt-in rollout and
   production acceptance pending. See the
-  [`Phase 9 handoff`](SESSION_HANDOFF_2026-09-06_PHASE_09_COMPLETE.md).
+  [`Phase 9 handoff`](SESSION_LOG.md#session-handoff-2026-09-06-phase-09-complete).
 - [`prompts/`](prompts/) contains concise launcher prompts, not duplicate specifications.
 - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md), [`DECISIONS.md`](DECISIONS.md), [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md), and [`SESSION_HANDOFF_TEMPLATE.md`](SESSION_HANDOFF_TEMPLATE.md) support fresh-session handoff.
 

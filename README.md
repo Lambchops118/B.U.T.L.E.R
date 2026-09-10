@@ -189,13 +189,12 @@ to which processes run:
 - **Tool surface.** *Send tools to the model* is the master switch; unticking it
   sets `TALOS_DISABLE_ALL_TOOLS=1`, which starts no MCP server and sends no tool
   schema at all (the OpenAI-compatible backend omits the `tools` key entirely),
-  leaving a bare prompt — useful for timing the model on its own. Below it,
-  kitchen-tool scoping and the reduced KiCad surface can each be turned off to
-  expose those groups in full.
+  leaving a bare prompt — useful for timing the model on its own. Below it, the
+  reduced KiCad surface can be turned off to expose that group in full.
 - **MCP servers & tools.** One box per MCP server — the built-in `talos-local`,
   the optional filesystem, KiCad, and Minecraft helpers, and anything listed in
   `TALOS_MCP_SERVERS` — with the `talos-local` provider groups (home automation,
-  kitchen recipe screen, awareness) indented beneath it. Unticked entries never
+  awareness) indented beneath it. Unticked entries never
   start, so their tools are absent for the whole run. Helpers that are not
   configured in `settings.env` appear greyed out with the variable they need.
 - **Injected context.** Remembered facts (the memory block), the authoritative
@@ -337,8 +336,6 @@ If two servers expose the same tool name, you must set a `tool_prefix` on at lea
 
 Tool implementations are registered in provider modules under `talos/mcp_servers/providers/`. The existing home automation tools are defined in `talos/mcp_servers/providers/home_automation.py` with `@server.tool()` decorators, and their actual device logic lives in `talos/services/home_automation.py`.
 
-The built-in local aggregate MCP server now also includes a kitchen recipe screen domain. Those tools live in `talos/mcp_servers/providers/kitchen_recipe_screen.py` and talk to the browser kiosk over HTTP through `talos/services/kitchen_recipe_screen.py`.
-
 The home automation provider also exposes:
 
 - `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `TALOS_TIMEZONE` in `settings.env` to force an IANA timezone such as `America/New_York`; otherwise TALOS falls back to the host machine's local timezone.
@@ -348,7 +345,6 @@ Server assembly is separate from tool definition:
 
 - `talos/mcp_servers/aggregate.py` defines the tool surface used by the local agent runtime.
 - `talos/mcp_servers/home_automation_server.py` and `talos/mcp_servers/tv_control_server.py` expose standalone servers for specific domains.
-- `talos/mcp_servers/kitchen_recipe_screen_server.py` exposes the kitchen recipe screen tool domain as its own MCP server.
 - `talos/mcp_http_app.py` mounts those domain servers over HTTP.
 
 Example `TALOS_MCP_SERVERS` value:
@@ -474,12 +470,6 @@ def set_thermostat(target_f: int) -> str:
     """Set the thermostat to the requested Fahrenheit temperature."""
     return actions.set_thermostat(target_f)
 ```
-
-Kitchen recipe screen configuration:
-
-- `KITCHEN_RECIPE_SCREEN_URL` points TALOS at the browser kiosk server, defaulting to `http://127.0.0.1:8765`.
-- `KITCHEN_RECIPE_SCREEN_TIMEOUT` controls the per-request timeout in seconds, default `10`.
-- The kitchen screen tools can read/write recipe title, servings, ingredients, steps, notes, timer state, and the top-row link indicator.
 
 To add a new MCP tool domain:
 

@@ -323,14 +323,8 @@ class LauncherGUI:
             justify="left",
         ).pack(anchor="w", padx=(16, 0))
 
-        self.var_scope_tools = tk.BooleanVar(value=True)
         self.var_reduce_kicad = tk.BooleanVar(value=True)
         self._tool_dependent: list[ttk.Widget] = [
-            ttk.Checkbutton(
-                surface,
-                text="Scope kitchen tools to cooking requests",
-                variable=self.var_scope_tools,
-            ),
             ttk.Checkbutton(
                 surface,
                 text="Reduce KiCad tool surface (35 of ~100 tools)",
@@ -399,7 +393,6 @@ class LauncherGUI:
     def _prompt_context_settings(self) -> list[tuple[tk.BooleanVar, str, bool, bool]]:
         return [
             (self.var_tools_enabled, "TALOS_DISABLE_ALL_TOOLS", False, True),
-            (self.var_scope_tools, "TALOS_SCOPE_TOOL_SURFACE", True, False),
             (self.var_reduce_kicad, "TALOS_REDUCE_KICAD_TOOL_SURFACE", True, False),
             (self.var_memory, "TALOS_MEMORY_ENABLED", True, False),
             (self.var_inject_time, "TALOS_INJECT_CURRENT_TIME", True, False),

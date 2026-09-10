@@ -8,7 +8,6 @@ from .base import create_server, register_all
 from .providers import (
     register_awareness_tools,
     register_home_automation_tools,
-    register_kitchen_recipe_screen_tools,
     register_sleep_mode_tools,
 )
 
@@ -17,7 +16,6 @@ from .providers import (
 # launcher (and TALOS_MCP_DISABLED_PROVIDERS) uses to switch them off.
 PROVIDERS: tuple[tuple[str, object], ...] = (
     ("home_automation", register_home_automation_tools),
-    ("kitchen_recipe_screen", register_kitchen_recipe_screen_tools),
     ("awareness", register_awareness_tools),
     ("sleep_mode", register_sleep_mode_tools),
 )

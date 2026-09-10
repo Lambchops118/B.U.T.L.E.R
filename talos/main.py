@@ -3,7 +3,6 @@ from __future__ import annotations
 import queue
 import threading
 
-from InfoPanel import kitchen_screen
 from InfoPanel import screen as info_panel_screen
 
 from talos import router
@@ -49,8 +48,6 @@ def main() -> int:
     try:
         if DISPLAY_MODE == "info_panel":
             info_panel_screen.run_info_panel_gui(gui_queue, DISPLAY_SCALE)
-        elif DISPLAY_MODE == "kitchen":
-            kitchen_screen.screen_main()
     finally:
         central_queue.put(None)
         router_thread.join(timeout=2)

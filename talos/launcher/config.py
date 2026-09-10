@@ -347,18 +347,13 @@ def mcp_catalog() -> list[McpEntry]:
             key="talos-local",
             label="talos-local (built-in tool server)",
             kind="server",
-            detail="home automation, kitchen screen, awareness",
+            detail="home automation, awareness",
         ),
         McpEntry(
             key="home_automation",
             label="Home automation tools",
             kind="provider",
             detail="lights, switches, scenes",
-        ),
-        McpEntry(
-            key="kitchen_recipe_screen",
-            label="Kitchen recipe screen tools",
-            kind="provider",
         ),
         McpEntry(
             key="awareness",

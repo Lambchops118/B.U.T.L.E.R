@@ -313,61 +313,12 @@ KICAD_SCHEMATIC_TO_BOARD_TERMS = {
     "route",
     "routing",
 }
-# The kitchen recipe screen registers ~27 tools. They dominate the tool list and
-# only matter when the user is actually cooking, so they are scoped out unless
-# the request shows cooking/recipe intent. Everyday groups (home automation, TV,
-# awareness) stay always-on so natural inference like "it's hot in here" still
-# reaches the right tool. Terms are deliberately broad enough to keep multi-turn
-# cooking flows ("add flour to the list", "start the timer") working.
-KITCHEN_TOOL_PREFIX = "kitchen_screen_"
-KITCHEN_RELEVANT_TERMS = {
-    "recipe",
-    "recipes",
-    "cook",
-    "cooking",
-    "cooked",
-    "bake",
-    "baking",
-    "baked",
-    "roast",
-    "grill",
-    "fry",
-    "boil",
-    "simmer",
-    "preheat",
-    "oven",
-    "stove",
-    "ingredient",
-    "ingredients",
-    "meal",
-    "dish",
-    "food",
-    "breakfast",
-    "lunch",
-    "dinner",
-    "servings",
-    "serving",
-    "timer",
-    "step",
-    "steps",
-    "note",
-    "notes",
-    "screen",
-}
-KITCHEN_HINT_PHRASES = (
-    "recipe screen",
-    "kitchen screen",
-    "on the list",
-    "to the list",
-)
-
-# Tool groups whose presence varies between turns: kitchen is scoped by intent,
-# KiCad appears only once its provider is ready, Minecraft only when a server
-# directory is configured, and phone is a gating candidate. They are published
-# after every always-on tool so their coming and going costs the model server
-# only the tail of its cached prefix. See :func:`_order_tools_by_volatility`.
+# Tool groups whose presence varies between turns: KiCad appears only once its
+# provider is ready, Minecraft only when a server directory is configured, and
+# phone is a gating candidate. They are published after every always-on tool so
+# their coming and going costs the model server only the tail of its cached
+# prefix. See :func:`_order_tools_by_volatility`.
 _VOLATILE_TOOL_PREFIXES = (
-    KITCHEN_TOOL_PREFIX,
     KICAD_TOOL_PREFIX,
     MINECRAFT_TOOL_PREFIX,
     MINECRAFT_FILESYSTEM_TOOL_PREFIX,
@@ -643,7 +594,7 @@ def _order_tools_by_volatility(
 
 
 def _build_tool_definitions(
-    mcp_client: Any, command: str | None = None
+    mcp_client: Any
 ) -> list[dict[str, Any]]:
     if TOOLS_DISABLED:
         # Debug switch for timing the model alone. The OpenAI-compatible backend
@@ -656,10 +607,6 @@ def _build_tool_definitions(
     reduce_kicad = os.getenv("TALOS_REDUCE_KICAD_TOOL_SURFACE", "1").strip().lower()
     if reduce_kicad not in {"0", "false", "no", "off"}:
         tool_defs = _reduce_tool_surface(tool_defs)
-
-    scope_tools = os.getenv("TALOS_SCOPE_TOOL_SURFACE", "1").strip().lower()
-    if command is not None and scope_tools not in {"0", "false", "no", "off"}:
-        tool_defs = _scope_specialized_tools(tool_defs, command)
 
     tool_defs = _order_tools_by_volatility(tool_defs)
 
@@ -1305,41 +1252,6 @@ def _is_phone_request(command: str, tool_defs: list[dict[str, Any]]) -> bool:
     if not any(str(tool.get("name") or "") == "place_phone_call" for tool in tool_defs):
         return False
     return bool(_tokenize_lowered(command) & PHONE_RELEVANT_TERMS)
-
-
-def _has_kitchen_tools(tool_defs: list[dict[str, Any]]) -> bool:
-    return any(str(tool.get("name") or "").startswith(KITCHEN_TOOL_PREFIX) for tool in tool_defs)
-
-
-def _is_kitchen_request(command: str, tool_defs: list[dict[str, Any]]) -> bool:
-    lowered = command.lower()
-    if KITCHEN_TOOL_PREFIX in lowered or "kitchen" in lowered:
-        return True
-    if not _has_kitchen_tools(tool_defs):
-        return False
-    if any(phrase in lowered for phrase in KITCHEN_HINT_PHRASES):
-        return True
-    return bool(_tokenize_lowered(command) & KITCHEN_RELEVANT_TERMS)
-
-
-def _scope_specialized_tools(
-    tool_defs: list[dict[str, Any]], command: str
-) -> list[dict[str, Any]]:
-    """Drop large, single-purpose tool groups when the request shows no intent
-    for them, so a smaller model is not swamped by irrelevant tools. Only the
-    kitchen recipe screen is scoped today; everyday tool groups stay available so
-    inferential requests still reach them."""
-    if _is_kitchen_request(command, tool_defs):
-        return tool_defs
-    scoped = [
-        tool
-        for tool in tool_defs
-        if not str(tool.get("name") or "").startswith(KITCHEN_TOOL_PREFIX)
-    ]
-    dropped = len(tool_defs) - len(scoped)
-    if dropped:
-        print(f"Scoped tool surface: dropped {dropped} kitchen tools (no cooking intent).")
-    return scoped
 
 
 def _format_kicad_backend_context(raw_output: str, command: str) -> str | None:
@@ -2067,7 +1979,7 @@ def run_command(
         benchmark.set_command(command)
 
     mcp_client = get_local_mcp_client()
-    tool_defs = _build_tool_definitions(mcp_client, command)
+    tool_defs = _build_tool_definitions(mcp_client)
     mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
     memory_store = _get_memory_store()
     if memory_store is not None:
@@ -2361,7 +2273,7 @@ def warm_agent_runtime() -> None:
         started = time.perf_counter()
         mcp_client = get_local_mcp_client()
         tool_build_started = time.perf_counter()
-        tool_defs = _build_tool_definitions(mcp_client, command)
+        tool_defs = _build_tool_definitions(mcp_client)
         tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
 
         prompt_sections = _build_prompt_sections(
@@ -2609,7 +2521,7 @@ def run_command_stream(
     with _get_conversation_lock(thread_key), _turn_in_flight():
         tool_build_started = time.perf_counter()
         mcp_client = get_local_mcp_client()
-        tool_defs = _build_tool_definitions(mcp_client, command)
+        tool_defs = _build_tool_definitions(mcp_client)
         tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
         mode = _normalize_interaction_mode(
             interaction_mode or _infer_interaction_mode(session_id)

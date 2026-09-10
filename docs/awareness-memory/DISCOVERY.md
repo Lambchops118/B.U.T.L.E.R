@@ -15,7 +15,7 @@
 | `talos/` | Main agent package: router, agent runtime, LLM integration, text HTTP server, voice worker, scheduler, services, MCP client + MCP servers, phone stack, durable memory |
 | `talos/agent/` | Agent runtime (`runtime.py`, 1758 lines), prompt assembly (`prompting.py`), personality docs loader |
 | `talos/voice/` | Voice worker pipeline; `backends/` holds the pluggable LLM/STT backend seam (OpenAI-compatible Chat Completions, faster-whisper); `streaming/` holds sentence chunker + streaming speaker |
-| `talos/services/` | Device/data actions: `home_automation.py` (MQTT publish + weather), `tv_control.py`, `kitchen_recipe_screen.py`, `morning_info.py` |
+| `talos/services/` | Device/data actions: `home_automation.py` (MQTT publish + weather), `tv_control.py`, `display_power.py`, `sleep_mode.py` |
 | `talos/mcp_servers/` | FastMCP tool providers (`providers/`), aggregate server, per-domain servers, Starlette HTTP mount (`talos/mcp_http_app.py`) |
 | `talos/mcp_client/` | Multi-server MCP client (stdio + streamable HTTP, eager/lazy/sidecar lifecycles, tool merge/prefixing) |
 | `talos/memory/` | SQLite conversational memory store (sessions, messages, facts, summaries) |
@@ -23,7 +23,7 @@
 | `talos/text/` | Text agent HTTP server (stdlib `ThreadingHTTPServer`), terminal client, service client |
 | `talos/scheduler/` | APScheduler cron jobs (weather refresh, display wake/dim, morning report) |
 | `InfoPanel/` | Pygame GUI (main thread), visual assets |
-| `Peripherals/` | MicroPython Pico W firmware (`fan/`, `quad_pump/`), Pi-side MQTT→CEC TV controller (`mqtt_server/control_display.py`), kitchen browser-kiosk server (`kitchen_recipe_screen/`) |
+| `Peripherals/` | MicroPython Pico W firmware (`fan/`, `plant_waterer/`), Pi-side MQTT→CEC TV controller (`mqtt_server/control_display.py`) |
 | `tests/` | `test_*.py` unittest-style tests (run directly or via unittest/pytest) mixed with older prototype scripts |
 | `db/` | SQLite databases (gitignored): `talos_memory`, `talos_jobs`, `talos_phone` |
 | `docs/` | Design/setup docs (async background execution plan, filesystem MCP, Minecraft diagnostics) |

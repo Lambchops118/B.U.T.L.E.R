@@ -21,7 +21,7 @@ the deterministic layer assembled and can prove.
 Phases 0-8 complete. The 2026-09-06 human-context follow-on is merged and
 reviewed: presence/interaction/agent-outcome signals reach the subsystem,
 `POST /ingest` exists, and the situation broker honors `interruptibility` and
-`conversation_relevance` (see `SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md`
+`conversation_relevance` (see `SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry)
 and ADR-050..054). Status authorizes Phase 9.
 
 ## Required reading
@@ -29,7 +29,7 @@ and ADR-050..054). Status authorizes Phase 9.
 Root `AGENTS.md`, `IMPLEMENTATION_STATUS.md`, this phase document,
 [`../ARCHITECTURAL_INVARIANTS.md`](../ARCHITECTURAL_INVARIANTS.md),
 ADR-050..054 in [`../DECISIONS.md`](../DECISIONS.md), the
-`SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md` handoff, the "Human context"
+`SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry) handoff, the "Human context"
 and "Situation, context, and read tools" sections of
 [`talos/awareness/README.md`](../../../talos/awareness/README.md), and
 [`../reference/TEST_STRATEGY.md`](../reference/TEST_STRATEGY.md).

@@ -37,7 +37,7 @@ discovery ran 212 tests with 3 errors from `mcp` being absent in
 command, or full-suite run occurred. One **pre-existing, unrelated** flake is
 documented rather than fixed: an outbox test compares a database-stamped
 `available_at` against a host-clock `now`, and the container clock is ~10 ms
-ahead. See `SESSION_HANDOFF_2026-09-08_FOUR_BEHAVIOR_FIXES.md`; restart the
+ahead. See `SESSION_LOG.md` (2026-09-08 FOUR BEHAVIOR FIXES entry); restart the
 awareness backend and the main agent so the registry migrations and the
 sleep/display coupling take effect, then stop at this bounded fix.
 
@@ -58,7 +58,7 @@ environment coverage. `git diff --check` passed. Testing used the available
 Python 3.12.12 runtime with `.venv-main` packages because `.venv-main` still
 references a missing interpreter. No live launcher restart, GUI smoke test,
 model request, or full-suite run occurred. See
-`SESSION_HANDOFF_2026-09-08_LLM_DEBUG_PERSISTENCE.md`; restart the launcher and
+`SESSION_LOG.md` (2026-09-08 LLM DEBUG PERSISTENCE entry); restart the launcher and
 its managed main agent to begin a new transcript, then stop at this enhancement.
 
 ## Latest bounded launcher enhancement — separate logs and exact LLM I/O (2026-09-08)
@@ -82,7 +82,7 @@ because its configured Python 3.12 executable is missing, so tests used the
 available Python 3.12.12 runtime with `.venv-main` packages. No GUI smoke test,
 live model request, process restart, or full-suite run occurred. ADR-042 records
 the local, ephemeral sensitive-data policy and resolves the LLM-I/O portion of
-OQ-K. See `SESSION_HANDOFF_2026-09-08_LAUNCHER_LLM_DEBUG.md`. Restart the launcher
+OQ-K. See `SESSION_LOG.md` (2026-09-08 LAUNCHER LLM DEBUG entry). Restart the launcher
 and its managed main agent to use the new feed; stop at this bounded enhancement.
 
 ## Latest bounded repair — selectable Yeti/ReSpeaker capture (2026-09-08)
@@ -107,7 +107,7 @@ index 1 with the 16 kHz/channel 2 contract. No PCM was read; no live
 transcription, process restart, firmware
 write, or full-suite run occurred. ADR-041 records the capture contract and OQ-P
 retains the owner-visible accuracy acceptance test. See
-`SESSION_HANDOFF_2026-09-08_MICROPHONE_PROFILES.md`. Restart the voice worker (or
+`SESSION_LOG.md` (2026-09-08 MICROPHONE PROFILES entry). Restart the voice worker (or
 the launcher stack) to apply the selected profile; stop at this repair.
 
 ## Diagnostic task — ReSpeaker XVF3800 STT regression (2026-09-08)
@@ -125,7 +125,7 @@ auto-selected ASR beam. Read-only USB control found normal stock routing and
 processing on firmware 2.0.6: left `(8,0)`, right `(7,3)`, ASR/AGC enabled,
 16-bit USB, and expected gains. No room PCM was recorded and no code,
 configuration, device state, firmware, or running process was changed. See
-`SESSION_HANDOFF_2026-09-08_RESPEAKER_STT_DIAGNOSIS.md`; OQ-P tracks the
+`SESSION_LOG.md` (2026-09-08 RESPEAKER STT DIAGNOSIS entry); OQ-P tracks the
 owner-visible channel/threshold acceptance comparison. Stop at diagnosis until
 the owner authorizes a capture-path repair and visible A/B corpus.
 
@@ -136,7 +136,7 @@ conversational retrieval and memory, proactive delivery, and physical-action
 safety. Checked against current composition, ingestion, context and selection
 code plus the latest status and subsystem contracts. Runtime state is unchanged;
 no runtime tests or live acceptance checks were run. Session handoff:
-`SESSION_HANDOFF_2026-09-08_BLOCK_DIAGRAM.md`. Stop at this explanation task.
+`SESSION_LOG.md` (2026-09-08 BLOCK DIAGRAM entry). Stop at this explanation task.
 
 ## Latest bounded repair — announcement recall (2026-09-07)
 
@@ -148,7 +148,7 @@ subject to its existing budget and alert priorities. `/briefings` and its MCP to
 return stored briefing wording, including failed status when applicable. Legacy
 receipts are not backfilled with invented text. No migration or model call.
 Validation: 16 focused delivery/context/alert tests passed; see
-`SESSION_HANDOFF_2026-09-07_ANNOUNCEMENT_RECALL.md`. Restart awareness backend and
+`SESSION_LOG.md` (2026-09-07 ANNOUNCEMENT RECALL entry). Restart awareness backend and
 the awareness MCP provider/main agent to load code and tool guidance. Live voice
 recall and latency remain untested. Stop at this bounded repair (ADR-040).
 
@@ -163,7 +163,7 @@ ADR-039; no migrations or additional model calls. **46 focused tests passed**;
 five changed Python files compile. Initial unittest discovery failed before
 running tests (tests is a namespace package); explicit module loading succeeded.
 Full suite and live audio/latency not run. Restart awareness backend to apply.
-See `SESSION_HANDOFF_2026-09-06_BRIEFING_SPEECH.md`. Stop at this repair.
+See `SESSION_LOG.md` (2026-09-06 BRIEFING SPEECH entry). Stop at this repair.
 
 ## Previous bounded repair — spoken announcements (2026-09-06)
 
@@ -180,7 +180,7 @@ routing tests. Five touched Python files compile; whitespace checks pass.
 No live process restart, audio playback, latency benchmark, or full-suite rerun.
 Restart the main agent/text server before repeating the arrival test. Enqueue
 still is not playback confirmation. See
-`SESSION_HANDOFF_2026-09-06_ANNOUNCEMENT_FIX.md`. Stop at this bounded repair.
+`SESSION_LOG.md` (2026-09-06 ANNOUNCEMENT FIX entry). Stop at this bounded repair.
 
 ## Previous snapshot — Phase 9A–9D implementation complete (2026-09-06)
 
@@ -194,7 +194,7 @@ remaining sub-phases and resolved OQ-M. No further sub-phase pause was taken.
 | Completed | Assembler; idempotent daily/arrival moments; dedicated briefing outbox lane; capped delivery with durable critical-overflow continuations; confirmed receipt and attention bookkeeping; cross-kind item exclusion; optional bounded local model ranking with critical overrides/fallback; durable dismissal/interest/neutral feedback and API/MCP tools. |
 | Migration | None. Outbox JSON stores frozen selections; existing notification ledger stores receipts/query-selection provenance; existing memories store feedback. Schema/autogenerate test passes unchanged. |
 | Configuration | Opt-in: `TALOS_AWARENESS_BRIEFING_ENABLED=1`. Default schedule 08:00 host local, arrival enabled, cap 3, channel voice. Optional model ranking defaults off; enabling it requires configured `CHAT_MODEL` and loopback Ollama. No live settings were changed. |
-| Files | 19 changed/new Python files across briefing service/worker/selection/feedback, assembler/history, config, API/health/capabilities, outbox, MCP, and tests. Full inventory in `SESSION_HANDOFF_2026-09-06_PHASE_09_COMPLETE.md`. |
+| Files | 19 changed/new Python files across briefing service/worker/selection/feedback, assembler/history, config, API/health/capabilities, outbox, MCP, and tests. Full inventory in `SESSION_LOG.md` (2026-09-06 PHASE 09 COMPLETE entry). |
 | Tests | Final awareness discovery: **194 passed / 195 total; one existing broker-dependent skip; zero failures/errors**. All 35 briefing tests pass. Seven MCP/client tests pass. All 19 changed Python files compile; `git diff --check` passes. |
 | Environment | Bundled Python 3.12.14 with awareness packages and main-site `.pth` initialization. Preload MCP provider then remove the inherited API token in the test subprocess only, because existing unauthenticated-mode tests require it unset. Auth tests still verify configured-token enforcement. Exact command and intermediate failures in handoff. No package installation or persistent environment changes. |
 | Decisions | ADR-035: independent outbox lane and existing durable ledgers. ADR-036: critical overflow uses individually capped batches, source text only, and honest adapter receipts. ADR-037: exact structured feedback before prompt, critical protection, and local bounded ranking. OQ-N resolved at implementation level. |
@@ -210,7 +210,7 @@ remaining sub-phases and resolved OQ-M. No further sub-phase pause was taken.
 | Current phase | Phase 9A — deterministic briefing assembler — implemented; owner review pending. Phases 9B, 9C, and 9D are unstarted. |
 | Authorization | Owner requested implementation of `PHASE_09_PROACTIVE_BRIEFING.md`. Its explicit sub-phase gate is preserved: clarification whether this authorizes all four was requested and remains unanswered; this session implements 9A only. |
 | Completed work | Read-only assembler with six candidate categories, repeatable-read snapshot, versioned query provenance, delivery-derived/explicit first-run windows, count/time bounds and truncation audit, SQL pooled novelty scores, and critical-overflow/query-failure rejection. |
-| Files | Added `talos/awareness/context/briefing.py`, `talos/awareness/history/briefing.py`, two briefing test modules, and `SESSION_HANDOFF_2026-09-06_PHASE_09A.md`; updated config, subsystem README, decisions, questions, and this status. |
+| Files | Added `talos/awareness/context/briefing.py`, `talos/awareness/history/briefing.py`, two briefing test modules, and `SESSION_LOG.md` (2026-09-06 PHASE 09A entry); updated config, subsystem README, decisions, questions, and this status. |
 | Migration | None. Existing `notification_deliveries` can supply the read-side watermark; no current producer writes `metadata.briefing_kind`. No triggers, API route, model call, or delivery writes were added. |
 | Decisions/questions | ADR-033/034; OQ-M (authorization), OQ-N (critical overflow under the delivery cap and enqueue-vs-playback evidence). Existing notification handling already marks attention delivered, contrary to the plan's stale statement. |
 | Tests | 14 new tests pass, including live PostgreSQL/TimescaleDB scratch-database coverage. Full awareness discovery: **171 passed / 174 total**, two pre-existing missing-`mcp` errors, one broker-dependent skip. Baseline: 157 passed / 160 total, same errors/skip. Existing migration/autogenerate test passes in that suite. Compilation of five touched Python files and `git diff --check` pass. |
@@ -227,7 +227,7 @@ remaining sub-phases and resolved OQ-M. No further sub-phase pause was taken.
 | Current phase | Phase 8 — Retention, Security, and Hardening — **complete**. All phases 0-8 implemented. |
 | Phase state | Subsystem implementation complete on `memory_system_3_07152026` (owner authorized Phase 8 with local-backup defaults, 2026-07-16) |
 | Last completed phase | Phase 8 (2026-07-16) |
-| Current bounded task | Human context and internal ingestion — **implementation complete; owner review pending** (2026-09-06). Presence, bounded interaction facts, and agent job/tool outcomes now enter the subsystem through the normal pipeline; `POST /ingest` accepts internal and manual messages and returns the pipeline disposition synchronously; the situation snapshot reports presence and honors `interruptibility`/`conversation_relevance`. No migration was needed — the schema had already anticipated all of it. See `SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md`. Previous bounded task: quad-pump network-resilience hotfix — **deployed to the board and verified live** (2026-09-01). The board was found dead after days idle with `reset_cause == WDT_RESET`. Cause: `ensure_connected()` performed the Wi-Fi join (~4.0 s measured) and the MQTT connect (5.003 s measured against an unreachable broker) inside one loop iteration, while the 8 s watchdog was fed once per iteration — ~9 s between feeds, so the board reset mid-connect before any backoff was recorded, and repeated that on every reboot. Fixed by staging the connect across iterations (ADR-030), adding a PINGRESP-based liveness bound and a radio-reset/board-reset escalation ladder (ADR-031), and setting the Wi-Fi join deadline from measurement (ADR-032). Reproduced on hardware after the fix: 45 s against an unreachable broker with no reset, worst single call 3218 ms of an 8000 ms budget. Previous bounded task: quad-pump relay-activation hotfix — **deployed to the board; owner-observed physical verification pending** (2026-08-28). Commands were accepted and acknowledged but no relay moved: `CHANNEL_RELAY_GPIO` used GP9-GP12, while the `Controller_Board_mk2` netlist routes the relay drivers on GP6-GP9 and marks GP10-GP12 unconnected. Corrected to GP6-GP9 (fuse inputs GP0-GP3) per ADR-028, and raised `water_plants` `timeout_seconds` to 45 s so the 30 s firmware cycle is no longer reported as timed out (ADR-029). Previous task: local debug dashboard — **implementation complete; owner review pending** (2026-08-09). A standalone loopback web page now shows bounded existing interaction I/O, pipeline telemetry, service health, remote-only hardware metrics, voice RMS, and barge-in summaries without joining the main/audio hot paths. Expanded detail rows persist across polling. Wake latency/accuracy recovery remains complete with the owner-run idle-VAD corpus pending. |
+| Current bounded task | Human context and internal ingestion — **implementation complete; owner review pending** (2026-09-06). Presence, bounded interaction facts, and agent job/tool outcomes now enter the subsystem through the normal pipeline; `POST /ingest` accepts internal and manual messages and returns the pipeline disposition synchronously; the situation snapshot reports presence and honors `interruptibility`/`conversation_relevance`. No migration was needed — the schema had already anticipated all of it. See `SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry). Previous bounded task: quad-pump network-resilience hotfix — **deployed to the board and verified live** (2026-09-01). The board was found dead after days idle with `reset_cause == WDT_RESET`. Cause: `ensure_connected()` performed the Wi-Fi join (~4.0 s measured) and the MQTT connect (5.003 s measured against an unreachable broker) inside one loop iteration, while the 8 s watchdog was fed once per iteration — ~9 s between feeds, so the board reset mid-connect before any backoff was recorded, and repeated that on every reboot. Fixed by staging the connect across iterations (ADR-030), adding a PINGRESP-based liveness bound and a radio-reset/board-reset escalation ladder (ADR-031), and setting the Wi-Fi join deadline from measurement (ADR-032). Reproduced on hardware after the fix: 45 s against an unreachable broker with no reset, worst single call 3218 ms of an 8000 ms budget. Previous bounded task: quad-pump relay-activation hotfix — **deployed to the board; owner-observed physical verification pending** (2026-08-28). Commands were accepted and acknowledged but no relay moved: `CHANNEL_RELAY_GPIO` used GP9-GP12, while the `Controller_Board_mk2` netlist routes the relay drivers on GP6-GP9 and marks GP10-GP12 unconnected. Corrected to GP6-GP9 (fuse inputs GP0-GP3) per ADR-028, and raised `water_plants` `timeout_seconds` to 45 s so the 30 s firmware cycle is no longer reported as timed out (ADR-029). Previous task: local debug dashboard — **implementation complete; owner review pending** (2026-08-09). A standalone loopback web page now shows bounded existing interaction I/O, pipeline telemetry, service health, remote-only hardware metrics, voice RMS, and barge-in summaries without joining the main/audio hot paths. Expanded detail rows persist across polling. Wake latency/accuracy recovery remains complete with the owner-run idle-VAD corpus pending. |
 | Completed items | Phases 0-7 (see git history and `talos/awareness/README.md`); Phase 8: retention service (dry-run plan, bounded resumable batched deletion, aggregate-before-delete via cagg refresh, open-alert/evidence/active-memory protections), memory consolidation (incident summaries with derived_from links, weak-inference decay, user-evidence exemption), artifact store (generated rooted paths, SHA-256, table `artifacts`, migration `3337c328523b`), local backups (pg_dump in-container + config snapshot + 14-day pruning; **restore tested live: 27/27 tables**), write-auth on all mutating endpoints (actions fail-closed; others bearer-gated when `TALOS_AWARENESS_API_TOKEN` set), `/metrics` (counters/backlog/disk/last-backup), benchmark utility (**118 ev/s, p50 7.5 ms, p95 14.8 ms, 0 drops**), broker hardening plan (`BROKER_HARDENING_PLAN.md`, owner-executed), CLI: `retention`/`consolidate`/`backup [--verify]` |
 | Active work | None — human-context boundary reached; unsorted/unmodeled-data handling deliberately deferred and unstarted. Production idle segmentation is restored; experimental idle VAD remains disabled. |
 | Blocked items | Idle-VAD enablement needs an owner-visible "Butler"/pause/noise corpus (OQ-J). Barge-in production acceptance still needs the Phase F room corpus and eight-hour soak (OQ-I). Raw room PCM cannot be collected silently. |
@@ -238,8 +238,8 @@ remaining sub-phases and resolved OQ-M. No further sub-phase pause was taken.
 | Known failures | Live "Butler" recall, false wakes, real command-pause behavior, and endpoint p95 for the independent idle VAD are unmeasured because they require an owner-visible room session. Incremental faster-whisper decoding is not implemented because the backend is finished-utterance/batch and speculative chunk decoding would reintroduce redundant passes without accuracy evidence. Existing Phase F barge-in live limitations remain. Additionally, interaction events carry `entity_ids` only when the caller knows them and the router currently cannot attribute an utterance to an entity, so conversation relevance usually scores zero in practice; the snapshot reports this in its `limitations` rather than implying a judgment was made. User location within the home remains unmodeled and presence is single-occupant. |
 | Files recently modified | New `talos/awareness/api/routes/ingest.py`, `talos/services/awareness_signals.py`, two test modules, and the 2026-09-06 handoff. Modified: awareness registry bootstrap/sources, ingestion pipeline/service, API app, context broker, alerts service, rules engine + `rules.toml` (policy version 1 → 2), reminders worker, config, README; main-agent `router.py`, `jobs.py`, `agent/runtime.py`, `voice/agent.py`, `mcp_servers/providers/awareness.py`; `settings.env`. Earlier: quad-pump submodule `Firmware/main.py`, `Firmware/qp_net.py`, `Firmware/qp_config.py`, `Firmware/qp_controller.py`; `tests/test_quad_pump_firmware.py`; ADR-030/031/032 and the 2026-09-01 network-resilience handoff. Earlier still: new `talos/debug_dashboard/` service/static page, focused dashboard tests, README, ADR/open-question/status records, and the 2026-08-09 debug-dashboard handoff. Earlier voice settings/agent, bounded ASR queue, faster-whisper preload, and VAD files remain as recorded in the wake-latency handoff. |
 | Next permitted task | Owner review of the human-context work, and authorization of a Phase 9 sub-phase. **Phase 9 (Proactive Briefing and Model-Selected Salience) is now specified** in `phases/PHASE_09_PROACTIVE_BRIEFING.md` and is NOT started: it separates the deterministic *moment* from model-selected *content*, and is split into 9A (assembler), 9B (triggers and delivery bookkeeping), 9C (model selection), 9D (feedback loop), each independently authorizable. Otherwise: Then, if approved, either (a) run the main-venv suite and a live agent/voice session to verify signal emission end to end, or (b) populate interaction `entity_ids` so conversation relevance does real work rather than scoring zero. Separately: commit the quad-pump submodule pointer once its working-directory checkout matches the resolved merge (it now carries `5a96aa4` plus this session's changes) — still uncommitted; owner-observed relay-click verification on GP6-GP9, one channel at a time (moves water, so it was not run unattended); rotate the Wi-Fi/broker credentials exposed by the tracked `Firmware/qp_secrets.py` and untrack the file; owner review of the debug page and selection of any missing feed to instrument under OQ-K. Separately, the earlier owner-visible idle wake/pause/noise corpus and Phase F barge-in corpus/soak remain outstanding before voice rollout claims. |
-| Required reading | `SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md`, the README "Human context" section, `talos/services/awareness_signals.py`, `talos/awareness/api/routes/ingest.py`, `talos/awareness/context/broker.py`, and ADR-050..053 in `DECISIONS.md`. Earlier: `SESSION_HANDOFF_2026-09-01_QUAD_PUMP_NETWORK_RESILIENCE.md`, ADR-030/031/032, `Peripherals/Pump-Power-Controller/Firmware/qp_net.py`; `SESSION_HANDOFF_2026-08-09_DEBUG_DASHBOARD.md`, the README Local Debug Dashboard section, `talos/debug_dashboard/server.py`, `talos/debug_dashboard/static/app.js`, ADR-026/ADR-027, and OQ-K/OQ-L. For voice follow-up, retain the wake-latency handoff and barge-in plan reading list. |
+| Required reading | `SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry), the README "Human context" section, `talos/services/awareness_signals.py`, `talos/awareness/api/routes/ingest.py`, `talos/awareness/context/broker.py`, and ADR-050..053 in `DECISIONS.md`. Earlier: `SESSION_LOG.md` (2026-09-01 QUAD PUMP NETWORK RESILIENCE entry), ADR-030/031/032, `Peripherals/Pump-Power-Controller/Firmware/qp_net.py`; `SESSION_LOG.md` (2026-08-09 DEBUG DASHBOARD entry), the README Local Debug Dashboard section, `talos/debug_dashboard/server.py`, `talos/debug_dashboard/static/app.js`, ADR-026/ADR-027, and OQ-K/OQ-L. For voice follow-up, retain the wake-latency handoff and barge-in plan reading list. |
 | Explicit stop condition | Human-context task is complete. **Do not begin unsorted/unmodeled-data handling** (observations table, promotion by repetition, salience decay) — it was explicitly excluded and needs its own owner decision. Do not add utterance-text capture, remote exposure of `/ingest`, or escalation rules for tool failures without authorization. Requested debug page is also complete; do not add prompt/tool/audio hot-path capture, remote exposure, launcher integration, or silent room recording without owner authorization. Prior stop conditions still hold: no prompt/tool/audio hot-path capture, no silent room recording, do not set `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`, tune from guesses, or enable unaccepted barge-in. |
 | Documentation follow-up (2026-07-16) | Added `like_im_a_child_or_golden_retriever.md`, a plain-language intern quick start covering immediate operation, TALOS integration, maintenance, code paths, tests, safety invariants, limitations, and troubleshooting. Linked it from this documentation index. Validation: 96 awareness unit tests and 3 main-agent home-action tests pass; CLI help, relative-link targets, and `git diff --check` pass. Runtime, schemas, migrations, decisions, and open questions are unchanged. |
 
-Do not infer implementation progress from the presence of specification or launcher files. Session handoffs live in dated files derived from `SESSION_HANDOFF_TEMPLATE.md` (latest: `SESSION_HANDOFF_2026-09-06_HUMAN_CONTEXT.md`).
+Do not infer implementation progress from the presence of specification or launcher files. Session handoffs live in dated files derived from `SESSION_HANDOFF_TEMPLATE.md` (latest: `SESSION_LOG.md` (2026-09-06 HUMAN CONTEXT entry)).

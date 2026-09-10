@@ -51,4 +51,4 @@ runs full-text-only cleanly and stops queuing/dead-lettering embedding work.
 ## References
 
 - Phase 6 memory design: [`talos/awareness/README.md`](../../talos/awareness/README.md) (Long-term memory section)
-- Proactive-presence work: [`SESSION_HANDOFF_2026-07-20_PROACTIVE_PRESENCE.md`](SESSION_HANDOFF_2026-07-20_PROACTIVE_PRESENCE.md)
+- Proactive-presence work: [`SESSION_LOG.md` (2026-07-20 PROACTIVE PRESENCE entry)](SESSION_LOG.md#session-handoff-2026-07-20-proactive-presence)

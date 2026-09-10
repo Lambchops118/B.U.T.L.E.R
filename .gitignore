@@ -15,6 +15,7 @@ tv_control.cpython-39.pyc
 # macOS / editor metadata
 .DS_Store
 .vscode/
+.Rhistory
 
 # Generated local assets
 *_wirecache.npz
@@ -30,8 +31,11 @@ tests/persistent_convo.py
 # Launcher: per-machine component/GPU choices (settings live in settings.env)
 launcher.config.json
 
-# Exact LLM transcripts contain prompts, conversation, context, and tool data.
-talos/logs/llm_io_*.jsonl
+# Runtime log output: telemetry, benchmarks, and exact LLM transcripts (which
+# contain prompts, conversation, context, and tool data). All machine output,
+# never source.
+logs/
+talos/logs/
 
 # Local artifact/data directory for the awareness subsystem
 db/awareness/

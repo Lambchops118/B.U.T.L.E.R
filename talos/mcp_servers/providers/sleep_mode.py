@@ -6,8 +6,8 @@ the model runs so the panel never waits on generation -- the model is then told
 what happened and phrases the reply itself. This tool is for the turns that
 phrase list does not cover: "shut everything down for the night", "is the panel
 still dimmed?", or a request buried in a longer sentence. One tool with an
-``action`` argument, for the same reason the kitchen screen collapses to one:
-the schema is re-sent on every turn.
+``action`` argument rather than one tool per verb, because the schema is
+re-sent on every turn.
 """
 
 from __future__ import annotations
