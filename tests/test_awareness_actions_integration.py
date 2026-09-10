@@ -95,7 +95,7 @@ class ActionsIntegrationTest(unittest.TestCase):
         asyncio.run(self._run_pump_flow())
 
     async def _run_pump_flow(self) -> None:
-        """run_pump end to end against the canonical quad-pump contract.
+        """run_pump end to end against the canonical plant-waterer contract.
 
         Exercises the registered command envelope, per-channel cooldown scope,
         source-bound acknowledgement handling, and truthful failure — all

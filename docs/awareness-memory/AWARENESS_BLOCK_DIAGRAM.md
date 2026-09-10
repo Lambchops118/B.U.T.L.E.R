@@ -108,7 +108,7 @@ flowchart TB
   TIMEOUT --> RECORD
 ```
 
-Physical retry policy is action-specific. Current pump paths use at-most-once dispatch where safe device-side deduplication has not been accepted. Firmware/hardware, not the backend or LLM, owns immediate physical safety. Current quad-pump fuse sensing is unimplemented and reported as unknown.
+Physical retry policy is action-specific. Current pump paths use at-most-once dispatch where safe device-side deduplication has not been accepted. Firmware/hardware, not the backend or LLM, owns immediate physical safety. Current plant-waterer fuse sensing is unimplemented and reported as unknown.
 
 ## Operations surrounding all four flows
 

@@ -100,7 +100,7 @@ deployment is seeded idempotently at startup (`registry/bootstrap.py`):
 |---|---|---|
 | `fan_pico` | `status/16` | Legacy pin status; `metadata.value_inverted` (fan relay is active-low) |
 | `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
-| `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
+| `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical plant-waterer firmware ([`Peripherals/Pump-Power-Controller/Firmware`](../../Peripherals/Pump-Power-Controller/Firmware)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
 | `sim_device` | `home/sim/#` | Simulator for development and tests |
 | `talos_agent` | `home/presence/owner/state`, `home/interaction/owner/event`, `home/agent/talos/{event,state}` | The main agent reporting on the human and on itself. Pinned to the `internal` transport (`metadata.allowed_transports`) so the LAN broker cannot forge it — see "Human context" |
 
@@ -109,7 +109,7 @@ reaches a database that has already booted. `bootstrap.apply_source_migrations`
 is the explicit update path: each migration names the exact previous value it
 expects, so a field an operator deliberately changed is left untouched.
 
-The quad-pump source owns only what the device publishes. The command topic
+The plant-waterer source owns only what the device publishes. The command topic
 `home/irrigation/quad_pump/command` is published **by** this backend and is
 deliberately unowned — action requests are already durable in
 `action_requests`. Consequence: the backend's own command publications come
@@ -452,9 +452,9 @@ stopping must never be rate-limited. Cooldown is a backend rate limit, not an
 interlock — the firmware's one-pump-at-a-time rule and 30 s hard deadline are
 the real safety bounds (INV-09).
 
-### Canonical quad-pump contract
+### Canonical plant-waterer contract
 
-The rewritten firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump))
+The rewritten firmware ([`Peripherals/Pump-Power-Controller/Firmware`](../../Peripherals/Pump-Power-Controller/Firmware))
 speaks logical channels 1-4 at every external interface; GPIO numbers exist
 only in its hardware mapping. `run_pump`/`stop_pump` publish the standard JSON
 command envelope to `home/irrigation/quad_pump/command` and complete on a
@@ -521,7 +521,7 @@ are preserved but now call the action API; their result reports the durable
 request status and never claims physical success before evidence. Physical
 hardware was not exercised (ADR-014): completion/failure semantics are proven
 against the simulator and the repository-confirmed legacy firmware/status
-shape. The canonical quad-pump firmware (2026-07-26) adds device-side command
+shape. The canonical plant-waterer firmware (2026-07-26) adds device-side command
 IDs, acknowledgements, reconnect, and a unique MQTT client identity, but it has
 **not been flashed or bench-tested** — its logic is proven only by host tests.
 Known physical limitations remain: ambiguous legacy `status/16`, the fan Pico's

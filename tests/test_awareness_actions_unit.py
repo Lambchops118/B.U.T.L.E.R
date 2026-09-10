@@ -66,7 +66,7 @@ rollback = "none"
 
 
 class CanonicalPumpActionTest(unittest.TestCase):
-    """run_pump/stop_pump for the rewritten quad-pump firmware."""
+    """run_pump/stop_pump for the rewritten plant-waterer firmware."""
 
     def setUp(self) -> None:
         self.registry = load_registry()

@@ -13,7 +13,7 @@ Monkey Butler is an artificial butler built around a locally hosted agent struct
 - `talos/awareness/`: deterministic presence/state/history/alerts/memory backend (separate process, PostgreSQL-backed) — see [talos/awareness/README.md](talos/awareness/README.md)
 - `InfoPanel/`: pygame display modules and visual assets used by the GUI
 - `Peripherals/fan/`: Raspberry Pi Pico W script for MQTT-controlled fan switching
-- `Peripherals/quad_pump/`: Raspberry Pi Pico W script for MQTT-controlled plant watering
+- `Peripherals/Pump-Power-Controller/`: submodule holding the plant waterer's controller board and its Raspberry Pi Pico W firmware
 - `Peripherals/mqtt_server/control_display.py`: MQTT listener that sends TV power/input commands
 - `archive/`: older InfoPanel prototypes kept for reference
 - `experiments/`: visual and hardware experiments that are not part of the main runtime
@@ -784,7 +784,7 @@ Typical flow:
 Current peripheral entry points:
 
 - `Peripherals/fan/main.py`
-- `Peripherals/quad_pump/main.py`
+- `Peripherals/Pump-Power-Controller/Firmware/main.py` (plant waterer)
 
 ## Release
 

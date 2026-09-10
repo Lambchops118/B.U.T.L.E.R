@@ -258,8 +258,8 @@ def _pump_source(**overrides) -> SourceRecord:
     return _source(**values)
 
 
-class CanonicalQuadPumpTest(unittest.TestCase):
-    """The canonical quad-pump firmware contract (Peripherals/quad_pump)."""
+class CanonicalPlantWatererTest(unittest.TestCase):
+    """The canonical plant-waterer firmware contract (Pump-Power-Controller)."""
 
     def test_state_snapshot_normalizes_relays_and_fuses(self) -> None:
         payload = {

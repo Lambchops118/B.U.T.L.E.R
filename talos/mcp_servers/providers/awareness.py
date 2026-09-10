@@ -55,7 +55,7 @@ def register(server: FastMCP) -> None:
         latest temperature). Use this for present-tense facts — never guess
         and never use memory search. Each property includes status
         (current/stale/offline/conflicting), age, confidence, and source.
-        Known entities include: fan, quad_pump, plant_pot_1, plant_pot_2,
+        Known entities include: fan, quad_pump (the plant waterer), plant_pot_1, plant_pot_2,
         sim_greenhouse."""
         return _call(f"/state/{entity_id}")
 

@@ -4,7 +4,7 @@
 # confirmation, not silence.
 #
 # v2 (2026-07-26): added canonical run_pump/stop_pump for the rewritten
-# quad-pump firmware. water_plants is deliberately left on the legacy topic
+# plant-waterer firmware. water_plants is deliberately left on the legacy topic
 # until the canonical path passes bench and physical acceptance on the board;
 # the new firmware answers both surfaces during that transition.
 
@@ -42,7 +42,7 @@ type = "integer"
 allowed_values = [17, 19]      # pot 1 = 17, pot 2 = 19 (deployed wiring)
 description = "Pump channel pin: 17 (pot 1) or 19 (pot 2)"
 
-# --- canonical quad pump: bounded run (new firmware) ---------------------------
+# --- canonical plant waterer: bounded run (new firmware) ---------------------------
 #
 # Logical channels only. GPIO numbers never appear in a parameter, topic, or
 # payload — the firmware owns that mapping. Duration is strictly bounded here
@@ -87,7 +87,7 @@ minimum = 1
 maximum = 30
 description = "Run time in seconds; firmware default is 30 and its hard cap is 30"
 
-# --- canonical quad pump: stop --------------------------------------------------
+# --- canonical plant waterer: stop --------------------------------------------------
 
 [[actions]]
 name = "stop_pump"

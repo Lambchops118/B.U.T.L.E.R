@@ -1,4 +1,4 @@
-"""Host-side tests for the quad pump Pico W firmware logic.
+"""Host-side tests for the plant waterer Pico W firmware logic.
 
 The firmware modules that hold behavior (config, protocol, ledger, controller,
 and the network module's pure helpers) import nothing MicroPython-specific, so
@@ -1173,6 +1173,8 @@ class SafetyPolicyTest(unittest.TestCase):
 
     def test_client_id_does_not_collide_with_the_fan_pico(self):
         self.assertNotEqual(config.MQTT_CLIENT_ID_PREFIX, "pico-w-client")
+        # Wire identifier: the deployed firmware announces itself with this exact
+        # prefix, so it keeps the legacy name the rest of the repo no longer uses.
         self.assertTrue(config.MQTT_CLIENT_ID_PREFIX.startswith("talos-quad-pump-"))
 
 

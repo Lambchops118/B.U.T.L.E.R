@@ -418,10 +418,10 @@ this is not an acceptable authentication signal. Optional synchronized audio
 fixture recording in the plan is explicitly opt-in, local, visible, and
 retention-bounded because room audio is sensitive.
 
-## 2026-07-26 — Quad Pump Firmware and Awareness Integration
-<a id="session-handoff-2026-07-26-quad-pump-firmware"></a>
+## 2026-07-26 — Plant Waterer Firmware and Awareness Integration
+<a id="session-handoff-2026-07-26-plant-waterer-firmware"></a>
 
-Execute Peripherals/quad_pump/plan.md: replace the legacy quad-pump Pico W
+Execute Peripherals/quad_pump/plan.md: replace the legacy plant-waterer Pico W
 firmware with safe, non-blocking firmware and add its bounded awareness
 integration.
 
@@ -468,8 +468,8 @@ of sharing "pico-w-client" with the fan Pico. - Published payloads carry no
 credentials and bounded, non-secret error codes only (no tracebacks). A test
 asserts this.
 
-## 2026-07-26 — Quad-Pump GPIO Mapping Hotfix
-<a id="session-handoff-2026-07-26-quad-pump-gpio-mapping"></a>
+## 2026-07-26 — Plant-Waterer GPIO Mapping Hotfix
+<a id="session-handoff-2026-07-26-plant-waterer-gpio-mapping"></a>
 
 Resolve why fully acknowledged pump commands produced no physical relay click.
 
@@ -503,7 +503,7 @@ command.
 ## 2026-07-26 — Voice Physical-Action Dispatch
 <a id="session-handoff-2026-07-26-voice-action-dispatch"></a>
 
-Diagnose and fix repeated voice claims that a quad-pump action had been
+Diagnose and fix repeated voice claims that a plant-waterer action had been
 initiated even though no relay activated.
 
 **Shipped:** Confirmed from the post-reboot pipeline telemetry and conversation
@@ -557,7 +557,7 @@ boundaries. Ambiguous requests do not dispatch.
 ## 2026-07-26 — Windows Awareness MQTT Hotfix
 <a id="session-handoff-2026-07-26-windows-mqtt-hotfix"></a>
 
-Diagnose and fix accepted quad-pump actions that never energized a relay.
+Diagnose and fix accepted plant-waterer actions that never energized a relay.
 
 **Shipped:** Fixed the Windows awareness server event loop so aiomqtt ingestion
 and action publication can connect to the configured Mosquitto broker.
@@ -570,10 +570,10 @@ Uvicorn asyncio CLI commands.
 
 **Limitations:** The already-running launcher-owned awareness process on port
 8600 loaded the old code and remains MQTT-degraded until TALOS is restarted.
-The activated quad-pump board still has not emitted state, health, or a
+The activated plant-waterer board still has not emitted state, health, or a
 heartbeat during a 35-second direct broker subscription (OQ-G). Physical
 channel mapping, relay operation, and fuse limitations remain as documented in
-the quad-pump handoff.
+the plant-waterer handoff.
 
 **Deployment:** Restart TALOS/the launcher so the awareness subprocess loads
 the new loop configuration. Verify /health/components reports
@@ -674,8 +674,8 @@ asynchronously during voice-worker startup.
 **Security:** Audio remains local-first. No new upload path or action authority
 was added. Room recording remains explicit and disabled by default.
 
-## 2026-08-28 — Quad-Pump Relay Activation Hotfix (GPIO Map)
-<a id="session-handoff-2026-08-28-quad-pump-relay-activation"></a>
+## 2026-08-28 — Plant-Waterer Relay Activation Hotfix (GPIO Map)
+<a id="session-handoff-2026-08-28-plant-waterer-relay-activation"></a>
 
 Determine why `run_pump` / `water_plants` commands were accepted and
 acknowledged while no pump physically activated.
@@ -716,8 +716,8 @@ unattended watering. The submodule changes (`qp_config.py`, `qp_hardware.py`,
 commit and a parent pointer bump are still needed. Do not commit
 `qp_secrets.py` further — see the security finding.
 
-## 2026-09-01 — Quad-Pump Network Resilience (Watchdog Reset Loop)
-<a id="session-handoff-2026-09-01-quad-pump-network-resilience"></a>
+## 2026-09-01 — Plant-Waterer Network Resilience (Watchdog Reset Loop)
+<a id="session-handoff-2026-09-01-plant-waterer-network-resilience"></a>
 
 Determine why the pump controller board stopped working after several days
 idle, distinguish a code fault from hardware damage, and — after owner
@@ -884,7 +884,7 @@ broker) ADR-053 (interruptibility honored; relevance orders within a priority
 band only, never across one) ADR-054 (sources may opt out of offline detection;
 silence is only a fault for a source expected to report on a schedule)
 Renumbered from this session's original ADR-028..032, which collided with the
-quad-pump ADR-028..032 added on `main` while this branch was diverged; see
+plant-waterer ADR-028..032 added on `main` while this branch was diverged; see
 ADR-050 in DECISIONS.md.
 
 **Limitations:** - Interaction events carry `entity_ids` only when the caller
