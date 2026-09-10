@@ -103,6 +103,17 @@ class AwarenessSettings(BaseSettings):
     # --- ingestion bounds ---------------------------------------------------
     max_event_payload_bytes: int = Field(default=65536, ge=1024)
 
+    # --- internal (non-MQTT) ingestion ---------------------------------------
+    # The loopback /ingest endpoint accepts one message on behalf of an
+    # internal source: the main agent's presence/interaction/agent signals and
+    # manual injection while debugging. It reuses the identical pipeline as
+    # the broker ingress — same registry authorization, normalization,
+    # sequence assessment, state effects, and rules — and adds no bypass:
+    # a topic no registered source owns is still dead-lettered. Set to 0 to
+    # refuse internal ingestion entirely (the agent then degrades to
+    # read-only, which it reports truthfully).
+    ingest_api_enabled: bool = True
+
     # --- state freshness (Phase 3) -------------------------------------------
     # Per-source values in the registry override these defaults.
     default_stale_after_seconds: float = Field(default=300.0, gt=0)
@@ -122,6 +133,54 @@ class AwarenessSettings(BaseSettings):
     max_query_range_days: int = Field(default=31, ge=1)
     max_query_points: int = Field(default=10000, ge=1)
     max_event_page_size: int = Field(default=500, ge=1)
+
+    # Phase 9A: read-only briefing assembly; does not enable proactive output.
+    briefing_default_window_hours: int = Field(default=24, ge=1, le=744)
+    briefing_max_candidates: int = Field(default=100, ge=1, le=500)
+    briefing_novelty_baseline_days: int = Field(default=7, ge=1, le=31)
+    briefing_novelty_z_threshold: float = Field(default=3.0, gt=0)
+    # Proactive delivery is opt-in; enabling it starts both deterministic moments.
+    briefing_enabled: bool = False
+    briefing_schedule_time: str = "08:00"
+    briefing_arrival_enabled: bool = True
+    briefing_arrival_lookback_minutes: int = Field(default=60, ge=1, le=1440)
+    briefing_interval_seconds: float = Field(default=15.0, ge=1, le=300)
+    briefing_max_items: int = Field(default=3, ge=1, le=20)
+    briefing_channel: str = "voice"
+    briefing_model_enabled: bool = False
+    briefing_model_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    briefing_prompt_max_chars: int = Field(default=24000, ge=2000, le=64000)
+    # Guaranteed daily context uses the same host-wide location settings as
+    # the conversational weather/time tools. The API key remains secret.
+    timezone: str = Field(
+        default="America/New_York", validation_alias=AliasChoices("TALOS_TIMEZONE")
+    )
+    weather_location: str = Field(
+        default="", validation_alias=AliasChoices("TALOS_WEATHER_LOCATION")
+    )
+    weather_units: str = Field(
+        default="imperial", validation_alias=AliasChoices("TALOS_WEATHER_UNITS")
+    )
+    weather_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("OPEN_WEATHER_API_KEY")
+    )
+    morning_weather_timeout_seconds: float = Field(default=5.0, gt=0, le=15)
+    morning_agenda_max_items: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("briefing_schedule_time")
+    @classmethod
+    def _briefing_time(cls, value: str) -> str:
+        import re
+        if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value):
+            raise ValueError("must be HH:MM in host local time")
+        return value
+
+    @field_validator("briefing_channel")
+    @classmethod
+    def _briefing_channel(cls, value: str) -> str:
+        if value not in {"voice", "gui", "log"}:
+            raise ValueError("must be voice, gui, or log")
+        return value
 
     # --- rules / alerts / notifications (Phase 4) -----------------------------
     rules_path: Path | None = None  # default: talos/awareness/rules/rules.toml
@@ -182,6 +241,14 @@ class AwarenessSettings(BaseSettings):
             raise ValueError(f"must be one of {sorted(_LOG_LEVELS)}")
         return normalized
 
+    @field_validator("weather_units")
+    @classmethod
+    def _weather_units(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"imperial", "metric", "standard"}:
+            raise ValueError("must be imperial, metric, or standard")
+        return normalized
+
     @field_validator("ollama_host")
     @classmethod
     def _valid_ollama_host(cls, value: str) -> str:
@@ -223,6 +290,11 @@ class AwarenessSettings(BaseSettings):
             "mqtt_tls": self.mqtt_tls,
             "mqtt_client_id": self.mqtt_client_id,
             "max_event_payload_bytes": self.max_event_payload_bytes,
+            "ingest_api_enabled": self.ingest_api_enabled,
+            "briefing_enabled": self.briefing_enabled,
+            "briefing_model_enabled": self.briefing_model_enabled,
+            "briefing_schedule_time": self.briefing_schedule_time,
+            "briefing_max_items": self.briefing_max_items,
         }
 
 

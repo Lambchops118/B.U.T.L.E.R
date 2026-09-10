@@ -16,9 +16,12 @@ from talos.awareness.api.routes import actions as action_routes
 from talos.awareness.api.routes import alerts as alert_routes
 from talos.awareness.api.routes import context as context_routes
 from talos.awareness.api.routes import health as health_routes
+from talos.awareness.api.routes import ingest as ingest_routes
 from talos.awareness.api.routes import memory as memory_routes
 from talos.awareness.api.routes import reads as read_routes
 from talos.awareness.api.routes import reminders as reminder_routes
+from talos.awareness.api.routes import briefing as briefing_routes
+from talos.awareness.briefing.worker import BriefingHandler, BriefingWorker
 from talos.awareness.config import AwarenessSettings, load_settings
 from talos.awareness.db.session import build_engine
 from talos.awareness.health.service import HealthService
@@ -58,11 +61,46 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
         action_service = ActionService(engine, settings, action_registry)
         app.state.action_service = action_service
 
+        # One pipeline and one registry snapshot serve both ingress paths: the
+        # MQTT broker and the internal /ingest endpoint. Building it here
+        # rather than inside IngestionService means internal ingestion still
+        # works with the broker disabled (TALOS_AWARENESS_MQTT_ENABLED=0), and
+        # that both paths share the same metrics and sequence state.
+        from talos.awareness.ingestion.pipeline import IngestionPipeline
+        from talos.awareness.registry.bootstrap import seed_registry
+        from talos.awareness.registry.sources import SourceRepository
+
+        sources = SourceRepository(engine)
+        pipeline = IngestionPipeline(
+            engine,
+            sources,
+            settings,
+            rule_engine=rule_engine,
+            action_service=action_service,
+        )
+        app.state.ingest_pipeline = pipeline
+        try:
+            await seed_registry(engine)
+            await sources.refresh(force=True)
+        except Exception:
+            # Self-healing: the pipeline refreshes the registry on a TTL, so a
+            # temporarily unreachable database only delays authorization.
+            logger.exception(
+                "registry bootstrap failed; API continues and will retry",
+                extra={"component": "ingestion"},
+            )
+
         if settings.mqtt_enabled:
             from talos.awareness.ingestion.service import IngestionService
 
             ingestion = IngestionService(
-                settings, engine, rule_engine=rule_engine, action_service=action_service
+                settings,
+                engine,
+                rule_engine=rule_engine,
+                action_service=action_service,
+                pipeline=pipeline,
+                sources=sources,
+                seed_on_start=False,
             )
             try:
                 await ingestion.start()
@@ -116,10 +154,25 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                 "action_dispatch": action_service.dispatch_handler(publish_command),
                 "action_timeout": action_service.timeout_handler,
             },
+            exclude_work_types=("briefing",),
         )
         outbox_stop = asyncio.Event()
         outbox_task = asyncio.create_task(outbox.run(outbox_stop), name="awareness-outbox")
         app.state.outbox = outbox
+
+        # Separate claim lane: a model timeout cannot hold up critical notifications.
+        briefing_outbox = OutboxWorker(
+            engine, settings.model_copy(update={"outbox_batch_size": 1}),
+            {"briefing": BriefingHandler(engine, settings, adapters)},
+            worker_id="awareness-briefing-1", work_types=("briefing",),
+        )
+        briefing_outbox_stop = asyncio.Event()
+        briefing_outbox_task = asyncio.create_task(briefing_outbox.run(briefing_outbox_stop), name="awareness-briefing-outbox")
+        app.state.briefing_outbox = briefing_outbox
+        briefing_worker = BriefingWorker(engine, settings)
+        briefing_stop = asyncio.Event()
+        briefing_task = asyncio.create_task(briefing_worker.run(briefing_stop), name="awareness-briefing-moments")
+        app.state.briefing_worker = briefing_worker
 
         reminder_worker = ReminderWorker(engine, settings, alerts)
         reminder_stop = asyncio.Event()
@@ -137,6 +190,8 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
                 (freshness_stop, freshness_task),
                 (outbox_stop, outbox_task),
                 (reminder_stop, reminder_task),
+                (briefing_stop, briefing_task),
+                (briefing_outbox_stop, briefing_outbox_task),
             ):
                 stop_event.set()
                 task.cancel()
@@ -151,12 +206,14 @@ def create_app(settings: AwarenessSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="TALOS Awareness", version=__version__, lifespan=lifespan)
     app.include_router(health_routes.router)
+    app.include_router(ingest_routes.router)
     app.include_router(read_routes.router)
     app.include_router(alert_routes.router)
     app.include_router(context_routes.router)
     app.include_router(memory_routes.router)
     app.include_router(action_routes.router)
     app.include_router(reminder_routes.router)
+    app.include_router(briefing_routes.router)
     return app
 
 

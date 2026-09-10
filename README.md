@@ -161,12 +161,26 @@ or from `cmd`:
 talos.cmd
 ```
 
-The GUI lets you choose which components to start, the language model, whether the
-awareness system starts with MQTT enabled (and the broker host/port), and the
-GPU assignment. Component/GPU choices persist to a git-ignored
+The GUI lets you choose which components to start, the room microphone, the
+language model, whether the awareness system starts with MQTT enabled (and the
+broker host/port), and the GPU assignment. Component/GPU/microphone choices persist to a git-ignored
 `launcher.config.json`; the model and MQTT settings are written back into
-`settings.env` in place. Child-process logs stream into the window, and closing
-it (or **Stop**) shuts every process down.
+`settings.env` in place. The window has separate **Launcher**, **Logs**, and
+**LLM I/O** tabs, and closing it (or **Stop**) shuts every process down.
+
+The **LLM I/O** tab shows the full structured payload sent at each model-call
+boundary and the full response exposed by the provider SDK. For streaming chat
+calls this includes the raw chunks plus the assembled assistant text and tool
+calls; warmups and Responses API calls are labeled separately. Sent records are
+blue/cyan and received records are green so the request and response cannot be
+mistaken for one another. The feed is
+enabled only for a launcher-managed main agent and travels over the existing
+local child-process stdout pipe. The same records are permanently appended to a
+per-run `talos/logs/llm_io_<UTC timestamp>_<pid>.jsonl` file; these files have no
+automatic retention or pruning and are git-ignored. The GUI retains at most the
+latest 5,000,000 displayed characters. Both forms can contain private
+conversation history, remembered facts, awareness context, tool schemas,
+arguments, and results; treat anything visible there as sensitive.
 
 **Prompt context — what the model receives.** The right-hand column of the GUI
 collects everything that is injected in front of the model each turn, as opposed
@@ -230,7 +244,8 @@ last-saved configuration:
 ```
 
 `--no-gui` also accepts `--no-ollama`, `--no-awareness`, `--no-main`,
-`--no-voice`, and `--api-models` to adjust a single run. The launcher brings up
+`--no-voice`, `--microphone {respeaker,yeti}`, and `--api-models` to adjust a
+single run. The launcher brings up
 the awareness Postgres container, runs migrations, waits for each service's port,
 then starts the main agent and voice worker; Ctrl+C stops them all. It skips
 Ollama if a server is already listening on `127.0.0.1:11434` (in which case that
@@ -542,6 +557,27 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 ```
 
 The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `TALOS_TEXT_AGENT_URL` and `TALOS_TEXT_AGENT_TOKEN`.
+
+### Room Microphone Profiles
+
+The launcher's **Room microphone** dropdown persists either the ReSpeaker
+XVF3800 or Blue Yeti profile. The equivalent headless override is
+`--microphone respeaker` or `--microphone yeti`.
+
+- **ReSpeaker** opens the named USB device explicitly as 16 kHz stereo, extracts
+  USB channel 2 (the firmware's auto-selected ASR beam), and retains the
+  one-second ambient calibration instead of replacing it with the Yeti's fixed
+  threshold. Barge-in and experimental idle VAD are disabled for this profile:
+  TALOS playback uses the BenQ render endpoint, so the XVF3800 has no validated
+  far-end reference for hardware AEC.
+- **Yeti** opens the named Yeti explicitly for ordinary wake capture and retains
+  its fixed energy threshold. Its existing Windows communications-AEC path is
+  used only when the pinned Yeti capture and render endpoints match the active
+  Windows defaults; otherwise barge-in fails closed and ordinary named-device
+  capture continues.
+
+Changing the dropdown takes effect the next time the voice worker starts. The
+tracked default and the current machine-local launcher selection are ReSpeaker.
 
 ### Barge-In (Interrupting TALOS While It Speaks)
 

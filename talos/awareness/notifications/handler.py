@@ -85,6 +85,7 @@ class NotificationHandler:
                 detail=result.detail,
                 provider_message_id=result.provider_message_id,
                 fallback=channel != (preferred or channel),
+                content=content,
             )
             if result.confirmed:
                 if attention_item_id:
@@ -139,6 +140,7 @@ class NotificationHandler:
         detail: str,
         provider_message_id: str | None,
         fallback: bool,
+        content: NotificationContent,
     ) -> None:
         async with self._engine.begin() as connection:
             await connection.execute(
@@ -152,7 +154,9 @@ class NotificationHandler:
                     status="delivered" if confirmed else "failed",
                     error=None if confirmed else detail[:500],
                     provider_message_id=provider_message_id,
-                    metadata_json={"fallback": fallback} if fallback else {},
+                    metadata_json={"fallback": fallback, "announcement": {
+                        "title": content.title, "text": content.body,
+                        "playback_confirmed": False}},
                 )
             )
 

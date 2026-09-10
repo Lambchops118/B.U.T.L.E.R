@@ -1,0 +1,3 @@
+{"timestamp":"2026-08-20T19:13:38.367+00:00","request_id":"822b32b9a9da","component":"text_server","event":"awareness_snapshot_completed","awareness_snapshot_ms":1519.6}
+{"timestamp":"2026-08-20T19:13:38.529+00:00","request_id":"822b32b9a9da","component":"agent_runtime","event":"prompt_ready","backend":"ollama","backend_location":"local","model":"mb-core-v1:latest","tool_count":21,"message_count":12,"prompt_tokens_estimated":5347,"prompt_bytes":18735,"tool_build_ms":0.3,"memory_context_ms":15.3,"prompt_assembly_ms":145.1}
+{"timestamp":"2026-08-20T19:13:38.538+00:00","request_id":"822b32b9a9da","component":"agent_runtime","event":"llm_round_started","round":1,"prompt_tokens_estimated":5347,"prompt_bytes":18735}

@@ -1,0 +1,12 @@
+{"timestamp":"2026-08-17T01:37:12.286+00:00","request_id":"voice-worker","component":"agent_runtime","event":"prompt_ready","backend":"unknown","backend_location":"hosted","model":"unknown","tool_count":0,"message_count":3,"prompt_tokens_estimated":1479,"prompt_bytes":5178,"tool_build_ms":0.0,"memory_context_ms":1.8,"prompt_assembly_ms":0.3}
+{"timestamp":"2026-08-17T01:37:12.286+00:00","request_id":"voice-worker","component":"agent_runtime","event":"llm_round_started","round":1,"prompt_tokens_estimated":1479,"prompt_bytes":5178}
+{"timestamp":"2026-08-17T01:37:12.286+00:00","request_id":"voice-worker","component":"agent_runtime","event":"llm_round_completed","round":1,"prompt_tokens_estimated":1479}
+{"timestamp":"2026-08-17T01:37:12.292+00:00","request_id":"voice-worker","component":"agent_runtime","event":"agent_stream_completed","interrupted":false,"llm_round_count":1,"tool_execution_total_ms":0.0,"agent_stream_total_ms":7.5}
+{"timestamp":"2026-08-17T01:37:12.293+00:00","request_id":"voice-worker","component":"agent_runtime","event":"prompt_ready","backend":"unknown","backend_location":"hosted","model":"unknown","tool_count":0,"message_count":5,"prompt_tokens_estimated":1507,"prompt_bytes":5276,"tool_build_ms":0.0,"memory_context_ms":0.2,"prompt_assembly_ms":0.3}
+{"timestamp":"2026-08-17T01:37:12.293+00:00","request_id":"voice-worker","component":"agent_runtime","event":"llm_round_started","round":1,"prompt_tokens_estimated":1507,"prompt_bytes":5276}
+{"timestamp":"2026-08-17T01:37:12.293+00:00","request_id":"voice-worker","component":"agent_runtime","event":"llm_round_completed","round":1,"prompt_tokens_estimated":1507}
+{"timestamp":"2026-08-17T01:37:12.298+00:00","request_id":"voice-worker","component":"agent_runtime","event":"agent_stream_completed","interrupted":false,"llm_round_count":1,"tool_execution_total_ms":0.0,"agent_stream_total_ms":6.1}
+{"timestamp":"2026-08-17T01:37:20.541+00:00","request_id":"6c07271c40a0","component":"text_server","event":"awareness_snapshot_completed","awareness_snapshot_ms":0.0}
+{"timestamp":"2026-08-17T01:37:20.541+00:00","request_id":"6c07271c40a0","component":"text_server","event":"text_stream_completed","text_stream_total_ms":0.8}
+{"timestamp":"2026-08-17T01:37:21.054+00:00","request_id":"34f1349f2fb3","component":"text_server","event":"awareness_snapshot_completed","awareness_snapshot_ms":0.0}
+{"timestamp":"2026-08-17T01:37:21.055+00:00","request_id":"34f1349f2fb3","component":"text_server","event":"text_stream_failed","text_stream_total_ms":0.8,"error_type":"RuntimeError"}

@@ -592,6 +592,15 @@ The broker's guarantee that all critical alerts survive its own selection
 budget does not survive this second truncation. Multiple critical alerts can be
 included by the broker and subsequently removed from the model-visible tail.
 
+**RESOLVED 2026-09-08 (ADR-049).** The limit is now
+`TALOS_CONTEXT_SNAPSHOT_CHAR_LIMIT` (4000), a backstop above the broker's
+budget rather than below it, so the broker's ranking and its critical-alert
+guarantee both survive. The 500 dated to 2026-02-22, when the snapshot was a
+short `key:value(ttl)` string from the in-memory `StateStore` on a metered
+hosted API; it was never sized for the awareness broker. Restoring the full
+snapshot measured +649 prompt tokens and +9 ms to first token, against ~10.4k
+tokens of spare context window.
+
 ## Awareness fallback behavior
 
 If awareness cannot be reached, the client silently returns the legacy

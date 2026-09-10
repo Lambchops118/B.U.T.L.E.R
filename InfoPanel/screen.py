@@ -15,6 +15,8 @@ from . import screen_effects as fx
 from . import windows
 from .screen_effects import GpuCRT
 
+from talos.services import sleep_mode
+
 font_path = str(Path(__file__).resolve().parent / "VT323-Regular.ttf")
 
 # =============== PYGAME INFO PANEL ===============
@@ -361,14 +363,37 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         post.blit(grille_surf,   (0, 0))
         post.blit(vignette_surf, (0, 0))
         post.blit(scanlines_surf,(0, 0))
+
+        # Sleep mode: darken the finished frame to a few percent of its
+        # brightness. Every layer -- text, dynamos, CRT masks -- dims together,
+        # because this is the last thing that touches the picture. The panel
+        # stays lit but night-dark: an asleep panel is visibly different from a
+        # dead one.
+        #
+        # Where it happens depends on the path. On the GPU path the shader owns
+        # it (see GpuCRT.set_dim): its 1/gamma pass would otherwise take a 1%
+        # multiply back up to 10% on the glass, and the 8-bit multiply would
+        # crush the mid-tones on the way in. The plain-pygame fallback has no
+        # such pass, so a single BLEND_MULT fill is both correct and cheaper
+        # than a re-render there.
+        sleep_state = sleep_mode.state()
+        asleep = bool(sleep_state["asleep"])
+        display_level = float(sleep_state["display_level"])
+
         if crt is not None:
+            crt.set_dim(display_level)
             crt.draw_surface(post)
         else:
+            if display_level < 1.0:
+                level = int(round(255 * display_level))
+                post.fill((level, level, level), special_flags=pygame.BLEND_MULT)
             screen.blit(post, (0, fx.random_vertical_jitter_y(100)))
             pygame.display.flip()
         #last_frame = post
 
-        clock.tick(60)
+        # Nothing on a sleeping panel animates fast enough to need 60 fps, and
+        # the GPU shares this box with the local model.
+        clock.tick(15 if asleep else 60)
         circle_time += 1
         mob_angle += 0.01
 

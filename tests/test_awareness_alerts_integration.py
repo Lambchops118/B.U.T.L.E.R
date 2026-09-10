@@ -205,12 +205,15 @@ class AlertsIntegrationTest(unittest.TestCase):
             self.assertIn("[CRITICAL]", log.sent[0].title)
             self.assertIn("Occurred 2 times.", log.sent[0].body)
             deliveries = await query(
-                "SELECT channel, status FROM notification_deliveries ORDER BY id"
+                "SELECT channel, status, metadata FROM notification_deliveries ORDER BY id"
             )
             self.assertEqual(
                 [(row.channel, row.status) for row in deliveries],
                 [("gui", "failed"), ("log", "delivered")],
             )
+            for row in deliveries:
+                self.assertEqual(row.metadata["announcement"]["text"], log.sent[0].body)
+                self.assertFalse(row.metadata["announcement"]["playback_confirmed"])
             outbox = await query("SELECT status FROM outbox WHERE work_type = 'notification'")
             self.assertEqual(outbox[0].status, "completed")
             attention = await query("SELECT delivery_status FROM attention_items")

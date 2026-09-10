@@ -28,6 +28,7 @@ uniform float     u_scan;    // scanline strength (0..1)
 uniform float     u_vign;    // vignette strength (0..1)
 uniform float     u_gamma;   // display gamma
 uniform float u_zoom;   // 1.00 = no zoom. 1.05..1.20 = small overscan
+uniform float     u_dim;     // 1.0 = normal, <1 = sleep-mode dim
 
 
 
@@ -75,6 +76,16 @@ void main() {
 
     // gamma
     col       = pow(col, vec3(1.0 / max(u_gamma, 0.001)));
+
+    // Sleep-mode dim, applied LAST -- after gamma, deliberately.
+    //
+    // Dimming the frame on the CPU before this shader did not work: gamma here
+    // is a 1/2.0 power, so a 1% multiply came back out as sqrt(0.01) = 10% on
+    // the glass, and the 8-bit multiply had already crushed every mid-tone to
+    // 0 or 1 on the way in. Scaling the final linear output instead means the
+    // requested level is the level you actually see, with the picture's tonal
+    // range intact.
+    col      *= clamp(u_dim, 0.0, 1.0);
     fragColor = vec4(col, 1.0);
 }
 """
@@ -292,6 +303,7 @@ class GpuCRT:
         self.prog['u_gamma'].value = gamma
         self.prog['u_texSize'].value = window_size
         self.prog['u_zoom'].value = 1.05  # try 1.08–1.18 depending on warp strength
+        self.prog['u_dim'].value = 1.0
 
     def _ensure_texture(self, size):
         if self.tex is None or self.tex.size != size:
@@ -304,6 +316,16 @@ class GpuCRT:
             self.prog['u_texSize'].value = size
             self.prog['u_tex'].value = 0  # bound to tex unit 0
             self.tex.use(location=0)
+
+    def set_dim(self, level):
+        """Set output brightness, 1.0 = normal. Cheap enough to call per frame.
+
+        Sleep mode drives this; the uniform is only re-uploaded when the value
+        actually changes, so a fully lit panel costs nothing.
+        """
+        level = min(max(float(level), 0.0), 1.0)
+        if level != self.prog['u_dim'].value:
+            self.prog['u_dim'].value = level
 
     def draw_surface(self, src_surf):
         """Upload src_surf and draw warped to the GL backbuffer."""

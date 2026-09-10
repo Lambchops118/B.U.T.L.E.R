@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 
@@ -118,6 +119,31 @@ def register(server: FastMCP) -> None:
         return _call("/health/components")
 
     @server.tool()
+    def set_owner_presence(present: bool) -> str:
+        """Record an EXPLICIT owner presence change. Call this only when the
+        user directly says they are leaving/away or that they have returned;
+        never infer absence from silence, elapsed time, sleep mode, or a lack
+        of interaction. Normal voice/text interactions already assert present.
+        This records context only and performs no physical action."""
+        return _dumps(
+            _post(
+                "/ingest",
+                {
+                    "topic": "home/presence/owner/state",
+                    "transport": "internal",
+                    "payload": {
+                        "event_id": str(uuid4()),
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "present": bool(present),
+                        "modality": "explicit_user_statement",
+                        "detail": "explicitly_present" if present else "explicitly_away",
+                        "confidence": 1.0,
+                    },
+                },
+            )
+        )
+
+    @server.tool()
     def get_event_provenance(event_id: str) -> str:
         """Full provenance for one event id: who reported it, on which topic,
         clock trust, sequence/boot, correlation, and any linked alerts. Use
@@ -147,6 +173,51 @@ def register(server: FastMCP) -> None:
                 "scope": scope or None,
             },
         )
+
+    @server.tool()
+    def propose_memory_candidate(
+        statement: str,
+        scope: str = "general",
+        memory_type: str = "semantic",
+        session_id: str = "",
+        importance: float = 0.5,
+        sensitivity: str = "normal",
+    ) -> str:
+        """Propose something worth remembering that the user did NOT ask you
+        to remember explicitly — an observation from the conversation such as
+        a preference, a habit, or a fact about their setup.
+
+        Use this instead of remember_memory_fact when you inferred the fact
+        rather than being told to store it. Candidates are recorded with lower
+        confidence and a model-attributed provenance trail, are checked
+        against existing memories for duplication and contradiction, and can
+        be superseded later — so a wrong guess is recoverable rather than
+        becoming a permanent false 'fact'. Do not use it for current device
+        state or numeric readings; those are events, not memories."""
+        try:
+            return _dumps(
+                awareness_client.post_json(
+                    "/memory/candidates",
+                    {
+                        "statement": statement,
+                        "memory_type": memory_type or "semantic",
+                        "scope": scope or "general",
+                        "importance": max(0.0, min(1.0, float(importance))),
+                        "sensitivity": sensitivity or "normal",
+                        "evidence": [
+                            {
+                                "kind": "conversation",
+                                "reference": f"session:{session_id or 'unknown'}",
+                                "metadata": {"tool": "propose_memory_candidate"},
+                            }
+                        ],
+                        "proposing_model": "talos-agent",
+                        "prompt_version": "candidate-v1",
+                    },
+                )
+            )
+        except RuntimeError as exc:
+            return _dumps({"error": str(exc)})
 
     @server.tool()
     def request_device_action(
@@ -236,6 +307,28 @@ def register(server: FastMCP) -> None:
         set_reminder or list_reminders). Only 'scheduled' reminders can be
         cancelled; returns an error if it already fired or does not exist."""
         return _dumps(_post(f"/reminders/{reminder_id}/cancel", {}))
+
+    @server.tool()
+    def list_recent_briefings(limit: int = 10) -> str:
+        """Recall what TALOS announced in recent briefings, including welcome-back
+        briefings: returns exact announcement text, timestamps, source item ids,
+        categories and selection audit. Older receipts may lack announcement text;
+        do not invent their wording. Check status: failed attempts were not accepted.
+        Delivery means adapter acceptance, not proof the user heard it.
+        Use to identify an item before recording explicit owner feedback."""
+        return _call("/briefings", {"limit": max(1, min(limit, 50))})
+
+    @server.tool()
+    def set_briefing_preference(value: str, category: str = "", item_id: str = "") -> str:
+        """Only when the owner explicitly requests it, record briefing feedback.
+        value is dismiss, interest, or neutral. Provide exactly one target:
+        category (alert, transition, agent_outcome, novelty, interaction, reminder)
+        or an exact item_id from list_recent_briefings. Never infer a dismissal
+        from silence. Critical items cannot be suppressed. This does not trigger
+        a briefing, alter detection, or affect physical devices."""
+        return _dumps(_post("/briefings/feedback", {
+            "value": value, "category": category or None, "item_id": item_id or None,
+        }))
 
     @server.tool()
     def get_awareness_capabilities() -> str:

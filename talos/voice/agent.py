@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import time
 import wave
 import random
@@ -21,6 +22,7 @@ import numpy as np
 import speech_recognition as sr
 
 from talos.config import env_bool, env_float, env_int, load_environment, require_env
+from talos.services import awareness_signals
 from talos.telemetry import emit_pipeline_event
 from talos.text.service_client import (
     send_interrupt,
@@ -30,6 +32,10 @@ from talos.text.service_client import (
 )
 from talos.voice.asr_queue import AsrPriority, BoundedAsrQueue
 from talos.voice.benchmarking import VoiceBenchmarkSession
+from talos.voice.microphone_profiles import (
+    get_microphone_profile,
+    resolve_energy_threshold,
+)
 from talos.voice.streaming import barge_in as barge_in_module
 from talos.voice.streaming.barge_in import BargeInConfig, BargeInDetector, SpeechSession
 from talos.voice.streaming.barge_in_observability import (
@@ -43,7 +49,21 @@ from talos.voice.streaming.vad import select_vad_lane
 load_environment()
 
 r = sr.Recognizer()
+MICROPHONE_PROFILE = get_microphone_profile(
+    os.getenv("TALOS_MICROPHONE_PROFILE", "respeaker")
+)
 WAKE_WORD = os.getenv("WAKE_WORD", "butler").lower()
+# What to remove from the front of a transcript once the wake word is found.
+#
+# The wake word plus any punctuation is obvious. The possessive is not: asked
+# for "butler, sleep mode", faster-whisper regularly writes "butler's sleep
+# mode" -- the comma pause is short and the following word starts with an s.
+# Slicing off only ``len(WAKE_WORD)`` and stripping " ,.:;!?-" left the
+# apostrophe behind, so the command reaching the agent was "'s sleep mode",
+# which matched no sleep phrase and was handed to the model as a garbled turn.
+_WAKE_WORD_PREFIX = re.compile(
+    rf"^{re.escape(WAKE_WORD)}(?:['’]s|s\b)?[\s,.:;!?\-]*"
+)
 WAKE_WORD_MODE = os.getenv("WAKE_WORD_MODE", "local").lower()
 WAKE_WORD_MODEL = os.getenv("WAKE_WORD_MODEL", "base")
 VOICE_SESSION_ID = os.getenv("TALOS_VOICE_SESSION", "voice-worker")
@@ -289,6 +309,31 @@ def _describe_output_device(device_index):
     host_api = info.get("hostApi")
     max_channels = info.get("maxOutputChannels")
     return f"{name} (index={info.get('index')}, hostApi={host_api}, maxOutputChannels={max_channels})"
+
+
+def _build_profile_microphone():
+    """Build an explicit input source instead of trusting the Windows default."""
+
+    from talos.voice.streaming.portaudio_input import PortAudioChannelMicrophone
+
+    profile = MICROPHONE_PROFILE
+    device_name = (
+        os.getenv(profile.device_name_env, "").strip()
+        or profile.default_device_name
+    )
+    source = PortAudioChannelMicrophone(
+        name_contains=device_name,
+        preferred_host_api=profile.preferred_host_api,
+        sample_rate=16000,
+        source_channels=profile.source_channels,
+        selected_channel=profile.selected_channel,
+    )
+    print(
+        f"Microphone profile '{profile.name}': matching '{device_name}', "
+        f"16 kHz/{profile.source_channels}ch -> channel "
+        f"{profile.selected_channel + 1}."
+    )
+    return source
 
 
 def _open_speech_stream():
@@ -793,6 +838,9 @@ def _report_then_redispatch(
         return
     benchmark = VoiceBenchmarkSession(wake_word=WAKE_WORD, wake_word_mode=WAKE_WORD_MODE)
     benchmark.mark_wake_word_detected()
+    awareness_signals.record_presence(
+        modality="wake_word", confidence=0.95, detail="barge_in", force=True
+    )
     benchmark.set_transcript(transcript.lower())
     benchmark.set_command(command)
     benchmark.set_dimension("barge_in", True)
@@ -1199,7 +1247,15 @@ def _process_recognition_audio(audio_data):
             # cue is not queued behind the dispatch it is meant to announce.
             _signal_wake_cue()
             benchmark.mark_wake_word_detected()
-            command = text_spoken[len(WAKE_WORD):].lstrip(" ,.:;!?-").strip()
+            # A wake word is a timestamped observation that a person is in the
+            # room, from a source of known reliability -- structurally the same
+            # kind of fact as a pin status, and previously discarded. force=True
+            # because a deliberate wake is always worth recording, even inside
+            # the presence rate-limit window.
+            awareness_signals.record_presence(
+                modality="wake_word", confidence=0.95, force=True
+            )
+            command = _WAKE_WORD_PREFIX.sub("", text_spoken, count=1).strip()
             print(f"Command received: {command}")
             if command:
                 benchmark.set_command(command)
@@ -1470,8 +1526,16 @@ def _start_aec_duplex():
         get_default_windows_audio_endpoints,
     )
 
+    if not MICROPHONE_PROFILE.windows_aec:
+        raise RuntimeError(
+            f"Windows AEC is not enabled for microphone profile "
+            f"'{MICROPHONE_PROFILE.name}'."
+        )
     defaults = get_default_windows_audio_endpoints()
-    capture_id = os.getenv("TALOS_AUDIO_CAPTURE_ENDPOINT_ID", "").strip()
+    capture_id = (
+        os.getenv(MICROPHONE_PROFILE.capture_endpoint_env, "").strip()
+        or os.getenv("TALOS_AUDIO_CAPTURE_ENDPOINT_ID", "").strip()
+    )
     render_id = os.getenv("TALOS_AUDIO_RENDER_ENDPOINT_ID", "").strip()
     if not capture_id or not render_id:
         raise RuntimeError(
@@ -1550,7 +1614,18 @@ def run_voice_recognition():
             "Idle VAD endpointing was requested but remains disabled until "
             "TALOS_IDLE_VAD_CORPUS_ACCEPTED=1. Using SpeechRecognition."
         )
-    if BARGE_IN_ENABLED and BARGE_IN_BACKEND == "aec":
+    if not MICROPHONE_PROFILE.windows_aec:
+        _barge_in_runtime_ready = False
+        _vad_endpointing_active = False
+        if BARGE_IN_ENABLED:
+            print(
+                f"Barge-in is disabled for microphone profile "
+                f"'{MICROPHONE_PROFILE.name}': its far-end/AEC contract has not "
+                "been measured on this host. Run "
+                "'python -m talos.voice.diagnostics.windows_aec_probe'."
+            )
+        mic = _build_profile_microphone()
+    elif BARGE_IN_ENABLED and BARGE_IN_BACKEND == "aec":
         try:
             pipeline = _start_aec_duplex()
             if _vad_endpointing_active:
@@ -1575,21 +1650,34 @@ def run_voice_recognition():
                 "AEC barge-in is unavailable and has been disabled; ordinary "
                 f"wake-word capture remains active: {exc}"
             )
-            mic = sr.Microphone()
+            mic = _build_profile_microphone()
     elif (
         BARGE_IN_ENABLED and BARGE_IN_BACKEND == "heuristic_diagnostic"
     ) or _FIXTURE_RECORDING_ENABLED:
         mic = _TappedMicrophone()
     else:
-        mic = sr.Microphone()
+        mic = _build_profile_microphone()
     print("Microphone initialized.")
     with mic as source:
         r.adjust_for_ambient_noise(source, duration=1.0)
         r.dynamic_energy_threshold = False
-        r.energy_threshold = 500
+        r.energy_threshold = resolve_energy_threshold(
+            MICROPHONE_PROFILE,
+            os.getenv("TALOS_RECOGNIZER_ENERGY_THRESHOLD"),
+            r.energy_threshold,
+        )
         r.pause_threshold = 0.6
         r.non_speaking_duration = 0.3
-        print("Adjusted for ambient noise.")
+        device = getattr(source, "device", None)
+        description = (
+            f"{device.name} via {device.host_api} (index={device.index})"
+            if device is not None
+            else MICROPHONE_PROFILE.label
+        )
+        print(
+            f"Adjusted for ambient noise on {description}; "
+            f"energy threshold={r.energy_threshold:.1f}."
+        )
 
     stop_listening = r.listen_in_background(mic, recognition_callback)
     print("Background listening started.")

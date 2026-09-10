@@ -25,6 +25,10 @@ from typing import Callable, Optional
 
 from . import config
 from .config import LauncherConfig, Ports, REPO_ROOT, venv_python
+from talos.voice.microphone_profiles import (
+    get_microphone_profile,
+    normalize_microphone_profile,
+)
 
 LogFn = Callable[[str, str], None]
 """``log(source, message)`` — ``source`` is a short tag like ``main`` or
@@ -146,6 +150,25 @@ def _mcp_env(base: dict[str, str], cfg: LauncherConfig) -> dict[str, str]:
             env[name] = ",".join(values)
         else:
             env.pop(name, None)
+    return env
+
+
+def _microphone_env(base: dict[str, str], cfg: LauncherConfig) -> dict[str, str]:
+    """Apply one coherent room-microphone profile to the voice worker."""
+
+    env = dict(base)
+    name = normalize_microphone_profile(cfg.microphone_profile)
+    profile = get_microphone_profile(name)
+    env["TALOS_MICROPHONE_PROFILE"] = name
+    env["TALOS_RECOGNIZER_ENERGY_THRESHOLD"] = profile.energy_threshold
+    if not profile.windows_aec:
+        # A microphone may only be composed with the Windows AEC/barge-in
+        # contract once its own far-end reference has been measured on this
+        # host (`python -m talos.voice.diagnostics.windows_aec_probe`). Both
+        # deployed profiles have now passed; this stays as the fail-closed path
+        # for any profile added later.
+        env["TALOS_BARGE_IN"] = "0"
+        env["TALOS_IDLE_VAD_ENDPOINTING"] = "0"
     return env
 
 
@@ -315,6 +338,10 @@ class Supervisor:
         # so it does not need a GPU pin of its own. It does spawn the local MCP
         # server as a child ("command": "python"), so its venv must be active.
         env = _venv_env(base, py)
+        # The GUI consumes these structured stdout records into its dedicated
+        # LLM I/O tab. The same exact JSON events are retained in a per-run file.
+        env["TALOS_LLM_DEBUG_STDOUT"] = "1"
+        env["TALOS_LLM_DEBUG_LOG_DIR"] = str(REPO_ROOT / "talos" / "logs")
         if self._cfg.use_api_models:
             env = _api_model_env(env, self._cfg.api_llm_model)
         env = _mcp_env(env, self._cfg)
@@ -337,6 +364,14 @@ class Supervisor:
         # but harmless, and these overrides route the LLM + STT to OpenAI.
         if self._cfg.use_api_models:
             env = _api_model_env(env, self._cfg.api_llm_model)
+        env = _microphone_env(env, self._cfg)
+        profile = get_microphone_profile(self._cfg.microphone_profile)
+        self._say(f"voice microphone profile: {profile.label}")
+        if not profile.windows_aec:
+            self._say(
+                f"{profile.label}: barge-in is disabled until this "
+                "microphone's far-end/AEC evidence passes on this host."
+            )
         # The voice worker reaches the main agent over TALOS_TEXT_AGENT_URL. When
         # the launcher also starts the main agent locally, the worker must talk
         # to it on loopback. A real OS-level TALOS_TEXT_AGENT_URL (e.g. a

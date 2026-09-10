@@ -251,9 +251,17 @@ class AlertService:
         notify: bool,
         notification_payload: dict[str, Any],
         now: datetime,
+        conversation_relevance: dict[str, Any] | None = None,
     ) -> UUID | None:
         """Create an attention item unless its cooldown suppresses it; queue
-        the notification outbox work in the same transaction when asked."""
+        the notification outbox work in the same transaction when asked.
+
+        ``conversation_relevance`` records, deterministically, what this item
+        is *about* (the entity, and the rule that raised it). The situation
+        broker scores it against what the human was recently talking about to
+        order items within their priority band. It is descriptive metadata
+        written at raise time, never an inference about importance.
+        """
         if cooldown_key and cooldown_seconds > 0:
             recent = (
                 await connection.execute(
@@ -293,6 +301,7 @@ class AlertService:
                     interruptibility=interruptibility,
                     preferred_channel=preferred_channel,
                     cooldown_key=cooldown_key,
+                    conversation_relevance=conversation_relevance or {},
                 )
                 .returning(AttentionItem.attention_item_id)
             )

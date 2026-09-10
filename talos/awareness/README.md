@@ -13,6 +13,9 @@ The implementation follows the phase-gated plan in
 (Phase 0 discovery → Phase 8 hardening).
 
 **Status: Phase 8 (Retention, Security, and Hardening) complete — all phases implemented.**
+**Follow-on (2026-09-06): human context — presence, interaction, and agent
+outcomes now enter the subsystem, and `POST /ingest` accepts internal and
+manual messages. See "Human context" below.**
 
 ## Setup
 
@@ -70,6 +73,8 @@ Secrets never appear in logs or health output.
 | `TALOS_AWARENESS_MQTT_HOST` / `_MQTT_PORT` | falls back to legacy `MQTT_BROKER` / `MQTT_PORT`, then `192.168.1.160:1883` | Existing Raspberry Pi Mosquitto broker (used from Phase 2) |
 | `TALOS_AWARENESS_MQTT_TLS` / `_MQTT_USERNAME` / `_MQTT_PASSWORD` / `_MQTT_CLIENT_ID` / … | see `config.py` | Broker security/session options |
 | `TALOS_AWARENESS_MAX_EVENT_PAYLOAD_BYTES` | `65536` | Ingestion payload bound |
+| `TALOS_AWARENESS_INGEST_API_ENABLED` | `1` | Accept internal/manual messages on `POST /ingest` (same pipeline, no bypass) |
+| `TALOS_AWARENESS_SIGNALS_ENABLED` | `1` | Read by the **main/voice** processes: emit presence, interaction, and agent-outcome signals |
 
 ## MQTT ingestion (Phase 2)
 
@@ -97,6 +102,7 @@ deployment is seeded idempotently at startup (`registry/bootstrap.py`):
 | `quad_pump_pico` | `status/17-19` | Legacy pin status. Firmware also publishes `status/16` — a known collision assigned to the fan (see DISCOVERY.md); fixable only in firmware, out of scope per owner decision |
 | `quad_pump_canonical` | `home/irrigation/quad_pump/{state,event,health,heartbeat,telemetry/+}` | Canonical quad-pump firmware ([`Peripherals/quad_pump`](../../Peripherals/quad_pump)). Separate from `quad_pump_pico` because that source routes through the legacy pin-status adapter |
 | `sim_device` | `home/sim/#` | Simulator for development and tests |
+| `talos_agent` | `home/presence/owner/state`, `home/interaction/owner/event`, `home/agent/talos/{event,state}` | The main agent reporting on the human and on itself. Pinned to the `internal` transport (`metadata.allowed_transports`) so the LAN broker cannot forge it — see "Human context" |
 
 Seed rows are inserted with `ON CONFLICT DO NOTHING`, so editing a seed never
 reaches a database that has already booted. `bootstrap.apply_source_migrations`
@@ -277,20 +283,34 @@ Channels (existing transports only):
 
 | Channel | Transport | "Confirmed" means | Limitation |
 |---|---|---|---|
-| `voice` | authenticated `POST /speak` on the text server (:8420) → router `voice_cmd` lane → agent phrases it → router hands the text to the **voice worker's** `/speak` (127.0.0.1:8610) → Polly TTS + audio out | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent + Ollama + the voice worker running |
+| `voice` | authenticated `POST /speak` on the text server (:8420) → typed router announcement → existing **voice worker's** `/speak` (127.0.0.1:8610) → Polly TTS + audio out | text server accepted and enqueued the spoken alert | not proof a human heard it; needs the main agent and voice worker; no downstream Ollama phrasing |
 | `gui` | authenticated `POST /notify` on the text server (:8420) → router `ui` lane → pygame GUI | text server accepted and enqueued the banner | not proof a human saw the screen |
 | `log` | structured awareness log | log record emitted | passive; always-available fallback |
 
 The default preferred channel for the seeded rules is `voice` (owner decision:
 maximize spoken presence): the awareness backend still **detects and renders
-factual wording deterministically** (no Ollama in the backend), and the LLM
-only phrases the sentence spoken aloud on the main-agent side. `voice` is built
+factual wording deterministically**. The main agent speaks supplied announcements
+directly without an LLM rewrite. Briefings keep diagnostic `text` in their audit
+and use bounded `spoken_text` for delivery (`briefing-speech-v1`). Presence metadata
+is silent; legacy queued diagnostics receive safe category summaries. Optional
+briefing model selection chooses IDs only. `voice` is built
 whenever `TALOS_AWARENESS_NOTIFY_URL` is set and `TALOS_AWARENESS_NOTIFY_VOICE_ENABLED`
 is true (default); the fallback order after a failed preferred channel is
 `voice → gui → log`, so a wedged agent still degrades to a banner and the log.
 
 Delivery evidence per alert: `GET /alerts/{id}/deliveries`. Backlog and
 oldest-pending age appear under `outbox_worker` in `/health/components`.
+
+Awareness notification and briefing receipts retain the rendered announcement
+title/text and source references, with `playback_confirmed: false`. Situation
+context includes the latest three accepted voice announcements within 24 hours,
+under the existing token budget and below alerts. This supports conversational
+recall without treating TALOS's own words as new facts. Failed attempts and GUI/log
+deliveries are excluded. Briefing history (`/briefings`, `list_recent_briefings`)
+also exposes saved wording; legacy receipts without wording are not reconstructed.
+Manual-test provenance remains in source events. Restart awareness and the MCP
+provider/main agent to load the change. Other direct speech callers outside the
+awareness ledger are not recorded by this mechanism.
 
 ### Reminders and the due-time worker
 
@@ -588,6 +608,237 @@ backlog/oldest-age, data-directory disk usage, last backup. Component health
 (DB/extensions/migration revision, MQTT, workers, rules) stays at
 `GET /health/components` with truthful degradation.
 
+## Human context: presence, interaction, and agent outcomes
+
+Phases 1-8 built a *device* backend: it knew a great deal about pumps, fans,
+and pin states and nothing about the person in the room or about the agent's
+own work. This section covers the producer side that closes that gap. No
+schema migration was required — `entity_type` already permitted `person` and
+`agent`, and `attention_items` already carried `conversation_relevance`,
+`interruptibility`, `preferred_channel`, and `cooldown_key`. The sockets
+existed; nothing was plugged into them.
+
+### Internal ingestion (`POST /ingest`)
+
+The main agent and a human debugging the subsystem both need to put a message
+into the pipeline without publishing to the broker. `POST /ingest` takes
+`{topic, payload, retained?, transport?}`, builds the identical
+`InboundMessage` the MQTT ingress builds, and hands it to the same
+`IngestionPipeline.handle`. It is **not** a bypass: registry topic ownership,
+transport authorization, payload bounds, normalization, sequence assessment,
+state effects, and rule evaluation all apply unchanged, and a topic no
+registered source owns is dead-lettered exactly as it would be from MQTT.
+
+Its advantage over publishing to the broker is that the disposition comes back
+**synchronously** — `accepted`, `duplicate`, or `dead_letter:{reason}` — so a
+rejected message explains itself immediately instead of only in
+`dead_letter_events`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8600/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"topic":"home/sim/greenhouse/telemetry/temperature",
+       "payload":{"value":71.2,"unit":"F"}}'
+# {"topic":"...","transport":"internal","disposition":"accepted","accepted":true}
+```
+
+Bearer-gated like every other mutation (`TALOS_AWARENESS_API_TOKEN` when set),
+and disabled entirely with `TALOS_AWARENESS_INGEST_API_ENABLED=0`. The
+pipeline is built at startup regardless of `TALOS_AWARENESS_MQTT_ENABLED`, so
+internal ingestion still works with the broker switched off.
+
+### Transport authorization
+
+A source may now pin itself to a set of transports via
+`metadata.allowed_transports`; absent or empty means unrestricted, which is
+every device source's existing behavior. `talos_agent` lists `["internal"]`.
+This matters because its topics live under `home/`, which the broker ingress
+subscribes to — without the pin, anyone on the LAN broker could publish
+fabricated presence. Violations are dead-lettered as `unauthorized_transport`.
+
+### What the agent reports
+
+| Topic | Source | Becomes |
+|---|---|---|
+| `home/presence/owner/state` | `talos_agent` | `present` / `modality` / `detail` state on the `owner` person entity |
+| `home/interaction/owner/event` | `talos_agent` | `person.interaction.started` / `.ended` events (history only) |
+| `home/agent/talos/event` | `talos_agent` | `agent.job.*` / `agent.tool.failed` events on the `talos` agent entity |
+
+Emission lives in [`talos/services/awareness_signals.py`](../services/awareness_signals.py)
+(main venv, stdlib only, so the voice worker can import it too). Three
+properties it must keep, because it sits on the voice hot path: it never
+blocks the caller (one bounded daemon thread), it never raises (a failure to
+record that someone spoke must not stop them being answered), and the queue is
+hard-capped at 256 with dropped signals **counted** and reported by
+`awareness_signals.stats()` rather than hidden.
+
+Wake word and barge-in are treated as what they are: timestamped observations
+that a person is in the room, from a source of known reliability. They decay
+through the existing freshness worker (`stale_after_seconds = 900` on
+`talos_agent`), so "detected 40 minutes ago" can never read as "here now".
+
+Deliberately **not** recorded: utterance text. Awareness stores what happened,
+not what was said. A transcript would drown the situation broker's token
+budget and turn an event store into a chat log. Failed *tool* calls are
+recorded as history but raise nothing (they are often retried within the same
+turn); a failed background *job* the user explicitly asked for does raise a
+deferred, non-notifying attention item (`agent-job-failed` in `rules.toml`,
+policy version 2).
+
+### Human context in the situation snapshot
+
+`/situation` gained a `PRESENCE` section directly below alerts, plus two
+deterministic effects on attention selection:
+
+- **`interruptibility` is honored.** `passive` items ("mention it if we are
+  already talking") are withheld while nobody is present, and stay pending for
+  a later read.
+- **`conversation_relevance` is scored** against the entities named by recent
+  interaction/agent events. A match sorts an item earlier *within its priority
+  band*; bands never change, so a critical alert can never be reordered behind
+  small talk. Every decision is in the existing audit, now carrying a
+  `relevance` field and a reason such as
+  `pending_attention+matches_conversation_entity`.
+
+The `limitations` string is now computed per-request and reports exactly which
+human signals were available: whether presence has ever been recorded, whether
+any recent interaction named an entity (if none did, relevance contributed
+nothing and ordering is plain priority), and that user location within the
+home is still not modeled. That last one remains genuinely absent — it is
+reported, not invented.
+
+### Memory candidates
+
+`POST /memory/candidates` existed with zero callers; nothing ever proposed a
+memory for review. The `propose_memory_candidate` MCP tool now feeds it, for
+facts the agent *inferred* rather than being told to store. Candidates land
+with lower confidence (0.55 vs 0.85 for explicit user confirmation) and
+model-attributed provenance, and go through the existing duplicate and
+contradiction checks, so a wrong guess is supersedable rather than becoming a
+permanent false fact. `remember_memory_fact` still writes the deterministic
+path for facts the user explicitly asked to keep.
+
+## Proactive briefings (Phase 9A–9D)
+
+`talos.awareness.context.briefing.BriefingAssembler(engine, settings).build(kind)`
+returns a deterministic candidate set. When explicitly enabled, a clock/arrival
+worker queues durable briefing work; a dedicated outbox worker assembles,
+optionally ranks, and delivers it through the existing notification adapters.
+The model selects content, never the moment, detection, severity, or actions.
+No model call was added to ingestion or the conversational reply path.
+
+Candidates share the situation broker's `Candidate` vocabulary (`item_id`,
+`priority`, `text`, `reason`, `relevance`) and temporal helpers, adding `category`,
+`entity_id`, `source_id`, `timestamp`, `query`, `evidence`, and `novelty_score`.
+Categories: `alert`, `transition`, `agent_outcome`, `novelty`, `interaction`,
+`reminder`. Versioned query identifiers refer to the typed storage methods in
+`talos/awareness/history/briefing.py`. The `queries` audit records their time
+ranges, limits, counts, and truncation; per-candidate `audit` records selection
+under the assembly bound. Event rendering excludes raw payloads/transcripts.
+Unknown source attribution is explicit. Only exact structured briefing
+preferences from normal/personal active memories are read, never unrestricted
+memory statements or restricted memories.
+
+Windows use the last confirmed delivery's recorded `window.end` for the same
+`metadata.briefing_kind`, preserving events received during selection/deferral.
+Older receipts lacking that field use their confirmation/attempt timestamp.
+Failed delivery and outbox completion never advance the window. First run uses
+the configured lookback and reports `configured_first_run_window`. Confirmed
+item ids are excluded across briefing kinds, and ordinary pending notifications
+retain ownership of their alerts/reminders. Notification receipts remain after
+completed outbox retention. No migration was necessary.
+
+| Setting (`TALOS_AWARENESS_` prefix) | Default | Effect |
+|---|---:|---|
+| `BRIEFING_DEFAULT_WINDOW_HOURS` | 24 | First-run lookback |
+| `BRIEFING_MAX_CANDIDATES` | 100 | Total candidate cap and per-source limit |
+| `BRIEFING_NOVELTY_BASELINE_DAYS` | 7 | Prior hourly aggregate lookback |
+| `BRIEFING_NOVELTY_Z_THRESHOLD` | 3.0 | Minimum absolute z-score |
+| `BRIEFING_ENABLED` | false | Opt in to proactive delivery on backend restart |
+| `BRIEFING_SCHEDULE_TIME` | 08:00 | Daily morning briefing, host local time |
+| `BRIEFING_ARRIVAL_ENABLED` | true | Include absent/stale/offline → present transitions |
+| `BRIEFING_ARRIVAL_LOOKBACK_MINUTES` | 60 | Bounded arrival catch-up window |
+| `BRIEFING_INTERVAL_SECONDS` | 15 | Deterministic moment poll interval |
+| `BRIEFING_MAX_ITEMS` | 3 | Hard cap per delivery batch |
+| `BRIEFING_CHANNEL` | voice | Existing voice, gui, or log adapter |
+| `BRIEFING_MODEL_ENABLED` | false | Optional Ollama ranking; requires `CHAT_MODEL` |
+| `BRIEFING_MODEL_TIMEOUT_SECONDS` | 5 | Overall ranking timeout |
+| `BRIEFING_PROMPT_MAX_CHARS` | 24000 | Maximum model prompt size |
+
+`MAX_QUERY_RANGE_DAYS`, `MAX_QUERY_POINTS`, and `MAX_EVENT_PAGE_SIZE` impose
+additional bounds. Baseline and candidate data together stay within the maximum
+query range. Reads share a repeatable-read snapshot; count/window truncations
+are audited. Potential critical-item truncation fails assembly rather than
+returning an incomplete safety summary. Query errors return no partial result
+and log only error type and briefing kind. Empty windows return no candidates.
+
+SQL pools sample counts, means, and sample variances from `measurements_1h`
+over complete hours preceding the candidate window: no self-baseline. Units
+remain separate; the existing aggregate combines sources within an entity.
+Missing, constant, nonfinite, or over-bound baselines remain unscored and are
+counted in the audit. Refresh lag can reduce coverage. Bounded retained history
+cannot prove a first-ever observation, so no such claim is made.
+
+For a future numeric source, register its entity/source and topic ownership,
+set deadbands/staleness, then ingest timestamped measurements normally. Existing
+hourly aggregates supply this same novelty calculation. No finance poller,
+credentials, external integration, or unsorted-data store is introduced here.
+
+Scheduled work is idempotent per local date; arrivals are idempotent per stored
+transition id. Repeated true→true presence signals cannot trigger briefings.
+Only today's scheduled moment is caught up after downtime; arrival catch-up is
+bounded by the setting above. Presence remains the existing single-owner,
+interaction-based signal, not proof of physical arrival or identity. The old
+commented-out `morning_report_job` schedule is unchanged; do not enable both.
+
+The selector uses prompt version `briefing-selection-v1`. Its strict result is
+`chosen: [{item_id, reason}]`. Unknown/duplicate ids and malformed responses
+are rejected; model phrasing is not accepted. Delivery uses the stored candidate
+text. Dismissed classes/items are filtered before prompting, and explicit
+interest affects deterministic ranking within priority bands. Critical items
+are added regardless of model output or dismissals. The cap applies after
+ranking; critical overflow creates durable continuation batches, each capped.
+Quiet hours defer noncritical batches through the existing quiet-hours helper,
+without spending the outbox retry budget.
+
+Timeout, unavailable/unset model, invalid output, or disabled ranking selects
+deterministically and records `selection_mode: deterministic_fallback` plus
+the reason. Valid model decisions record `model_selection`, model name, prompt
+version, offered/chosen ids, and reasons. Prompts are bounded and sent only to
+loopback Ollama, with environment proxies and redirects disabled. A separate
+outbox claim lane prevents briefing inference from blocking ordinary alerts.
+Local GPU contention remains a deployment consideration; no new voice latency
+benchmark has been run.
+
+Selections are frozen in the outbox before delivery; retries reuse them.
+Confirmed receipt, attention delivery status, and any continuation commit
+together. Before each send, receipt/attention status and preferences are
+rechecked. A failed configured channel is recorded and retried, never replaced
+with a successful log receipt masquerading as speech. Empty or wholly dismissed
+briefings remain silent. `GET /briefings?limit=10` exposes bounded receipt
+summaries; full selection/query provenance remains in the ledger. Worker state
+and queue counts appear in `/health/components` and `/metrics`.
+
+`POST /briefings/feedback` accepts exactly one `category` or `item_id`, plus
+`value: dismiss|interest|neutral`. It writes a personal semantic memory in
+`briefing_preferences`, with explicit-user provenance and normal supersession.
+No transcript is stored. Example: `{"category":"novelty","value":"dismiss"}`.
+Both receipt reads and feedback honor configured bearer auth. MCP tools
+`list_recent_briefings` and `set_briefing_preference` expose these operations;
+feedback requires an explicit owner request and cannot suppress critical items.
+There is no remotely invocable briefing-trigger endpoint.
+
+Delivery semantics remain **adapter acceptance**, not proof of speech or human
+receipt. The owner-reported acknowledgement bug was fixed by routing `/speak`
+as a typed announcement: supplied text goes to the existing voice worker,
+without request classification, background jobs, model phrasing, or human
+presence/interaction signals. User commands retain their existing routing.
+A crash or timeout after enqueue but before receipt
+commit can cause duplicate transport delivery: the existing adapters offer no
+end-to-end idempotency or playback acknowledgement. Confirmed committed item
+receipts prevent subsequent briefing re-offering; exactly-once speech is not
+claimed. Production speech/latency acceptance remains to be measured.
+
 ## Tests
 
 ```bash
@@ -596,7 +847,8 @@ backlog/oldest-age, data-directory disk usage, last backup. Component health
   tests.test_awareness_config tests.test_awareness_event_schema \
   tests.test_awareness_health tests.test_awareness_ingestion_unit \
   tests.test_awareness_state_unit tests.test_awareness_rules_unit \
-  tests.test_awareness_context_unit tests.test_awareness_actions_unit
+  tests.test_awareness_context_unit tests.test_awareness_actions_unit \
+  tests.test_awareness_signals_unit
 
 # Integration (requires the compose database — and, for ingestion, the test
 # broker profile; each skips cleanly when its infrastructure is absent):
@@ -606,7 +858,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
   tests.test_awareness_state_integration tests.test_awareness_alerts_integration \
   tests.test_awareness_context_integration tests.test_awareness_memory_integration \
   tests.test_awareness_actions_integration tests.test_awareness_hardening_integration \
-  tests.test_awareness_actions_integration
+  tests.test_awareness_presence_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
 .venv-main/bin/python -m unittest tests.test_text_server_notify \

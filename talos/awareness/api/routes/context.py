@@ -126,5 +126,9 @@ async def get_capabilities(request: Request) -> dict:
             "set_reminder": reads,
             "list_reminders": reads,
             "cancel_reminder": reads,
+            "list_recent_briefings": reads,
+            "set_briefing_preference": reads,
+            "proactive_briefings": reads if request.app.state.settings.briefing_enabled else
+                "disabled: TALOS_AWARENESS_BRIEFING_ENABLED=0",
         }
     }

@@ -2,12 +2,11 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import paho.mqtt.client as mqtt
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from talos.messages import Message, VoicePayload
-from talos.services import tv_control
+from talos.services import display_power, sleep_mode
 
 TZ       = ZoneInfo("America/New_York")  # pick your local tz
 BROKER   = "192.168.1.160"
@@ -40,27 +39,42 @@ def degrees_to_compass(deg):
 def debug_job(gui_queue, central_queue=None):
     print("DEBUG JOB ACTIVATED")
     
-def wake_display(): #This will require a script on the PI to listen on this MQTT port and then send the CEC signal to the TV
-    print("Waking Display.")
-    TOPIC_PREFIX = "tv_display"
-    topic        = f"{TOPIC_PREFIX}/wake_status"
-    message      = "1"
-    client  = mqtt.Client()
-    client.connect(BROKER, PORT, keepalive=60)
-    client.publish(topic, message)
-    client.disconnect()
-    #tv_control.FireTvController.morning_turn_on() #This wont work because by morning tv is hard resting
+def wake_display():
+    """Morning wake-up: leave sleep mode, which lights the display with it.
 
-def dim_display(): #This will require a script on the PI to listen on this MQTT port and then send the CEC signal to the TV
+    Waking and re-illuminating the screen are the same act, so this no longer
+    publishes to ``tv_display/wake_status`` itself -- ``sleep_mode.wake()``
+    drives that through ``talos.services.display_power``. This job stays as the
+    backstop for the morning briefing, which clears sleep mode on its own when
+    it is delivered (see talos/text/server.py) but may be disabled, deferred,
+    or have nothing worth saying.
+
+    ``wake()`` is called unconditionally rather than only when asleep: the
+    display command is re-asserted with it, so a screen left dark by a missed
+    command still comes back in the morning.
+    """
+    print("Waking Display.")
+    try:
+        sleep_mode.wake(reason="morning wake_display job")
+    except RuntimeError as exc:
+        print(f"Could not clear sleep mode: {exc}")
+        # The flag could not be written, but the screen must still come up.
+        display_power.apply(asleep=False)
+
+def dim_display():
+    """Nightly quiet-down: enter sleep mode, which darkens the display with it.
+
+    This used to call ``tv_control.night_sleep()`` directly and leave the sleep
+    flag alone, so 11pm produced a dark TV over a system that still believed it
+    was awake -- the mirror image of asking for sleep mode and getting a lit
+    screen. Both now go through the one flag.
+    """
     print("Dimming Display.")
-    # TOPIC_PREFIX = "tv_display"
-    # topic        = f"{TOPIC_PREFIX}/wake_status"
-    # message      = "0"
-    # client  = mqtt.Client()
-    # client.connect(BROKER, PORT, keepalive=60)
-    # client.publish(topic, message)
-    # client.disconnect()
-    tv_control.night_sleep()
+    try:
+        sleep_mode.sleep(reason="nightly dim_display job")
+    except RuntimeError as exc:
+        print(f"Could not enter sleep mode: {exc}")
+        display_power.apply(asleep=True)
 
 def update_infopanel_information(gui_queue, central_queue=None):
     # fetch data here
@@ -148,13 +162,15 @@ def start_scheduler(gui_queue, central_queue=None):
     )
 
     #Debug Job
-    scheduler.add_job( 
-        debug_job,
-        trigger  = CronTrigger(hour=13, minute=31), # Daily at 7:30 AM
-        args     = [gui_queue, central_queue],
-        id       = "debug_task",
-        replace_existing = True,
-    )
+    # Disabled: fired at 1:31 PM daily (the "7:30 AM" comment was wrong) and
+    # only printed to stdout.
+    #scheduler.add_job(
+    #    debug_job,
+    #    trigger  = CronTrigger(hour=13, minute=31),
+    #    args     = [gui_queue, central_queue],
+    #    id       = "debug_task",
+    #    replace_existing = True,
+    #)
 
     scheduler.add_job(
         wake_display,
@@ -180,13 +196,18 @@ def start_scheduler(gui_queue, central_queue=None):
         replace_existing = True,
     )
 
-    scheduler.add_job(
-        morning_report_job,
-        trigger  = CronTrigger(hour=7, minute=30), 
-        args     = [gui_queue, central_queue],
-        id       = "morning_report_job",
-        replace_existing = True,
-    )
+    # Disabled: the morning wake-up report moves to the awareness subsystem.
+    # This job pushed a "Generate a morning report..." voice_cmd, which the
+    # request classifier matched on "generate" and routed to a background job,
+    # so 7:30 AM only ever spoke the background acknowledgement
+    # ("I can do that. I'm working on it now.") and never the report itself.
+    #scheduler.add_job(
+    #    morning_report_job,
+    #    trigger  = CronTrigger(hour=7, minute=30),
+    #    args     = [gui_queue, central_queue],
+    #    id       = "morning_report_job",
+    #    replace_existing = True,
+    #)
 
     #scheduler.add_job(
     #    get_crypto_prices,

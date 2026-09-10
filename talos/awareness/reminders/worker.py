@@ -117,6 +117,7 @@ class ReminderWorker:
             notify=True,
             notification_payload={"severity": "notice", "reason": row.text},
             now=now,
+            conversation_relevance={"entity_id": row.entity_id, "kind": "reminder"},
         )
         await connection.execute(
             sa.update(Reminder)

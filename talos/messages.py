@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 
-MessageType = Literal["voice_cmd", "text_cmd", "status", "event", "ui"]
+MessageType = Literal["voice_cmd", "text_cmd", "announcement", "status", "event", "ui"]
 
 @dataclass
 class Message:
@@ -19,6 +19,11 @@ class StatusPayload:
     freshness: float
 
 @dataclass
+class AnnouncementPayload:
+    title: str
+    text: str
+
+@dataclass
 class VoicePayload:
     command: str
     benchmark: Optional[Any] = None
@@ -30,6 +35,10 @@ class TextPayload:
     source: str = "text"
     reply_queue: Optional[Any] = None
     requested_mode: str = "auto"
+    # Extra context for this turn only, from the ingress that accepted it (e.g.
+    # a note that sleep mode was just toggled). Appended to whatever context the
+    # router assembles.
+    extra_context: Optional[str] = None
 
 @dataclass
 class EventPayload:

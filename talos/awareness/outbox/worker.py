@@ -27,6 +27,14 @@ logger = get_logger("talos.awareness.outbox")
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+class OutboxDeferred(Exception):
+    """Policy deferral, not a failed attempt (e.g. quiet hours or busy lease)."""
+
+    def __init__(self, until: datetime) -> None:
+        self.until = until
+        super().__init__("delivery deferred by policy")
+
+
 async def retry_outbox_item(engine: AsyncEngine, outbox_id: int) -> bool:
     """Manual retry of a failed/dead-lettered item (OUTBOX-003)."""
     async with engine.begin() as connection:
@@ -55,11 +63,15 @@ class OutboxWorker:
         handlers: dict[str, Handler],
         *,
         worker_id: str = "awareness-outbox-1",
+        work_types: tuple[str, ...] | None = None,
+        exclude_work_types: tuple[str, ...] = (),
     ) -> None:
         self._engine = engine
         self._settings = settings
         self._handlers = handlers
         self._worker_id = worker_id
+        self._work_types = work_types
+        self._exclude_work_types = exclude_work_types
         self._state = "stopped"
         self._last_error: str | None = None
         self._processed = 0
@@ -74,7 +86,11 @@ class OutboxWorker:
                         sa.select(
                             sa.func.count().label("backlog"),
                             sa.func.min(OutboxItem.available_at).label("oldest"),
-                        ).where(OutboxItem.status == "pending")
+                        ).where(
+                            OutboxItem.status == "pending",
+                            OutboxItem.work_type.in_(self._work_types) if self._work_types is not None else sa.true(),
+                            OutboxItem.work_type.not_in(self._exclude_work_types),
+                        )
                     )
                 ).one()
             backlog = row.backlog
@@ -124,6 +140,8 @@ class OutboxWorker:
                 .where(
                     OutboxItem.status == "pending",
                     OutboxItem.available_at <= now,
+                    OutboxItem.work_type.in_(self._work_types) if self._work_types is not None else sa.true(),
+                    OutboxItem.work_type.not_in(self._exclude_work_types),
                     sa.or_(
                         OutboxItem.next_attempt_at.is_(None),
                         OutboxItem.next_attempt_at <= now,
@@ -162,6 +180,12 @@ class OutboxWorker:
             if handler is None:
                 raise RuntimeError(f"no handler registered for {row.work_type!r}")
             await handler(dict(row.payload or {}))
+        except OutboxDeferred as exc:
+            async with self._engine.begin() as connection:
+                await connection.execute(sa.update(OutboxItem).where(
+                    OutboxItem.outbox_id == row.outbox_id,
+                ).values(available_at=exc.until, next_attempt_at=None, locked_at=None, locked_by=None))
+            return
         except Exception as exc:
             await self._record_failure(row, str(exc))
             return

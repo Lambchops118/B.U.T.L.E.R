@@ -27,19 +27,33 @@ class IngestionService:
         engine: AsyncEngine,
         rule_engine=None,
         action_service=None,
+        *,
+        pipeline: IngestionPipeline | None = None,
+        sources: SourceRepository | None = None,
+        seed_on_start: bool = True,
     ) -> None:
         self._settings = settings
         self._engine = engine
-        self.metrics = IngestionMetrics()
-        self.sources = SourceRepository(engine)
-        self.pipeline = IngestionPipeline(
-            engine,
-            self.sources,
-            settings,
-            self.metrics,
-            rule_engine=rule_engine,
-            action_service=action_service,
-        )
+        self._seed_on_start = seed_on_start
+        # An already-built pipeline may be supplied so the broker ingress and
+        # the internal /ingest endpoint share one pipeline, one registry
+        # snapshot, and one set of metrics. Standalone construction (tests,
+        # benchmark) keeps the previous self-contained behavior.
+        if pipeline is not None:
+            self.pipeline = pipeline
+            self.sources = sources if sources is not None else pipeline.sources
+            self.metrics = pipeline.metrics
+        else:
+            self.metrics = IngestionMetrics()
+            self.sources = sources if sources is not None else SourceRepository(engine)
+            self.pipeline = IngestionPipeline(
+                engine,
+                self.sources,
+                settings,
+                self.metrics,
+                rule_engine=rule_engine,
+                action_service=action_service,
+            )
         prefix = settings.mqtt_topic_prefix.strip("/")
         subscriptions = [
             f"{prefix}/{subscription}" if prefix else subscription
@@ -51,7 +65,8 @@ class IngestionService:
 
     async def start(self) -> None:
         try:
-            await seed_registry(self._engine)
+            if self._seed_on_start:
+                await seed_registry(self._engine)
             await self.sources.refresh(force=True)
         except Exception:
             # Self-healing: the pipeline refreshes the registry on a TTL, so a

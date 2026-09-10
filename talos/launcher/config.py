@@ -24,6 +24,11 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from talos.voice.microphone_profiles import (
+    DEFAULT_MICROPHONE_PROFILE,
+    normalize_microphone_profile,
+)
+
 
 # talos/launcher/config.py -> repo root is two parents up.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -446,6 +451,7 @@ class LauncherConfig:
     start_awareness: bool = True
     start_main: bool = True
     start_voice: bool = True
+    microphone_profile: str = DEFAULT_MICROPHONE_PROFILE
 
     # Discord voice frontend (separate repo). Off by default: it is an optional
     # external client that reaches the main agent over TALOS_TEXT_AGENT_URL, and
@@ -502,6 +508,9 @@ class LauncherConfig:
                         else []
                     )
                 setattr(cfg, key, value)
+            cfg.microphone_profile = normalize_microphone_profile(
+                cfg.microphone_profile
+            )
         else:
             # First run: seed GPU choices from detected hardware.
             gpus = detect_gpus()

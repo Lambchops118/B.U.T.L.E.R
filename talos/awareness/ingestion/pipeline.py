@@ -99,6 +99,11 @@ class IngestionPipeline:
         self._action_service = action_service
         self.metrics = metrics or IngestionMetrics()
 
+    @property
+    def sources(self) -> SourceRepository:
+        """The registry snapshot this pipeline authorizes against."""
+        return self._sources
+
     async def handle(self, message: InboundMessage) -> str:
         """Process one message; returns a disposition string (for tests/logs).
 
@@ -148,6 +153,20 @@ class IngestionPipeline:
                 message, received_at, "source_disabled", None, source.source_id
             )
             return "dead_letter:source_disabled"
+        if not source.permits_transport(message.transport):
+            # Internal sources (agent presence/interaction signals) declare
+            # metadata.allowed_transports so a message arriving over the shared
+            # broker cannot forge them. Device sources declare nothing and are
+            # unrestricted, exactly as before.
+            await self._reject(
+                message,
+                received_at,
+                "unauthorized_transport",
+                f"source {source.source_id!r} does not accept transport "
+                f"{message.transport!r}",
+                source.source_id,
+            )
+            return "dead_letter:unauthorized_transport"
 
         if len(message.payload) > self._settings.max_event_payload_bytes:
             await self._reject(

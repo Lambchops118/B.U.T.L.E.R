@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from talos.services import awareness_signals
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JOB_DB_PATH = REPO_ROOT / "db" / "talos_jobs.sqlite3"
@@ -495,6 +497,18 @@ class JobManager:
                 event_type="failed",
                 message=error_message,
             )
+            # A job the user asked for and that then failed is exactly the kind
+            # of thing the system should be able to raise on its own later.
+            awareness_signals.record_agent_event(
+                "agent.job.failed",
+                {
+                    "job_id": job.job_id,
+                    "session_id": job.session_id,
+                    "source": job.source,
+                    "error": _compact_text(error_message, limit=200),
+                },
+                severity="warning",
+            )
             return
 
         summary = _compact_text(response_text, limit=800)
@@ -511,6 +525,15 @@ class JobManager:
             session_id=job.session_id,
             event_type="completed",
             message=summary or "Background work completed.",
+        )
+        awareness_signals.record_agent_event(
+            "agent.job.completed",
+            {
+                "job_id": job.job_id,
+                "session_id": job.session_id,
+                "source": job.source,
+                "summary_chars": len(summary or ""),
+            },
         )
 
 

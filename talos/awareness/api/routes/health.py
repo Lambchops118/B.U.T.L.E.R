@@ -98,12 +98,24 @@ def _rules_component(request: Request) -> list[ComponentStatus]:
 
 
 async def _extra_components(request: Request) -> list[ComponentStatus]:
+    briefing = getattr(request.app.state, "briefing_worker", None)
+    briefing_outbox = getattr(request.app.state, "briefing_outbox", None)
+    extra = []
+    if briefing is not None:
+        data = briefing.status()
+        delivery = await briefing_outbox.status() if briefing_outbox else {}
+        status = DISABLED if not data["enabled"] else (
+            HEALTHY if data["state"] == "running" and not data["last_error"] and
+            delivery.get("state") == "running" and not delivery.get("last_error") else DEGRADED)
+        extra.append(ComponentStatus(name="briefings", status=status,
+            detail=data["last_error"] or delivery.get("last_error") or "", data={"moments": data, "outbox": delivery}))
     return (
         _mqtt_component(request)
         + _freshness_component(request)
         + await _outbox_component(request)
         + _reminder_component(request)
         + _rules_component(request)
+        + extra
     )
 
 
@@ -131,6 +143,10 @@ async def metrics(request: Request) -> dict:
     reminder_worker = getattr(request.app.state, "reminder_worker", None)
     if reminder_worker is not None:
         data["reminder_worker"] = reminder_worker.status()
+    briefing_worker = getattr(request.app.state, "briefing_worker", None)
+    if briefing_worker is not None:
+        data["briefing_worker"] = briefing_worker.status()
+        data["briefing_outbox"] = await request.app.state.briefing_outbox.status()
 
     try:
         usage = shutil.disk_usage(settings.data_directory if settings.data_directory.exists() else ".")
