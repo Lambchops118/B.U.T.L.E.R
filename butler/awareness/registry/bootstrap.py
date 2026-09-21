@@ -46,6 +46,11 @@ _ENTITIES: list[dict[str, Any]] = [
     {"entity_id": "quad_pump", "display_name": "Plant waterer", "entity_type": "controller", "location_id": "home"},
     {"entity_id": "plant_pot_1", "display_name": "Plant pot 1", "entity_type": "plant", "location_id": "home"},
     {"entity_id": "plant_pot_2", "display_name": "Plant pot 2", "entity_type": "plant", "location_id": "home"},
+    # 2026-09-13: owner plugged a pump into channel 3 and confirmed it waters a
+    # Philodendron. The species lives in the display name because that is the
+    # only entity field the model ever reads back; channel 4 stays unseeded
+    # because no pump is connected to it.
+    {"entity_id": "plant_pot_3", "display_name": "Plant pot 3 (Philodendron)", "entity_type": "plant", "location_id": "home"},
     {"entity_id": "sim_greenhouse", "display_name": "Simulated greenhouse device", "entity_type": "device", "location_id": "home"},
     # The human and the agent are first-class entities: presence, interaction,
     # and agent-side outcomes attach to them exactly like device state attaches

@@ -1210,3 +1210,56 @@ snapshot measures pipeline acceptance rather than WER against ground truth.
 SpeechRecognition fallback, not the pinned AEC/idle-VAD path described by the
 tracked settings. Merely changing Windows's default microphone is insufficient
 because Butler separately pins full MMDevice identities.
+## 2026-09-13 — Pump 3 (Philodendron) registration; watering-failure diagnosis
+<a id="session-handoff-2026-09-13"></a>
+
+Owner asked why pumps 3 and 4 were unreachable and why the 2026-09-13 15:30
+watering of pumps 1 and 2 did not run, then reported that a pump is now
+physically connected to channel 3 watering a Philodendron.
+
+**Shipped:** Registered pot 3 end to end — `plant_pot_3` seed entity
+("Plant pot 3 (Philodendron)"), channel descriptions on `run_pump`/`stop_pump`
+naming each pot and marking channel 4 as wired-but-unconnected, corrected
+`request_device_action` / `get_current_state` / `water_plants` docstrings so the
+legacy 2-pot tool can no longer be read as the system's limit, `philodendron`
+added to the physical-action noun guard in `runtime.py`, and a canonical
+channel-3 `mosquitto_pub` example in `Peripherals/debug_command.txt`. No
+firmware, board, or migration change was needed: `CHANNELS`,
+`CHANNEL_RELAY_GPIO`, and the action registry already carried all four
+channels.
+
+**Diagnosis (no fix applied, owner decision pending):** Three independent
+defects. (1) Channels 3/4 were never blocked in code — the model inferred the
+"pots 1 and 2 only" limit from the legacy `water_plants` tool, and the
+deterministic router could not correct it because `water` does not match
+"watering" and ASR had turned "pump" into "trump"/"comes". (2) `run_pump`
+channel 2 (948a46f2) really was published at 15:30:02 and honestly timed out —
+`quad_pump_canonical` had fired its last will at 15:29:47, fifteen seconds
+before dispatch; `source_health_history` shows this device flapping roughly
+every 15 minutes. (3) The channel-1 turn produced no action request row at all,
+yet was answered "Pump 1 request is approved" — the no-tool-call guard at
+`runtime.py` is gated on `_looks_like_physical_action_request`, which failed on
+the mis-transcribed noun, so nothing forced a tool call or an honest denial.
+Separately, `IngestionPipeline` flips any non-healthy source back to `healthy`
+on `message_received` for *any* ingested event, including the broker's own
+`{"online": false, "reason": "last_will"}` — which is why `sources` reports the
+pump healthy while it is unreachable.
+
+**Decisions:** Pot 3 gets no legacy pin encoding. Legacy pins 16 and 18 have no
+owner-confirmed pot (`qp_config.LEGACY_PIN_TO_CHANNEL`), and the established
+contract is to reject an unmapped legacy pin rather than guess it, so channel 3
+is reachable only through the canonical `run_pump` path.
+
+**Validation:** 20 action-registry tests passed in `.venv-awareness` and 15
+home-automation/runtime-recovery tests in `.venv-main` (`unittest`; pytest is
+not installed in either venv). All five touched Python modules compile, the
+TOML parses, the registry loads and validates `{"channel": 3}`, and the noun
+guard was confirmed to fire on "water the philodendron". No process restart,
+GUI smoke test, live MQTT command, or full-suite run occurred.
+
+**Limitations / outstanding:** The `plant_pot_3` row is seed-only — inserts are
+`ON CONFLICT DO NOTHING` and run at startup, so the awareness backend must be
+restarted before the entity exists in the live database (it is absent as of
+this session). Nothing was done about the three diagnosed defects, the pump's
+MQTT flapping, or the last-will health false positive; the pot-2 species is
+still unrecorded.

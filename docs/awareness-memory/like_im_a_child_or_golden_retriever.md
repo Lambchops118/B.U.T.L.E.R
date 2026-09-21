@@ -336,8 +336,9 @@ curl -s http://127.0.0.1:8600/state/fan | python3 -m json.tool
 curl -s http://127.0.0.1:8600/actions | python3 -m json.tool
 ```
 
-The known seeded entities include `fan`, `quad_pump`, `plant_pot_1`,
-`plant_pot_2`, and `sim_greenhouse`.
+The known seeded entities include `fan`, `quad_pump`, `plant_pot_1`
+(Monstera), `plant_pot_2`, `plant_pot_3` (Philodendron, pump connected
+2026-09-13), and `sim_greenhouse`.
 
 ### Stop cleanly
 

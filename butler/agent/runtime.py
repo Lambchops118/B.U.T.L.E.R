@@ -2381,7 +2381,10 @@ def _looks_like_physical_action_request(command: str) -> bool:
             r"switch on|switch off|enable|disable)\b",
             normalized,
         )
-        and re.search(r"\b(?:pump|pot|plant|monstera|fan|relay)\b", normalized)
+        and re.search(
+            r"\b(?:pump|pot|plant|monstera|philodendron|fan|relay)\b",
+            normalized,
+        )
     )
 
 

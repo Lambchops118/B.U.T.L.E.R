@@ -77,7 +77,10 @@ rollback = "none"
 name = "channel"
 type = "integer"
 allowed_values = [1, 2, 3, 4]
-description = "Logical pump channel 1-4 (channel 1 = pot 1, channel 2 = pot 2)"
+# 2026-09-13: channel 3 was physically connected and waters a Philodendron.
+# Channel 4 stays declared because the board and firmware route it, but no pump
+# is plugged into it, so a run there moves a relay and waters nothing.
+description = "Logical pump channel 1-4: 1 = pot 1 (Monstera), 2 = pot 2, 3 = pot 3 (Philodendron), 4 = no pump connected"
 
 [[actions.parameters]]
 name = "duration_seconds"
@@ -112,7 +115,7 @@ rollback = "none"
 name = "channel"
 type = "integer"
 allowed_values = [1, 2, 3, 4]
-description = "Logical pump channel 1-4"
+description = "Logical pump channel 1-4: 1 = pot 1 (Monstera), 2 = pot 2, 3 = pot 3 (Philodendron), 4 = no pump connected"
 
 # --- toggle the fan (legacy fan Pico) ------------------------------------------
 

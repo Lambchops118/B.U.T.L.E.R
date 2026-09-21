@@ -55,7 +55,8 @@ def register(server: FastMCP) -> None:
         latest temperature). Use this for present-tense facts — never guess
         and never use memory search. Each property includes status
         (current/stale/offline/conflicting), age, confidence, and source.
-        Known entities include: fan, quad_pump (the plant waterer), plant_pot_1, plant_pot_2,
+        Known entities include: fan, quad_pump (the plant waterer), plant_pot_1
+        (Monstera), plant_pot_2, plant_pot_3 (Philodendron),
         sim_greenhouse."""
         return _call(f"/state/{entity_id}")
 
@@ -230,9 +231,13 @@ def register(server: FastMCP) -> None:
         action service (never raw MQTT). `parameters` is a JSON object string,
         e.g. '{"channel": 1}'. Supported actions: run_pump (channel 1-4,
         optional duration_seconds 1-30), stop_pump (channel 1-4),
-        water_plants (pot_pin 17 or 19; legacy path for pots 1 and 2),
-        toggle_fan (state 0/1), sim_command (setting; requires
-        confirmation). The response includes the action_request_id and
+        water_plants (pot_pin 17 or 19; legacy 2-pot path only), toggle_fan
+        (state 0/1), sim_command (setting; requires confirmation).
+        run_pump/stop_pump are the full-capability path: channel 1 = pot 1
+        (Monstera), 2 = pot 2, 3 = pot 3 (Philodendron), 4 = wired but no pump
+        connected. Prefer run_pump for every watering request, including pots
+        the narrower water_plants tool cannot reach; never tell the user a pot
+        is unsupported because water_plants does not cover it. The response includes the action_request_id and
         status — 'awaiting_confirmation' means the user must approve before
         anything is dispatched; check progress with get_action_status.
         Supply and reuse `idempotency_key` when retrying the same user intent.

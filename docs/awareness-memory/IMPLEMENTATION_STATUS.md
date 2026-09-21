@@ -2,6 +2,33 @@
 
 This file reports implementation state, not documentation availability.
 
+## Latest bounded registration — pump channel 3 / Philodendron (2026-09-13)
+
+A pump was physically connected to logical channel 3 and waters a Philodendron.
+Nothing below the model needed changing: `qp_config.CHANNELS`,
+`CHANNEL_RELAY_GPIO`, and the `run_pump`/`stop_pump` registry entries already
+covered all four channels. What changed is what the model and the operator can
+*see*: a `plant_pot_3` seed entity, channel descriptions naming each pot
+(channel 4 marked wired-but-no-pump), docstrings that stop the legacy 2-pot
+`water_plants` tool from reading as a system-wide limit, `philodendron` in the
+physical-action noun guard, and a canonical channel-3 `mosquitto_pub` example.
+Pot 3 deliberately gets no legacy pin: pins 16 and 18 have no owner-confirmed
+pot and the contract is to reject rather than guess.
+
+Validation: 20 action-registry tests passed in `.venv-awareness`, 15
+home-automation/runtime tests in `.venv-main` (`unittest`; pytest is installed
+in neither venv). Modules compile, the TOML parses, and the registry validates
+`{"channel": 3}`. **The seed uses `ON CONFLICT DO NOTHING` and runs at startup,
+so the awareness backend must be restarted before `plant_pot_3` exists in the
+live database.** No restart, live MQTT command, GUI smoke test, or full-suite
+run occurred.
+
+Diagnosed in the same session but **not fixed**, pending owner decision: the
+verb/noun regex gates that silently drop valid watering requests, the
+fabricated "Pump 1 request is approved" reply produced with no action request
+row, and `IngestionPipeline` marking a source `healthy` on the broker's own
+last-will "offline" message. See `SESSION_LOG.md` (2026-09-13 entry).
+
 ## Latest bounded behavior fixes — presence, morning context, plant waterer, sleep (2026-09-08)
 
 Four owner-reported defects. Morning briefing context and the plant-waterer

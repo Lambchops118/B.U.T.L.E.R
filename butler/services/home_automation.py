@@ -45,7 +45,14 @@ def water_plants(
     elif pot_number == 2:
         pot_pin = 19
     else:
-        raise ValueError("pot_number must be 1 or 2")
+        # Legacy flat-topic path only. Legacy pins 16 and 18 have no
+        # owner-confirmed pot (qp_config.LEGACY_PIN_TO_CHANNEL), so pot 3
+        # deliberately has no legacy encoding — it is reachable through the
+        # canonical run_pump action instead.
+        raise ValueError(
+            "pot_number must be 1 or 2 on this legacy path; use run_pump "
+            "via request_device_action for pot 3"
+        )
     return _request_device_action(
         "water_plants",
         {"pot_pin": pot_pin},
