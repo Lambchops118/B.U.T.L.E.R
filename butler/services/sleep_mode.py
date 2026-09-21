@@ -314,6 +314,20 @@ _LEADING_FILLER = re.compile(
 # the second time someone asks is exactly when "again" shows up.
 _TAIL = r"(?:\s+(?:now|please|again|once\s+more|for\s+me))*$"
 
+# "Turn off the screen" is a sleep request: sleep mode and a dark screen are the
+# same thing, so every way of asking for a dark screen must land on the same
+# switch. The tail also takes the complaint people add on a repeat ask ("try
+# turning it off again, it's still on"). "tv" is deliberately not a screen word
+# here -- that has its own tool.
+_SCREEN = r"(?:screen|display|panel|monitor)"
+_SCREEN_OFF_VERB = r"(?:turn|turning|switch|switching|shut|shutting)"
+_LEAD_IN = r"(?:(?:try|please)\s+)*"
+_SCREEN_TAIL = (
+    r"(?:\s+(?:now|please|again|once\s+more|for\s+me))*"
+    r"(?:\s+(?:it\s+is|its|it\s+s)\s+still\s+on)?"
+    r"(?:\s+(?:now|please|again|once\s+more|for\s+me))*$"
+)
+
 _SLEEP_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -324,6 +338,14 @@ _SLEEP_PATTERNS = tuple(
         r"^(?:can\s+you\s+|please\s+)?(?:go\s+to\s+sleep|put\s+yourself\s+to\s+sleep)" + _TAIL,
         r"^(?:its\s+|it\s+is\s+)?time\s+(?:to\s+sleep|for\s+sleep)" + _TAIL,
         r"^go\s+dark" + _TAIL,
+        # "going to sleep mode" / "gonna go into night mode" -- announcing it
+        # rather than commanding it, but the same request.
+        r"^(?:going|gonna|go)(?:\s+go)?\s+(?:to|into|back\s+into)\s+(?:the\s+)?(?:sleep|night)\s+mode" + _TAIL,
+        r"^i\s*a?m\s+(?:going|gonna)\s+(?:to\s+)?sleep" + _TAIL,
+        # Every way of asking for a dark screen.
+        r"^" + _LEAD_IN + _SCREEN_OFF_VERB + r"\s+(?:off|down)\s+(?:the\s+|my\s+)?" + _SCREEN + _SCREEN_TAIL,
+        r"^" + _LEAD_IN + _SCREEN_OFF_VERB + r"\s+(?:the\s+|my\s+)?" + _SCREEN + r"\s+(?:off|down)" + _SCREEN_TAIL,
+        r"^(?:the\s+|my\s+)?" + _SCREEN + r"\s+off" + _SCREEN_TAIL,
         r"^dim\s+(?:the\s+)?(?:screen|display|panel|monitor|lights)" + _TAIL,
         r"^good\s*night(?:\s+butler)?" + _TAIL,
         r"^night\s*night" + _TAIL,
@@ -368,7 +390,8 @@ _WAKE_REQUEST_PATTERNS = tuple(
         r"\b(?:turn|bring)\s+up\s+(?:the\s+)?bright",
         r"\blights?\s+(?:back\s+)?on\b",
         r"\b(?:screen|display|panel|monitor)\s+(?:back\s+)?on\b",
-        r"\bturn\s+(?:the\s+)?(?:screen|display|panel|monitor)\b",
+        r"\bturn\s+(?:the\s+)?(?:screen|display|panel|monitor)\b(?!\s+(?:off|down)\b)",
+        r"\bturn\s+on\s+(?:the\s+|my\s+)?(?:screen|display|panel|monitor)\b",
         # Complaints only. Never a bare "dim"/"dark" ("dim the screen" is a
         # SLEEP phrase), and never a plain statement of fact -- "the panel is
         # dim until morning" is Butler describing what it just did, so "too" is

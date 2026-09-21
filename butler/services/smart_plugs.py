@@ -14,12 +14,24 @@ load_environment()
 _DEVICES_ENV = "BUTLER_SMART_PLUGS"
 _DISCOVER_TIMEOUT_SECONDS = 5
 
+# The KS220 switches intermittently (roughly 1 attempt in 4, sometimes in short
+# bursts) fail the KLAP handshake with an AuthenticationError ("Server response
+# doesn't match our challenge") even with correct credentials, and accept a
+# later attempt, so retry a few times before treating it as a real failure.
+_AUTH_RETRIES = 4
+_AUTH_RETRY_DELAY_SECONDS = 0.5
+
+# "light" devices are what the "all" shortcut controls; "appliance" devices
+# (e.g. the coffee pot) are only ever switched by their own id.
+_KINDS = ("light", "appliance")
+
 
 @dataclass(frozen=True)
 class PlugConfig:
     id: str
     name: str
     host: str
+    kind: str = "light"
 
 
 def _load_devices() -> dict[str, PlugConfig]:
@@ -42,7 +54,12 @@ def _load_devices() -> dict[str, PlugConfig]:
         if not device_id or not host:
             raise RuntimeError(f"{_DEVICES_ENV} entries require 'id' and 'host'")
         name = str(entry.get("name", "")).strip() or device_id
-        devices[device_id] = PlugConfig(id=device_id, name=name, host=host)
+        kind = str(entry.get("kind", "light")).strip().lower() or "light"
+        if kind not in _KINDS:
+            raise RuntimeError(
+                f"{_DEVICES_ENV} entry {device_id!r} has kind {kind!r}; expected one of {_KINDS}"
+            )
+        devices[device_id] = PlugConfig(id=device_id, name=name, host=host, kind=kind)
     return devices
 
 
@@ -59,9 +76,9 @@ def _kasa():
 
 
 def _credentials():
-    # Only the Tapo (P110M) devices need an account login for local control;
-    # the legacy Kasa protocol the KS220s speak needs none. Passing credentials
-    # to a device that doesn't need them is harmless during discovery.
+    # Current Tapo (P110M) and Kasa (KS220) firmware both need the TP-Link
+    # account login for local control. Passing credentials to a device that
+    # doesn't need them is harmless during discovery.
     username = os.getenv("TAPO_USERNAME", "").strip()
     password = os.getenv("TAPO_PASSWORD", "").strip()
     if username and password:
@@ -69,12 +86,28 @@ def _credentials():
     return None
 
 
+async def _connect(host: str):
+    kasa = _kasa()
+    for attempt in range(_AUTH_RETRIES + 1):
+        device = None
+        try:
+            device = await kasa.Discover.discover_single(
+                host, credentials=_credentials(), timeout=_DISCOVER_TIMEOUT_SECONDS
+            )
+            await device.update()
+            return device
+        except BaseException as exc:
+            if device is not None:
+                await device.disconnect()
+            if isinstance(exc, kasa.exceptions.AuthenticationError) and attempt < _AUTH_RETRIES:
+                await asyncio.sleep(_AUTH_RETRY_DELAY_SECONDS)
+                continue
+            raise
+
+
 async def _set_power(host: str, on: bool) -> None:
-    device = await _kasa().Discover.discover_single(
-        host, credentials=_credentials(), timeout=_DISCOVER_TIMEOUT_SECONDS
-    )
+    device = await _connect(host)
     try:
-        await device.update()
         if on:
             await device.turn_on()
         else:
@@ -91,7 +124,11 @@ def list_devices() -> str:
     devices = _load_devices()
     if not devices:
         return f"No smart plugs configured. Set {_DEVICES_ENV} in settings.env."
-    lines = [f"{plug.id}: {plug.name} ({plug.host})" for plug in devices.values()]
+    lines = [
+        f"{plug.id}: {plug.name} ({plug.host})"
+        + ("" if plug.kind == "light" else f" [{plug.kind}, not included in \"all\"]")
+        for plug in devices.values()
+    ]
     return "\n".join(lines)
 
 
@@ -110,9 +147,10 @@ def set_device_power(device_id: str, on: bool) -> str:
 
 
 def set_all_devices_power(on: bool) -> str:
-    devices = _load_devices()
+    """Switch every configured light; appliances such as the coffee pot are left alone."""
+    devices = {key: plug for key, plug in _load_devices().items() if plug.kind == "light"}
     if not devices:
-        raise RuntimeError(f"No smart plugs configured. Set {_DEVICES_ENV} in settings.env.")
+        raise RuntimeError(f"No lights configured. Set {_DEVICES_ENV} in settings.env.")
 
     async def _run_all() -> list[BaseException | None]:
         return await asyncio.gather(
@@ -128,7 +166,7 @@ def set_all_devices_power(on: bool) -> str:
         if isinstance(error, BaseException)
     ]
     succeeded = len(devices) - len(failures)
-    summary = f"Turned {label} {succeeded}/{len(devices)} devices."
+    summary = f"Turned {label} {succeeded}/{len(devices)} lights."
     if failures:
         summary += " Failed: " + "; ".join(failures)
     return summary

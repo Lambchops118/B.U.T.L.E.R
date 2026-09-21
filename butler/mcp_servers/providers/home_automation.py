@@ -38,11 +38,6 @@ def register(server: FastMCP) -> None:
         )
 
     @server.tool()
-    def turn_on_lights(room: str) -> str:
-        """Turn on the lights in a specific room."""
-        return actions.turn_on_lights(room)
-
-    @server.tool()
     def toggle_fan(status: int, idempotency_key: str = "") -> str:
         """Request the registered fan action (1=on, 0=off). This returns an
         audited lifecycle status; reuse idempotency_key for a retry of the

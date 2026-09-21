@@ -61,10 +61,6 @@ def water_plants(
     )
 
 
-def turn_on_lights(room: str) -> str:
-    return f"Turning on lights in the {room}."
-
-
 def toggle_fan(
     status: int,
     *,

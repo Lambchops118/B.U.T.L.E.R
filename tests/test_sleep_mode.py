@@ -95,6 +95,52 @@ class PhraseRecognitionTest(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(self.sleep_mode.match_phrase(phrase), "sleep")
 
+    def test_screen_off_and_going_to_sleep_phrasings_from_the_2026_09_21_session(self) -> None:
+        """Verbatim from `llm_io_20260921T040139` and `...T040247`.
+
+        None of these matched, so the screen never changed; the model was told
+        to call the tool, ignored it, and announced "Sleep mode activated."
+        Sleep mode and a dark screen are the same thing.
+        """
+        for phrase in (
+            "going to sleep mode.",
+            "turn off the screen.",
+            "try turning off the screen again, it's still on.",
+            "turn the screen off",
+            "turn off the display please",
+            "switch off the monitor",
+            "shut off the panel",
+            "screen off",
+            "the screen off now",
+            "I'm going to sleep",
+            "gonna go into night mode",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.sleep_mode.match_phrase(phrase, asleep=False), "sleep")
+                # Asking for a dark screen while already dark must not wake it.
+                self.assertEqual(self.sleep_mode.match_phrase(phrase, asleep=True), "sleep")
+
+    def test_turn_on_the_screen_wakes_once_asleep(self) -> None:
+        for phrase in ("turn on the screen", "turn on the display", "turn the screen on"):
+            with self.subTest(phrase=phrase):
+                with patch.object(self.sleep_mode, "LIBERAL_WAKE_GRACE_SECONDS", 0.0):
+                    self.assertEqual(self.sleep_mode.match_phrase(phrase, asleep=True), "wake")
+                self.assertIsNone(self.sleep_mode.match_phrase(phrase, asleep=False))
+
+    def test_screen_phrasings_still_refuse_lookalikes(self) -> None:
+        for phrase in (
+            "turn off the tv",
+            "turn off the lights",
+            "turn off the fan",
+            "turn off the screen saver settings in my notes",
+            "is the screen off",
+            "what turns the screen off",
+            "the baby is going to sleep soon",
+            "what time is he going to sleep mode",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(self.sleep_mode.match_phrase(phrase, asleep=False))
+
     def test_widened_matching_still_refuses_lookalikes(self) -> None:
         """The run-up strip must not turn a mention of sleep into a command."""
         for phrase in (

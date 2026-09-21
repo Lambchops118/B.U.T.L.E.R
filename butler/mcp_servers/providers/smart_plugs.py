@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from mcp.server.fastmcp import FastMCP
 
 from butler.services import smart_plugs
@@ -20,16 +22,19 @@ def register(server: FastMCP) -> None:
         description=(
             "Turn a smart plug or switch on or off. device_id must be one of "
             f"the configured ids ({ids_hint}) or the literal \"all\" to control "
-            "every device at once. state must be \"on\" or \"off\"."
+            "every light at once (appliances such as the coffee pot are not "
+            "included in \"all\"; switch them by id). state must be \"on\" or \"off\"."
         )
     )
-    def set_smart_plug(device_id: str, state: str) -> str:
+    async def set_smart_plug(device_id: str, state: str) -> str:
         normalized_state = str(state or "").strip().lower()
         if normalized_state not in ("on", "off"):
             raise ValueError("state must be 'on' or 'off'")
         on = normalized_state == "on"
 
         normalized_id = str(device_id or "").strip()
+        # FastMCP calls tools inside its running event loop, and the service uses
+        # asyncio.run() internally, so hand the blocking call to a worker thread.
         if normalized_id.lower() == "all":
-            return smart_plugs.set_all_devices_power(on)
-        return smart_plugs.set_device_power(normalized_id, on)
+            return await asyncio.to_thread(smart_plugs.set_all_devices_power, on)
+        return await asyncio.to_thread(smart_plugs.set_device_power, normalized_id, on)
