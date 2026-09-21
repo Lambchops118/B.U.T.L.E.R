@@ -5,8 +5,6 @@ import json
 import os
 from dataclasses import dataclass
 
-from kasa import Credentials, Discover
-
 from butler.config import load_environment
 
 load_environment()
@@ -48,19 +46,31 @@ def _load_devices() -> dict[str, PlugConfig]:
     return devices
 
 
-def _credentials() -> Credentials | None:
+def _kasa():
+    # Imported lazily so a missing python-kasa disables only these tools rather
+    # than failing the import of the whole aggregate MCP server.
+    try:
+        import kasa
+    except ImportError as exc:
+        raise RuntimeError(
+            "python-kasa is not installed. Install it with: pip install python-kasa==0.7.7"
+        ) from exc
+    return kasa
+
+
+def _credentials():
     # Only the Tapo (P110M) devices need an account login for local control;
     # the legacy Kasa protocol the KS220s speak needs none. Passing credentials
     # to a device that doesn't need them is harmless during discovery.
     username = os.getenv("TAPO_USERNAME", "").strip()
     password = os.getenv("TAPO_PASSWORD", "").strip()
     if username and password:
-        return Credentials(username=username, password=password)
+        return _kasa().Credentials(username=username, password=password)
     return None
 
 
 async def _set_power(host: str, on: bool) -> None:
-    device = await Discover.discover_single(
+    device = await _kasa().Discover.discover_single(
         host, credentials=_credentials(), timeout=_DISCOVER_TIMEOUT_SECONDS
     )
     try:

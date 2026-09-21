@@ -59,6 +59,13 @@ class SmartPlugsTests(unittest.TestCase):
         self.assertIn("1/2", result)
         self.assertIn("office switch: timeout", result)
 
+    def test_missing_python_kasa_fails_only_when_a_device_is_controlled(self) -> None:
+        # The provider must stay importable without python-kasa so a missing
+        # dependency does not take down the whole aggregate MCP server.
+        with mock.patch.dict("sys.modules", {"kasa": None}):
+            with self.assertRaisesRegex(RuntimeError, "python-kasa is not installed"):
+                smart_plugs._kasa()
+
 
 if __name__ == "__main__":
     unittest.main()
