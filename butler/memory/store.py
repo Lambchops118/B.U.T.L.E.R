@@ -110,10 +110,49 @@ class MemoryStore:
         assistant_message: str,
         *,
         metadata: dict[str, Any] | None = None,
+        tool_messages: list[dict[str, Any]] | None = None,
+        tool_schemas: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.record_message(session_id, "user", user_message, metadata=metadata)
-        if assistant_message.strip():
-            self.record_message(session_id, "assistant", assistant_message, metadata=metadata)
+        """Atomically store dialogue and complete tool exchanges in existing metadata.
+
+        Schemas are historical evidence, never an executable registry. Only the
+        tools actually called are retained. Existing prose-only rows stay valid.
+        """
+        session_id = _required_text(session_id, "session_id")
+        user_message = _required_text(user_message, "user_message")
+        assistant_metadata = dict(metadata or {})
+        if tool_messages:
+            exchanges = _validated_tool_messages(tool_messages)
+            names = {
+                call["function"]["name"]
+                for message in exchanges
+                for call in message.get("tool_calls", [])
+            }
+            assistant_metadata["tool_history"] = {
+                "version": 1,
+                "messages": exchanges,
+                "schemas": [
+                    schema for schema in tool_schemas or []
+                    if schema.get("name", schema.get("function", {}).get("name")) in names
+                ],
+            }
+        user_metadata_json = _json_dumps(metadata or {})
+        assistant_metadata_json = _json_dumps(assistant_metadata)
+        self.record_session(session_id)
+        now = _utc_now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO messages (session_id, role, content, created_at, metadata_json) VALUES (?, ?, ?, ?, ?)",
+                (session_id, "user", user_message, now, user_metadata_json),
+            )
+            if assistant_message.strip() or tool_messages:
+                self._conn.execute(
+                    "INSERT INTO messages (session_id, role, content, created_at, metadata_json) VALUES (?, ?, ?, ?, ?)",
+                    (session_id, "assistant", assistant_message, now, assistant_metadata_json),
+                )
+            self._conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_id = ?", (now, session_id)
+            )
         self.refresh_session_summary(session_id)
 
     def amend_last_assistant_message(self, session_id: str, content: str) -> bool:
@@ -192,8 +231,13 @@ class MemoryStore:
         *,
         message_limit: int = 8,
         max_chars: int = 4000,
-    ) -> list[dict[str, str]]:
-        """Return bounded recent turns in Chat Completions message shape."""
+    ) -> list[dict[str, Any]]:
+        """Return bounded history, retaining or dropping each tool turn as a unit.
+
+        Never clip tool arguments/results into invalid JSON, or replay an orphan
+        result. Schema snapshots stay in storage; the runtime supplies current
+        available definitions in the tools field, not obsolete schemas in prose.
+        """
         session_id = _required_text(session_id, "session_id")
         message_limit = max(0, int(message_limit))
         max_chars = max(0, int(max_chars))
@@ -203,7 +247,7 @@ class MemoryStore:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT role, content
+                SELECT role, content, metadata_json
                 FROM messages
                 WHERE session_id = ? AND role IN ('user', 'assistant')
                 ORDER BY id DESC
@@ -213,24 +257,45 @@ class MemoryStore:
             ).fetchall()
 
         per_message_limit = max(1, min(1200, max_chars))
-        messages = [
-            {
+        units: list[list[dict[str, Any]]] = []
+        for row in reversed(rows):
+            message = {
                 "role": str(row["role"]),
                 "content": _compact_text(
                     str(row["content"]),
                     limit=per_message_limit,
                 ),
             }
-            for row in reversed(rows)
-        ]
-        while len(messages) > 1 and sum(len(item["content"]) for item in messages) > max_chars:
-            messages.pop(0)
-        if messages and len(messages[0]["content"]) > max_chars:
-            messages[0]["content"] = _compact_text(
-                messages[0]["content"],
-                limit=max_chars,
+            metadata = json.loads(row["metadata_json"])
+            history = metadata.get("tool_history", {})
+            if message["role"] == "assistant" and history.get("version") == 1:
+                exchanges = _validated_tool_messages(history["messages"])
+                # The SQL row limit may have removed the originating user row.
+                # Do not replay a detached action as if it were a new instruction.
+                if not units or units[-1][0]["role"] != "user":
+                    continue
+                unit = units.pop() + exchanges
+                if message["content"]:
+                    unit.append(message)
+                units.append(unit)
+            else:
+                units.append([message])
+
+        selected: list[list[dict[str, Any]]] = []
+        used_chars = used_messages = 0
+        for unit in reversed(units):
+            size = sum(
+                len(json.dumps(item, ensure_ascii=False))
+                if item.get("tool_calls") or item["role"] == "tool"
+                else len(item["content"])
+                for item in unit
             )
-        return messages
+            if used_messages + len(unit) > message_limit or used_chars + size > max_chars:
+                break
+            selected.append(unit)
+            used_messages += len(unit)
+            used_chars += size
+        return [message for unit in reversed(selected) for message in unit]
 
     def clear_session(self, session_id: str) -> None:
         """Clear conversational context while preserving durable facts.
@@ -440,6 +505,46 @@ class MemoryStore:
             """
         )
         self._conn.commit()
+
+
+def _validated_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy complete assistant-call/tool-result groups in protocol order."""
+    pending: set[str] = set()
+    clean: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            if pending:
+                raise ValueError("Tool history contains missing results")
+            calls = []
+            for call in message["tool_calls"]:
+                function = call["function"]
+                call_id = _required_text(call["id"], "tool call id")
+                if call_id in pending:
+                    raise ValueError("Duplicate tool call id in one exchange")
+                if not isinstance(function["arguments"], str):
+                    raise ValueError("Tool arguments must be a serialized string")
+                pending.add(call_id)
+                calls.append({
+                    "id": call_id, "type": "function",
+                    "function": {
+                        "name": _required_text(function["name"], "tool name"),
+                        "arguments": function["arguments"],
+                    },
+                })
+            # Dialogue lives in the final assistant row, where barge-in can
+            # amend it. Do not replay unplayed intermediate speech as heard.
+            clean.append({"role": "assistant", "content": "", "tool_calls": calls})
+        elif message.get("role") == "tool":
+            call_id = message["tool_call_id"]
+            if call_id not in pending or not isinstance(message["content"], str):
+                raise ValueError("Orphan or invalid tool result in history")
+            pending.remove(call_id)
+            clean.append({"role": "tool", "tool_call_id": call_id, "content": message["content"]})
+        else:
+            raise ValueError("Tool history must contain only calls and results")
+    if pending:
+        raise ValueError("Tool history contains missing results")
+    return clean
 
 
 _default_store: MemoryStore | None = None

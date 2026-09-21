@@ -933,7 +933,7 @@ def _get_prompt_memory(
 def _get_conversation_history(
     memory_store: MemoryStore | None,
     session_id: str,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     if (
         memory_store is None
         or CONVERSATION_HISTORY_MESSAGE_LIMIT <= 0
@@ -958,6 +958,8 @@ def _record_memory_turn(
     response_text: str,
     *,
     interaction_mode: str,
+    tool_messages: list[dict[str, Any]] | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
 ) -> None:
     if memory_store is None:
         return
@@ -967,6 +969,8 @@ def _record_memory_turn(
             command,
             response_text,
             metadata={"interaction_mode": interaction_mode},
+            tool_messages=tool_messages,
+            tool_schemas=tool_schemas,
         )
     except Exception as exc:
         print(f"Butler memory write failed: {_truncate_text(str(exc), 300)}")
@@ -1000,45 +1004,25 @@ def _format_context(snapshot: str) -> str | None:
 
 
 def _history_grounding_notice(
-    history: list[dict[str, str]], tool_defs: list[dict[str, Any]] | None
+    history: list[dict[str, Any]], tool_defs: list[dict[str, Any]] | None
 ) -> str | None:
-    """Tell the model its own transcript is not evidence, just before it answers.
+    """Keep legacy prose and historical tool observations from becoming current facts.
 
-    Stored history is the final *text* of each turn only -- ``_record_memory_turn``
-    persists ``(command, response_text)``, so the tool calls that produced those
-    answers are dropped. After a few exchanges the replayed conversation is an
-    unbroken run of "question, then a confident prose answer, no tools", and the
-    model follows the pattern it can see rather than the instruction it was
-    given: it stops calling tools and starts asserting device state from nothing.
-
-    Measured on the deployed model (Qwen3 14.8B Q4_K_M, temp 0.2, full 26-tool
-    list, replaying a captured request that failed in production): with six or
-    fewer prior messages "is the plant watering system online?" called a tool
-    5/5; with eight it called one 0/8 and answered "online and operational"
-    having checked nothing. Adding this notice took the same request to 8/8, and
-    restoring one real tool call to the history did the same -- so the pattern,
-    not the model's capability, is what decides. Conversational turns ("tell me
-    a fact", "summarize our conversation") stayed at 0/6 either way, so this
-    buys grounding without buying tool spam.
-
-    Placed after history and immediately before the user turn, for the same
-    reason the authoritative time is: whatever sits closest to the point of
-    generation wins against anything the transcript implies.
-
-    The durable fix is to persist tool calls into history so the pattern is
-    truthful in the first place; this makes the current turn honest meanwhile.
+    New streaming turns preserve real calls/results. Older turns remain prose
+    only; none are backfilled. Even a genuine past observation can be stale.
     """
     if not INJECT_HISTORY_GROUNDING or not history or not tool_defs:
         return None
     return (
-        "The messages above are a transcript of what was said, not a record of "
-        "what was verified. Statements in them about devices, sensors, services "
-        "or the state of the house may have been asserted without any check, and "
-        "the tool calls behind any that were checked are not shown. They are "
-        "therefore not evidence for this turn. If answering now depends on "
-        "runtime, device, service or file state, call a tool and answer from its "
-        "result; do not reuse or extend an earlier answer. If no tool can "
-        "establish it, say so plainly rather than describing what is likely."
+        "The conversation above is not a record of what was verified for this turn. "
+        "Explicit tool calls and results record past observations or attempts, not "
+        "necessarily current state or successful completion. Older prose-only "
+        "answers may be unverified; missing tool results were not reconstructed. "
+        "If answering now depends on runtime, device, service or file state, "
+        "call a tool unless current authoritative context already establishes it; "
+        "do not reuse or extend an earlier answer as evidence of current state. "
+        "Historical schemas do not grant capabilities: only the currently supplied "
+        "tools are available. If no tool can establish the fact, say so plainly."
     )
 
 
@@ -2507,7 +2491,7 @@ def run_command_stream(
 
     Chat Completions does not provide the Responses API's
     ``previous_response_id`` threading. Cross-turn continuity therefore comes
-    from bounded, persisted user/assistant messages in the conversation store.
+    from bounded, persisted dialogue and complete tool exchanges in the conversation store.
     The per-session lock is acquired before those messages are read so a queued
     voice turn observes the turn that completed immediately before it. Within
     a single request the tool loop keeps full message history.
@@ -2522,10 +2506,6 @@ def run_command_stream(
     thread_key = _response_thread_key(session_id, runtime_lane)
 
     with _get_conversation_lock(thread_key), _turn_in_flight():
-        tool_build_started = time.perf_counter()
-        mcp_client = get_local_mcp_client()
-        tool_defs = _build_tool_definitions(mcp_client)
-        tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
         mode = _normalize_interaction_mode(
             interaction_mode or _infer_interaction_mode(session_id)
         )
@@ -2548,6 +2528,10 @@ def run_command_stream(
         )
         conversation_history = _get_conversation_history(memory_store, session_id)
         memory_context_ms = round((time.perf_counter() - memory_started) * 1000.0, 1)
+        tool_build_started = time.perf_counter()
+        mcp_client = get_local_mcp_client()
+        tool_defs = _build_tool_definitions(mcp_client)
+        tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
         prompt_assembly_started = time.perf_counter()
         prompt_sections = _build_prompt_sections(
             command,
@@ -2614,6 +2598,7 @@ def run_command_stream(
             prompt_assembly_ms=prompt_assembly_ms,
         )
         full_text_parts: list[str] = []
+        tool_history: list[dict[str, Any]] = []
         rounds = 0
         interrupted = False
         tool_execution_total_ms = 0.0
@@ -2657,6 +2642,7 @@ def run_command_stream(
                 tool_call_count=1,
                 tool_execution_ms=tool_execution_ms,
             )
+            tool_history.extend([tool_calls_to_assistant_message("", pre_routed_calls), *tool_messages])
             messages.extend(tool_messages)
             result_note = _deterministic_pump_result_message(
                 channel=_PUMP_CHANNEL_WORDS[
@@ -2665,14 +2651,16 @@ def run_command_stream(
                 events=_events,
             )
             full_text_parts.append(result_note)
-            yield result_note
             _record_memory_turn(
                 memory_store,
                 session_id,
                 command,
                 result_note,
                 interaction_mode=mode,
+                tool_messages=tool_history,
+                tool_schemas=tool_defs,
             )
+            yield result_note
             _emit_runtime_telemetry(
                 telemetry_callback,
                 request_id=telemetry_id,
@@ -2685,208 +2673,213 @@ def run_command_stream(
             )
             return
 
-        while True:
-            if cancel is not None and cancel.is_set():
-                interrupted = True
-                break
-            turn_text_parts: list[str] = []
-            spoken_parts: list[str] = []
-            pending: list[str] = []
-            defer_spoken_output = (
-                physical_action_request and not physical_action_tool_succeeded
-            )
-            # None = undecided, "speak" = natural text, "suppress" = leaked markup.
-            decision: str | None = None
-            completion: LLMCompletion | None = None
+        try:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    interrupted = True
+                    break
+                turn_text_parts: list[str] = []
+                spoken_parts: list[str] = []
+                pending: list[str] = []
+                defer_spoken_output = (
+                    physical_action_request and not physical_action_tool_succeeded
+                )
+                # None = undecided, "speak" = natural text, "suppress" = leaked markup.
+                decision: str | None = None
+                completion: LLMCompletion | None = None
 
-            def _speak(text: str):
-                spoken_parts.append(text)
-                full_text_parts.append(text)
-                return text
+                def _speak(text: str):
+                    spoken_parts.append(text)
+                    full_text_parts.append(text)
+                    return text
 
-            round_number = rounds + 1
-            round_prompt_tokens, round_prompt_bytes = _estimate_prompt_tokens(
-                messages, tool_defs
-            )
-            round_started = time.perf_counter()
-            _emit_runtime_telemetry(
-                telemetry_callback,
-                request_id=telemetry_id,
-                event="llm_round_started",
-                round=round_number,
-                prompt_tokens_estimated=round_prompt_tokens,
-                prompt_bytes=round_prompt_bytes,
-            )
-            _record_preramp_prompt(messages, tool_defs)
-            stream_iter = backend.stream(messages, tools=tool_defs)
-            try:
-                for event in stream_iter:
-                    if cancel is not None and cancel.is_set():
-                        interrupted = True
-                        break
-                    if isinstance(event, LLMTextDelta):
-                        if not event.text:
-                            continue
-                        turn_text_parts.append(event.text)
-                        if decision is None:
-                            stripped = "".join(turn_text_parts).lstrip()
-                            if not stripped:
-                                pending.append(event.text)  # leading whitespace only
+                round_number = rounds + 1
+                round_prompt_tokens, round_prompt_bytes = _estimate_prompt_tokens(
+                    messages, tool_defs
+                )
+                round_started = time.perf_counter()
+                _emit_runtime_telemetry(
+                    telemetry_callback,
+                    request_id=telemetry_id,
+                    event="llm_round_started",
+                    round=round_number,
+                    prompt_tokens_estimated=round_prompt_tokens,
+                    prompt_bytes=round_prompt_bytes,
+                )
+                _record_preramp_prompt(messages, tool_defs)
+                stream_iter = backend.stream(messages, tools=tool_defs)
+                try:
+                    for event in stream_iter:
+                        if cancel is not None and cancel.is_set():
+                            interrupted = True
+                            break
+                        if isinstance(event, LLMTextDelta):
+                            if not event.text:
                                 continue
-                            if RECOVER_LEAKED_TOOL_CALLS and _looks_like_tool_markup_start(stripped):
-                                decision = "suppress"  # hold back; recover after the turn
-                                pending.clear()
-                            else:
-                                decision = "speak"
-                                for part in pending:
+                            turn_text_parts.append(event.text)
+                            if decision is None:
+                                stripped = "".join(turn_text_parts).lstrip()
+                                if not stripped:
+                                    pending.append(event.text)  # leading whitespace only
+                                    continue
+                                if RECOVER_LEAKED_TOOL_CALLS and _looks_like_tool_markup_start(stripped):
+                                    decision = "suppress"  # hold back; recover after the turn
+                                    pending.clear()
+                                else:
+                                    decision = "speak"
+                                    for part in pending:
+                                        if defer_spoken_output:
+                                            spoken_parts.append(part)
+                                        else:
+                                            yield _speak(part)
+                                    pending.clear()
                                     if defer_spoken_output:
-                                        spoken_parts.append(part)
+                                        spoken_parts.append(event.text)
                                     else:
-                                        yield _speak(part)
-                                pending.clear()
+                                        yield _speak(event.text)
+                            elif decision == "speak":
                                 if defer_spoken_output:
                                     spoken_parts.append(event.text)
                                 else:
                                     yield _speak(event.text)
-                        elif decision == "speak":
-                            if defer_spoken_output:
-                                spoken_parts.append(event.text)
-                            else:
-                                yield _speak(event.text)
-                        # decision == "suppress": drop, neither spoken nor stored
-                    elif isinstance(event, LLMCompletion):
-                        completion = event
-            except Exception as exc:
+                            # decision == "suppress": drop, neither spoken nor stored
+                        elif isinstance(event, LLMCompletion):
+                            completion = event
+                except Exception as exc:
+                    _emit_runtime_telemetry(
+                        telemetry_callback,
+                        request_id=telemetry_id,
+                        event="llm_round_failed",
+                        round=round_number,
+                        llm_request_ms=round(
+                            (time.perf_counter() - round_started) * 1000.0, 1
+                        ),
+                        prompt_tokens_estimated=round_prompt_tokens,
+                        **_prompt_limits_from_error(exc),
+                    )
+                    raise
+                finally:
+                    # Closing the backend generator is what actually tears down the
+                    # HTTP request to the model server; without it a cancelled turn
+                    # would keep the GPU busy producing tokens nobody will hear.
+                    close_stream = getattr(stream_iter, "close", None)
+                    if callable(close_stream):
+                        try:
+                            close_stream()
+                        except Exception:
+                            pass
+                if interrupted:
+                    break
+                if completion is None:
+                    break
+                completion_telemetry = dict(completion.telemetry or {})
                 _emit_runtime_telemetry(
                     telemetry_callback,
                     request_id=telemetry_id,
-                    event="llm_round_failed",
+                    event="llm_round_completed",
                     round=round_number,
-                    llm_request_ms=round(
-                        (time.perf_counter() - round_started) * 1000.0, 1
-                    ),
                     prompt_tokens_estimated=round_prompt_tokens,
-                    **_prompt_limits_from_error(exc),
+                    **completion_telemetry,
                 )
-                raise
-            finally:
-                # Closing the backend generator is what actually tears down the
-                # HTTP request to the model server; without it a cancelled turn
-                # would keep the GPU busy producing tokens nobody will hear.
-                close_stream = getattr(stream_iter, "close", None)
-                if callable(close_stream):
-                    try:
-                        close_stream()
-                    except Exception:
-                        pass
-            if interrupted:
-                break
-            if completion is None:
-                break
-            completion_telemetry = dict(completion.telemetry or {})
-            _emit_runtime_telemetry(
-                telemetry_callback,
-                request_id=telemetry_id,
-                event="llm_round_completed",
-                round=round_number,
-                prompt_tokens_estimated=round_prompt_tokens,
-                **completion_telemetry,
-            )
 
-            recovered_tool_calls: tuple[LLMToolCall, ...] = ()
-            if decision == "suppress":
-                recovered_tool_calls = _extract_leaked_tool_calls("".join(turn_text_parts))
-                if recovered_tool_calls:
-                    print(
-                        f"Recovered {len(recovered_tool_calls)} leaked tool call(s) "
-                        "the model emitted as text instead of speaking the markup."
-                    )
-                else:
-                    # A rare natural reply that merely began with '{'; speak it.
-                    yield _speak("".join(turn_text_parts))
+                recovered_tool_calls: tuple[LLMToolCall, ...] = ()
+                if decision == "suppress":
+                    recovered_tool_calls = _extract_leaked_tool_calls("".join(turn_text_parts))
+                    if recovered_tool_calls:
+                        print(
+                            f"Recovered {len(recovered_tool_calls)} leaked tool call(s) "
+                            "the model emitted as text instead of speaking the markup."
+                        )
+                    else:
+                        # A rare natural reply that merely began with '{'; speak it.
+                        yield _speak("".join(turn_text_parts))
 
-            effective_tool_calls = completion.tool_calls or recovered_tool_calls
-            if not effective_tool_calls:
-                if (
-                    physical_action_request
-                    and not physical_action_tool_attempted
-                    and not physical_action_retry_used
-                    and PHYSICAL_ACTION_TOOL_NAMES
-                    & _tool_definition_names(tool_defs)
-                ):
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "The user's request requires a physical action, but your "
-                                "previous reply called no action tool and therefore did "
-                                "nothing. Call the appropriate registered action tool now, "
-                                "or state truthfully that no command was sent. Never claim "
-                                "the action was initiated or completed without the tool result."
-                            ),
-                        }
-                    )
-                    physical_action_retry_used = True
-                    rounds += 1
-                    continue
-                if physical_action_request and not physical_action_tool_succeeded:
-                    failure_note = (
-                        "I did not send a device command, so no pump or relay was activated."
-                    )
-                    yield _speak(failure_note)
-                break
+                effective_tool_calls = completion.tool_calls or recovered_tool_calls
+                if not effective_tool_calls:
+                    if (
+                        physical_action_request
+                        and not physical_action_tool_attempted
+                        and not physical_action_retry_used
+                        and PHYSICAL_ACTION_TOOL_NAMES
+                        & _tool_definition_names(tool_defs)
+                    ):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "The user's request requires a physical action, but your "
+                                    "previous reply called no action tool and therefore did "
+                                    "nothing. Call the appropriate registered action tool now, "
+                                    "or state truthfully that no command was sent. Never claim "
+                                    "the action was initiated or completed without the tool result."
+                                ),
+                            }
+                        )
+                        physical_action_retry_used = True
+                        rounds += 1
+                        continue
+                    if physical_action_request and not physical_action_tool_succeeded:
+                        failure_note = (
+                            "I did not send a device command, so no pump or relay was activated."
+                        )
+                        yield _speak(failure_note)
+                    break
 
-            if rounds >= MAX_TOOL_CALL_ROUNDS:
-                limit_note = " I reached the tool-call limit before finishing that request."
-                yield _speak(limit_note)
-                break
+                if rounds >= MAX_TOOL_CALL_ROUNDS:
+                    limit_note = " I reached the tool-call limit before finishing that request."
+                    yield _speak(limit_note)
+                    break
 
-            messages.append(
-                tool_calls_to_assistant_message("".join(spoken_parts), effective_tool_calls)
-            )
-            tool_execution_started = time.perf_counter()
-            tool_messages, _events = _execute_chat_tool_calls(
-                effective_tool_calls,
-                mcp_client,
-                session_id=session_id,
-                runtime_lane=runtime_lane,
-                request_id=telemetry_id,
-                telemetry_callback=telemetry_callback,
-                round_number=round_number,
-            )
-            action_results = [
-                event
-                for call, event in zip(effective_tool_calls, _events)
-                if call.name in PHYSICAL_ACTION_TOOL_NAMES
-            ]
-            if action_results:
-                physical_action_tool_attempted = True
-                physical_action_tool_succeeded = any(
-                    not event.get("failed") for event in action_results
+                messages.append(
+                    tool_calls_to_assistant_message("".join(spoken_parts), effective_tool_calls)
                 )
-            tool_execution_ms = round(
-                (time.perf_counter() - tool_execution_started) * 1000.0, 1
-            )
-            tool_execution_total_ms += tool_execution_ms
-            _emit_runtime_telemetry(
-                telemetry_callback,
-                request_id=telemetry_id,
-                event="tools_completed",
-                round=round_number,
-                tool_call_count=len(effective_tool_calls),
-                tool_execution_ms=tool_execution_ms,
-            )
-            messages.extend(tool_messages)
-            rounds += 1
+                tool_execution_started = time.perf_counter()
+                tool_messages, _events = _execute_chat_tool_calls(
+                    effective_tool_calls,
+                    mcp_client,
+                    session_id=session_id,
+                    runtime_lane=runtime_lane,
+                    request_id=telemetry_id,
+                    telemetry_callback=telemetry_callback,
+                    round_number=round_number,
+                )
+                action_results = [
+                    event
+                    for call, event in zip(effective_tool_calls, _events)
+                    if call.name in PHYSICAL_ACTION_TOOL_NAMES
+                ]
+                if action_results:
+                    physical_action_tool_attempted = True
+                    physical_action_tool_succeeded = any(
+                        not event.get("failed") for event in action_results
+                    )
+                tool_execution_ms = round(
+                    (time.perf_counter() - tool_execution_started) * 1000.0, 1
+                )
+                tool_execution_total_ms += tool_execution_ms
+                _emit_runtime_telemetry(
+                    telemetry_callback,
+                    request_id=telemetry_id,
+                    event="tools_completed",
+                    round=round_number,
+                    tool_call_count=len(effective_tool_calls),
+                    tool_execution_ms=tool_execution_ms,
+                )
+                tool_history.extend([tool_calls_to_assistant_message("", effective_tool_calls), *tool_messages])
+                messages.extend(tool_messages)
+                rounds += 1
 
-        response_text = "".join(full_text_parts).replace("Monkey Butler:", "").strip()
-        _record_memory_turn(
-            memory_store,
-            session_id,
-            command,
-            response_text,
-            interaction_mode=mode,
-        )
+        finally:
+            response_text = "".join(full_text_parts).replace("Monkey Butler:", "").strip()
+            _record_memory_turn(
+                memory_store,
+                session_id,
+                command,
+                response_text,
+                interaction_mode=mode,
+                tool_messages=tool_history,
+                tool_schemas=tool_defs,
+            )
         _emit_runtime_telemetry(
             telemetry_callback,
             request_id=telemetry_id,

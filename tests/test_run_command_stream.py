@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import ExitStack
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,9 +22,11 @@ class _FakeBackend:
     def __init__(self, turns):
         self._turns = list(turns)
         self.stream_calls = []
+        self.tools = []
 
     def stream(self, messages, *, tools=None, temperature=None, max_tokens=None):
         self.stream_calls.append([dict(m) for m in messages])
+        self.tools.append(tools)
         events = self._turns.pop(0)
         for event in events:
             yield event
@@ -39,6 +42,103 @@ class _FakeMCP:
 
 
 class RunCommandStreamTests(unittest.TestCase):
+    def test_followup_replays_tool_exchange_and_keeps_current_scoped_schema(self):
+        schema = {"type": "function", "name": "kitchen_screen_control", "parameters": {
+            "type": "object", "properties": {"action": {"type": "string"}},
+        }}
+        backend = _FakeBackend([
+            [LLMCompletion(text="", tool_calls=(LLMToolCall(
+                call_id="recipe-1", name="kitchen_screen_control", arguments='{"action":"get_state"}'
+            ),))],
+            [LLMTextDelta("There are two items."), LLMCompletion(text="There are two items.")],
+            [LLMTextDelta("Which one?"), LLMCompletion(text="Which one?")],
+        ])
+        mcp = _FakeMCP()
+        mcp.openai_tool_definitions = lambda: [schema]
+        store = MemoryStore(":memory:")
+        self.addCleanup(store.close)
+        with ExitStack() as stack:
+            for name, value in (("get_local_mcp_client", mcp), ("_get_memory_store", store),
+                                ("_get_stream_backend", backend), ("_resource_tool_definitions", [])):
+                stack.enter_context(mock.patch.object(agent_runtime, name, return_value=value))
+            stack.enter_context(mock.patch.object(agent_runtime, "TOOLS_DISABLED", False))
+            stack.enter_context(mock.patch.object(agent_runtime, "emit_pipeline_event"))
+            list(agent_runtime.run_command_stream("Read the recipe screen", session_id="test-tools"))
+            # Change the live schema; historical snapshots must not replace it.
+            current = {**schema, "description": "Current provider version"}
+            mcp.openai_tool_definitions = lambda: [current]
+            list(agent_runtime.run_command_stream("Remove the second one", session_id="test-tools"))
+        history = backend.stream_calls[-1]
+        calls = [m for m in history if m.get("tool_calls")]
+        results = [m for m in history if m["role"] == "tool"]
+        self.assertEqual(calls[0]["tool_calls"][0]["id"], "recipe-1")
+        self.assertEqual(results[0]["tool_call_id"], "recipe-1")
+        self.assertEqual(results[0]["content"], "noon")
+        self.assertIn(current, backend.tools[-1])
+        self.assertEqual(len(mcp.calls), 1, "History replay must never re-execute a tool")
+
+    def test_completed_tool_is_recorded_when_followup_inference_fails(self):
+        class FailingBackend(_FakeBackend):
+            def stream(self, messages, **kwargs):
+                if not self._turns:
+                    raise RuntimeError("inference unavailable")
+                yield from super().stream(messages, **kwargs)
+
+        backend = FailingBackend([[LLMCompletion(text="", tool_calls=(
+            LLMToolCall(call_id="checked", name="get_time", arguments="{}"),
+        ))]])
+        store = MemoryStore(":memory:")
+        self.addCleanup(store.close)
+        with ExitStack() as stack:
+            for name, value in (("get_local_mcp_client", _FakeMCP()), ("_get_memory_store", store),
+                                ("_get_stream_backend", backend), ("_build_tool_definitions", [])):
+                stack.enter_context(mock.patch.object(agent_runtime, name, return_value=value))
+            stack.enter_context(mock.patch.object(agent_runtime, "emit_pipeline_event"))
+            with self.assertRaisesRegex(RuntimeError, "inference unavailable"):
+                list(agent_runtime.run_command_stream("Check time", session_id="failed"))
+        history = store.get_recent_messages("failed")
+        self.assertEqual([m["role"] for m in history], ["user", "assistant", "tool"])
+        self.assertEqual(history[-1]["tool_call_id"], "checked")
+
+    def test_closing_stream_preserves_completed_tool_and_generated_prefix(self):
+        backend = _FakeBackend([
+            [LLMCompletion(text="", tool_calls=(LLMToolCall(
+                call_id="before-cut", name="get_time", arguments="{}"
+            ),))],
+            [LLMTextDelta("It is noon."), LLMTextDelta("More speech.")],
+        ])
+        store = MemoryStore(":memory:")
+        self.addCleanup(store.close)
+        with ExitStack() as stack:
+            for name, value in (("get_local_mcp_client", _FakeMCP()), ("_get_memory_store", store),
+                                ("_get_stream_backend", backend), ("_build_tool_definitions", [])):
+                stack.enter_context(mock.patch.object(agent_runtime, name, return_value=value))
+            stack.enter_context(mock.patch.object(agent_runtime, "emit_pipeline_event"))
+            stream = agent_runtime.run_command_stream("Check time", session_id="cut")
+            self.assertEqual(next(stream), "It is noon.")
+            stream.close()
+        history = store.get_recent_messages("cut")
+        self.assertEqual(history[-2]["tool_call_id"], "before-cut")
+        self.assertEqual(history[-1]["content"], "It is noon.")
+
+    def test_direct_pump_exchange_is_saved_before_speech_is_yielded(self):
+        store = MemoryStore(":memory:")
+        self.addCleanup(store.close)
+        schema = {"type": "function", "name": "request_device_action", "parameters": {
+            "type": "object", "properties": {},
+        }}
+        with ExitStack() as stack:
+            for name, value in (("get_local_mcp_client", _FakeMCP()), ("_get_memory_store", store),
+                                ("_get_stream_backend", _FakeBackend([])), ("_build_tool_definitions", [schema])):
+                stack.enter_context(mock.patch.object(agent_runtime, name, return_value=value))
+            stack.enter_context(mock.patch.object(agent_runtime, "emit_pipeline_event"))
+            stream = agent_runtime.run_command_stream("turn on pump 2", session_id="direct")
+            next(stream)
+            stream.close()
+        history = store.get_recent_messages("direct")
+        self.assertEqual(history[1]["tool_calls"][0]["function"]["name"], "request_device_action")
+        self.assertEqual(history[2]["role"], "tool")
+
     def _patches(self, backend, mcp):
         return [
             mock.patch.object(agent_runtime, "get_local_mcp_client", return_value=mcp),

@@ -7,6 +7,15 @@
 
 Monkey Butler is an artificial butler built around a locally hosted agent structure with access to peripherals and built in speech interface.
 
+Butler is a voice-first, home-bound assistant intended to feel present across
+household tasks, conversation, and engineering projects. The product reference
+is Jarvis: continuity, timely observations, and competent action. Home automation
+and engineering tools are capabilities within that experience.
+
+For the current architectural assessment and proposed evolution, see the
+[architecture review](docs/ARCHITECTURE_REVIEW.md). Its recommendations are
+proposals; runtime changes require a separately assigned scope.
+
 ## A note on names
 
 The project is Butler. Some identifiers deliberately still read `talos`, because

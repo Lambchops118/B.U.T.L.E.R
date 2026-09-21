@@ -1,5 +1,47 @@
 # Architecture Decision Log
 
+## ADR-055 — Preserve local streaming tool history and remove false capability
+
+Date: 2026-09-21. Status: accepted for the explicitly assigned bounded repair.
+
+The owner authorized removal of the no-op `turn_on_lights` and multi-turn history
+repair. SQLite's existing message metadata stores complete call/result exchanges
+and the used schema snapshots; user/assistant turn rows are written atomically.
+Replay respects message/character limits and omits oversized tool turns whole.
+Schema snapshots are historical evidence, not an executable registry: current
+available definitions govern calls and are retained through keyword scoping for
+tools represented in replayed history. Old prose is not backfilled. The grounding
+notice still distinguishes historical observations from current state.
+
+Completed exchanges survive later streaming failure/closure; barge-in amends the
+dialogue without erasing tool evidence. The legacy Responses path is unchanged.
+This supersedes ADR-049's statement that structured streaming persistence remains
+unimplemented, not its freshness/evidence principles or historical measurements.
+
+The owner clarified inference is local, with AWS Polly as the current hosted
+speech exception. No OpenAI API dependency is introduced. Future agents follow
+the [tool implementation guide](../TOOL_IMPLEMENTATION_GUIDE.md). Other catalog,
+execution, retrieval, and InfoPanel changes remain proposed in the
+[work collection](../architecture_fixes_09212026/README.md).
+
+## Owner direction — architecture consultation (2026-09-21)
+
+Follow-on scope: the owner authorized deeper review of tool structure/use, RAG,
+alternative architectures, and whether InfoPanel should expose tools. See the
+[tool review](../TOOL_SYSTEM_REVIEW.md). Exploration is unconstrained; no proposed
+tool redesign has been accepted or implemented.
+
+Confirmed product direction: Talos is a voice-first, home-bound assistant whose
+presentness and continuity span household tasks and engineering work. The owner
+uses Jarvis as the product reference and expects future expansion. This session
+is consultation with limited cleanup, not authorization for a structural rewrite.
+
+The [architecture review](../ARCHITECTURE_REVIEW.md) recommends evidence-preserving
+conversation history, clearer responsibility boundaries, bounded background
+reasoning, and a measured native-voice experiment. These are **proposals**, not
+accepted implementation decisions. Existing local-first and safety invariants
+remain in force.
+
 Only source-confirmed decisions are recorded as accepted. Repository-dependent selections remain pending Phase 0 and must not be inferred from defaults.
 
 ## Phase 9A implementation decisions (2026-09-06)

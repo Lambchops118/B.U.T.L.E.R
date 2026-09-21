@@ -1,5 +1,41 @@
 # Open Questions
 
+## Tool-history repair acceptance (2026-09-21)
+
+The no-op lights tool is removed and structured local streaming history is
+implemented (ADR-055). Owner acceptance still needs deployed local-model trials:
+long/contaminated histories, stale observations, failed tools, keyword-free
+follow-ups, and latency. Check whether the existing 8-message/4000-character
+history budget omits useful large tool turns before changing it. No new model
+accuracy or latency claim is made by unit-test success.
+
+Deployment clarification is confirmed: local inference, AWS Polly speech as the
+current hosted exception. Hosted inference remains a separate future decision.
+
+## Architecture consultation follow-up (2026-09-21)
+
+Tool review follow-up: choose the authoritative catalog and initial always-visible
+capabilities; agree mutation retry/unknown-outcome policy and result contracts;
+define which display surfaces/content types the agent may present. See
+[tool review](../TOOL_SYSTEM_REVIEW.md). These are design decisions for future
+work, not requests to start a migration.
+
+The [review](../ARCHITECTURE_REVIEW.md) is complete; these questions constrain
+future implementation rather than block the consultation.
+
+- What model, quantization, and chat/tool template actually run under
+  `mb-core-v1:latest`? Owner description and historical diagnostics differ.
+- Is cloud audio acceptable for an isolated comparison or eventual optional
+  operation? Until decided, preserve local-first behavior.
+- What foreground/background GPU memory and scheduling budget is available on
+  the deployed host, and what useful-response/interrupt latency is acceptable?
+- Which proactive actions may Talos initiate under standing authorization, and
+  which should remain suggestions or require confirmation?
+- Which existing store owns durable user/project facts versus conversation and
+  episodic records? Agree ownership before proposing a data migration.
+
+Choose a bounded work package from the review before runtime implementation.
+
 These questions require Phase 0 repository/deployment evidence or owner input. Confirmed source facts—local-first operation, reuse of the existing Mosquitto broker, central database authority, and deterministic safety behavior—are not open.
 
 ## Phase 9 follow-up (2026-09-06)
