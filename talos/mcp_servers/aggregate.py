@@ -10,6 +10,7 @@ from .providers import (
     register_home_automation_tools,
     register_kitchen_recipe_screen_tools,
     register_sleep_mode_tools,
+    register_smart_plug_tools,
 )
 
 
@@ -20,6 +21,7 @@ PROVIDERS: tuple[tuple[str, object], ...] = (
     ("kitchen_recipe_screen", register_kitchen_recipe_screen_tools),
     ("awareness", register_awareness_tools),
     ("sleep_mode", register_sleep_mode_tools),
+    ("smart_plugs", register_smart_plug_tools),
 )
 
 

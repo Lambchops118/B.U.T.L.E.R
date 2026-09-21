@@ -2,6 +2,7 @@ from .awareness import register as register_awareness_tools
 from .home_automation import register as register_home_automation_tools
 from .kitchen_recipe_screen import register as register_kitchen_recipe_screen_tools
 from .sleep_mode import register as register_sleep_mode_tools
+from .smart_plugs import register as register_smart_plug_tools
 from .tv_control import register as register_tv_control_tools
 
 __all__ = [
@@ -9,5 +10,6 @@ __all__ = [
     "register_home_automation_tools",
     "register_kitchen_recipe_screen_tools",
     "register_sleep_mode_tools",
+    "register_smart_plug_tools",
     "register_tv_control_tools",
 ]
