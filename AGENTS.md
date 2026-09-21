@@ -20,7 +20,7 @@ These instructions apply to every coding-agent session in this repository. For t
 - Run relevant tests and checks in proportion to the change.
 - Report exactly which tests ran, passed, failed, or were not run; never imply unrun checks passed.
 - Do not weaken tests or bypass safety checks to obtain a passing result.
-- Update `IMPLEMENTATION_STATUS.md` and record the session handoff using [`SESSION_HANDOFF_TEMPLATE.md`](docs/awareness-memory/SESSION_HANDOFF_TEMPLATE.md).
+- Update `IMPLEMENTATION_STATUS.md` and append a dated entry to [`SESSION_LOG.md`](docs/awareness-memory/SESSION_LOG.md), using [`SESSION_HANDOFF_TEMPLATE.md`](docs/awareness-memory/SESSION_HANDOFF_TEMPLATE.md) as the field list.
 - Record confirmed decisions in `DECISIONS.md` and unresolved owner/repository questions in `OPEN_QUESTIONS.md`.
 - End with the phase document's required final report and explicit stop condition.
 

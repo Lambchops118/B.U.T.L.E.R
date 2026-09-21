@@ -1,4 +1,4 @@
-"""Unit tests for talos.awareness.config (no external dependencies)."""
+"""Unit tests for butler.awareness.config (no external dependencies)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -26,6 +26,8 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertEqual(settings.db_name, "talos_awareness")
         self.assertEqual(
             settings.database_url,
+            # The role and database keep their talos_* names; they are live
+            # Postgres objects, not source identifiers.
             "postgresql+asyncpg://talos:p%40ss%2Fw%3Ard@127.0.0.1:5433/talos_awareness",
         )
 
@@ -58,20 +60,20 @@ class ConfigFailureTest(unittest.TestCase):
             with self.assertRaises(SettingsError) as ctx:
                 load_settings(_env_file=None)
         message = str(ctx.exception)
-        self.assertIn("TALOS_AWARENESS_DB_PASSWORD", message)
+        self.assertIn("BUTLER_AWARENESS_DB_PASSWORD", message)
         self.assertIn("required", message)
 
     def test_invalid_port_names_env_var(self) -> None:
         with _clean_env():
             with self.assertRaises(SettingsError) as ctx:
                 load_settings(_env_file=None, db_password="x", db_port=99999)
-        self.assertIn("TALOS_AWARENESS_DB_PORT", str(ctx.exception))
+        self.assertIn("BUTLER_AWARENESS_DB_PORT", str(ctx.exception))
 
     def test_invalid_log_level_is_actionable(self) -> None:
         with _clean_env():
             with self.assertRaises(SettingsError) as ctx:
                 load_settings(_env_file=None, db_password="x", log_level="chatty")
-        self.assertIn("TALOS_AWARENESS_LOG_LEVEL", str(ctx.exception))
+        self.assertIn("BUTLER_AWARENESS_LOG_LEVEL", str(ctx.exception))
 
     def test_invalid_ollama_host_rejected(self) -> None:
         with _clean_env():
@@ -91,7 +93,7 @@ class ConfigEnvAliasTest(unittest.TestCase):
     def test_awareness_specific_mqtt_env_wins_over_legacy(self) -> None:
         with patch.dict(
             os.environ,
-            {"TALOS_AWARENESS_MQTT_HOST": "broker.internal", "MQTT_BROKER": "10.1.2.3"},
+            {"BUTLER_AWARENESS_MQTT_HOST": "broker.internal", "MQTT_BROKER": "10.1.2.3"},
             clear=True,
         ):
             settings = AwarenessSettings(_env_file=None, db_password="x")
@@ -101,8 +103,8 @@ class ConfigEnvAliasTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "TALOS_AWARENESS_DB_PASSWORD": "envpass",
-                "TALOS_AWARENESS_API_PORT": "9000",
+                "BUTLER_AWARENESS_DB_PASSWORD": "envpass",
+                "BUTLER_AWARENESS_API_PORT": "9000",
             },
             clear=True,
         ):

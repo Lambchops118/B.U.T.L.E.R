@@ -27,7 +27,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -63,7 +63,7 @@ class _ScratchDatabaseTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -107,7 +107,7 @@ class InternalIngestionTest(_ScratchDatabaseTest):
     def test_ingest_endpoint_reports_disposition_synchronously(self) -> None:
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -186,7 +186,7 @@ class InternalIngestionTest(_ScratchDatabaseTest):
     def test_presence_becomes_durable_state_on_the_person_entity(self) -> None:
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -219,7 +219,7 @@ class InternalIngestionTest(_ScratchDatabaseTest):
         """Conversation facts are events; they must not become device state."""
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -265,7 +265,7 @@ class AgentOutcomeRuleTest(_ScratchDatabaseTest):
         """A job the user asked for that failed becomes recallable, not just logged."""
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -299,7 +299,7 @@ class AgentOutcomeRuleTest(_ScratchDatabaseTest):
         """Tool failures are recorded but must not raise an alert each time."""
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -351,10 +351,10 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
         """
         import sqlalchemy as sa
 
-        from talos.awareness.context.broker import SituationBroker
-        from talos.awareness.db.models import CurrentState
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.context.broker import SituationBroker
+        from butler.awareness.db.models import CurrentState
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
 
         engine = build_engine(self.settings)
         try:
@@ -380,9 +380,9 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
     async def _check_stale_presence_reconciliation(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.models import CurrentState
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.db.models import CurrentState
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
 
         engine = build_engine(self.settings)
         try:
@@ -405,9 +405,9 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
     async def _check_superseded_source_reconciliation(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.models import Alert, AttentionItem, Source
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.db.models import Alert, AttentionItem, Source
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
 
         engine = build_engine(self.settings)
         try:
@@ -439,10 +439,10 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
     async def _check_state_freshness_policy(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.models import CurrentState
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.state.freshness import FreshnessWorker
+        from butler.awareness.db.models import CurrentState
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.state.freshness import FreshnessWorker
 
         engine = build_engine(self.settings)
         try:
@@ -476,11 +476,11 @@ class OfflineDetectionOptOutTest(_ScratchDatabaseTest):
     async def _check(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.alerts.service import AlertService
-        from talos.awareness.db.models import Source
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.state.freshness import FreshnessWorker
+        from butler.awareness.alerts.service import AlertService
+        from butler.awareness.db.models import Source
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.state.freshness import FreshnessWorker
 
         engine = build_engine(self.settings)
         try:
@@ -520,7 +520,7 @@ class SituationHumanContextTest(_ScratchDatabaseTest):
     def test_presence_relevance_and_interruptibility(self) -> None:
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -586,7 +586,7 @@ class SituationHumanContextTest(_ScratchDatabaseTest):
     def test_passive_items_are_withheld_when_nobody_is_present(self) -> None:
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
+        from butler.awareness.api.app import create_app
 
         app = create_app(self.settings)
         with TestClient(app) as client:
@@ -599,9 +599,9 @@ class SituationHumanContextTest(_ScratchDatabaseTest):
             self.assertIn("pump needs attention", snapshot["text"])
 
     async def _raise_attention_items(self) -> None:
-        from talos.awareness.alerts.service import AlertService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.alerts.service import AlertService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.registry.bootstrap import seed_registry
 
         engine = build_engine(self.settings)
         try:
@@ -672,7 +672,7 @@ class CriticalAlertOrderingTest(_ScratchDatabaseTest):
 
     def test_relevance_never_reorders_across_priority_bands(self) -> None:
         """A relevant attention item must never outrank a critical alert."""
-        from talos.awareness.context.broker import (
+        from butler.awareness.context.broker import (
             PRIORITY_ATTENTION,
             PRIORITY_CRITICAL_ALERTS,
             Candidate,

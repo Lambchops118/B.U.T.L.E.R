@@ -8,45 +8,45 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
-from talos.launcher import config
-from talos.launcher.__main__ import _build_parser
-from talos.launcher.config import LauncherConfig
-from talos.launcher.core import _microphone_env
-from talos.voice.microphone_profiles import get_microphone_profile
+from butler.launcher import config
+from butler.launcher.__main__ import _build_parser
+from butler.launcher.config import LauncherConfig
+from butler.launcher.core import _microphone_env
+from butler.voice.microphone_profiles import get_microphone_profile
 
 
 class LauncherMicrophoneProfileTests(unittest.TestCase):
     def test_respeaker_profile_keeps_its_calibrated_capture_contract(self):
         cfg = LauncherConfig(microphone_profile="respeaker")
-        env = _microphone_env({"TALOS_BARGE_IN": "1"}, cfg)
-        self.assertEqual(env["TALOS_MICROPHONE_PROFILE"], "respeaker")
-        self.assertEqual(env["TALOS_RECOGNIZER_ENERGY_THRESHOLD"], "auto")
+        env = _microphone_env({"BUTLER_BARGE_IN": "1"}, cfg)
+        self.assertEqual(env["BUTLER_MICROPHONE_PROFILE"], "respeaker")
+        self.assertEqual(env["BUTLER_RECOGNIZER_ENERGY_THRESHOLD"], "auto")
         # No longer forced off: the ReSpeaker's AEC evidence has been measured.
-        self.assertEqual(env["TALOS_BARGE_IN"], "1")
+        self.assertEqual(env["BUTLER_BARGE_IN"], "1")
 
     def test_a_profile_without_aec_evidence_still_fails_closed(self):
         """The suppression path is the safety net for any profile added later."""
         cfg = LauncherConfig(microphone_profile="respeaker")
         unproven = replace(get_microphone_profile("respeaker"), windows_aec=False)
         with patch(
-            "talos.launcher.core.get_microphone_profile", return_value=unproven
+            "butler.launcher.core.get_microphone_profile", return_value=unproven
         ):
             env = _microphone_env(
-                {"TALOS_BARGE_IN": "1", "TALOS_IDLE_VAD_ENDPOINTING": "1"}, cfg
+                {"BUTLER_BARGE_IN": "1", "BUTLER_IDLE_VAD_ENDPOINTING": "1"}, cfg
             )
-        self.assertEqual(env["TALOS_BARGE_IN"], "0")
-        self.assertEqual(env["TALOS_IDLE_VAD_ENDPOINTING"], "0")
+        self.assertEqual(env["BUTLER_BARGE_IN"], "0")
+        self.assertEqual(env["BUTLER_IDLE_VAD_ENDPOINTING"], "0")
 
     def test_yeti_profile_preserves_existing_aec_rollout_settings(self):
         cfg = LauncherConfig(microphone_profile="yeti")
         env = _microphone_env(
-            {"TALOS_BARGE_IN": "1", "TALOS_IDLE_VAD_ENDPOINTING": "1"},
+            {"BUTLER_BARGE_IN": "1", "BUTLER_IDLE_VAD_ENDPOINTING": "1"},
             cfg,
         )
-        self.assertEqual(env["TALOS_MICROPHONE_PROFILE"], "yeti")
-        self.assertEqual(env["TALOS_RECOGNIZER_ENERGY_THRESHOLD"], "500")
-        self.assertEqual(env["TALOS_BARGE_IN"], "1")
-        self.assertEqual(env["TALOS_IDLE_VAD_ENDPOINTING"], "1")
+        self.assertEqual(env["BUTLER_MICROPHONE_PROFILE"], "yeti")
+        self.assertEqual(env["BUTLER_RECOGNIZER_ENERGY_THRESHOLD"], "500")
+        self.assertEqual(env["BUTLER_BARGE_IN"], "1")
+        self.assertEqual(env["BUTLER_IDLE_VAD_ENDPOINTING"], "1")
 
     def test_old_launcher_config_defaults_to_current_respeaker(self):
         with tempfile.TemporaryDirectory() as temp_dir:

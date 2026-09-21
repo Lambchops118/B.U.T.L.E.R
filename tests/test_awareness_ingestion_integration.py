@@ -23,7 +23,7 @@ import unittest
 import uuid
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -60,7 +60,7 @@ class IngestionIntegrationTest(unittest.TestCase):
             db_name=self.scratch_name,
             mqtt_host=TEST_BROKER_HOST,
             mqtt_port=TEST_BROKER_PORT,
-            mqtt_client_id=f"talos-awareness-it-{uuid.uuid4().hex[:6]}",
+            mqtt_client_id=f"butler-awareness-it-{uuid.uuid4().hex[:6]}",
         )
         from urllib.parse import quote_plus
 
@@ -72,7 +72,7 @@ class IngestionIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -115,9 +115,9 @@ class IngestionIntegrationTest(unittest.TestCase):
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.ingestion.service import IngestionService
-        from talos.awareness.simulator.publisher import SimulatedDevice, publish_messages
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.ingestion.service import IngestionService
+        from butler.awareness.simulator.publisher import SimulatedDevice, publish_messages
 
         engine = build_engine(self.settings)
         service = IngestionService(self.settings, engine)
@@ -128,7 +128,7 @@ class IngestionIntegrationTest(unittest.TestCase):
                 messages,
                 host=TEST_BROKER_HOST,
                 port=TEST_BROKER_PORT,
-                client_id=f"talos-sim-it-{uuid.uuid4().hex[:6]}",
+                client_id=f"butler-sim-it-{uuid.uuid4().hex[:6]}",
                 quiet=True,
             )
 

@@ -85,7 +85,7 @@ def static_drawings(screen, base_w, base_h, scale_x, scale_y, circle_time):
     is_server_online = False
 
     # Adjust font path for your environment as needed
-    font_path = r"C:\Users\Liam\Desktop\Talos\Talos\InfoPanel\VT323-Regular.ttf"
+    font_path = r"C:\Users\Liam\Desktop\Talos\Butler\InfoPanel\VT323-Regular.ttf"
 
     def draw_text(text, base_x, base_y, color, size=30):
         """

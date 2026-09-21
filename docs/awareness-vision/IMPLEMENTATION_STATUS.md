@@ -18,9 +18,9 @@ from the (complete) `docs/awareness-memory/` subsystem.
 | Tests last run | None (documentation + ephemeral out-of-repo benchmark only; no repo code changed). |
 | Known failures | None. |
 | Evidence | `phases/THROUGHPUT_SPIKE.md`: YOLO detect 136 FPS / pose 121 FPS on MPS; InsightFace re-ID on CPU (detector 8.7 FPS, embed 12.9 FPS/face); amortized full pipeline ~14 FPS vs. 2–5 FPS needed. |
-| Files added this session | `docs/awareness-vision/**` (docs only). No `talos/` or migration changes. |
+| Files added this session | `docs/awareness-vision/**` (docs only). No `butler/` or migration changes. |
 | Next permitted task | **Owner review of V0.** On approval, Phase V1 (capture + detection + occupancy, anonymous) including the locations migration + `vision_living_room` source seed. |
-| Required reading for V1 | Root `AGENTS.md`, this status, parent + vision invariants, `PHASE_V0_DISCOVERY.md`, `reference/EVENT_SCHEMA.md`, existing `talos/awareness/{schemas,registry,ingestion,state,history}`. |
+| Required reading for V1 | Root `AGENTS.md`, this status, parent + vision invariants, `PHASE_V0_DISCOVERY.md`, `reference/EVENT_SCHEMA.md`, existing `butler/awareness/{schemas,registry,ingestion,state,history}`. |
 | Explicit stop condition | V0 is documentation-only. Do not scaffold or implement V1 until the owner reviews V0 and explicitly authorizes it (`CLAUDE.md`, `INV-19`/`INV-20`). |
 
 Do not infer implementation progress from the presence of these specification

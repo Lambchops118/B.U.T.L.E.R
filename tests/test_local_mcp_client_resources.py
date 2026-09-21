@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.mcp_client import client as local_mcp_client
+from butler.mcp_client import client as local_mcp_client
 
 
 class Obj:
@@ -395,7 +395,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
     def test_load_mcp_server_configs_appends_optional_kicad_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env = {
-                "TALOS_MCP_SERVERS": "",
+                "BUTLER_MCP_SERVERS": "",
                 "KICAD_MCP_SERVER_PATH": tmpdir,
                 "KICAD_PYTHONPATH": "/Applications/KiCad/site-packages",
                 "KICAD_MCP_TOOL_PREFIX": "kicad_",
@@ -403,7 +403,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=False):
                 configs = local_mcp_client._load_mcp_server_configs()
 
-        self.assertEqual([config.name for config in configs], ["talos-local", "kicad"])
+        self.assertEqual([config.name for config in configs], ["butler-local", "kicad"])
         self.assertEqual(configs[1].command, "node")
         self.assertTrue(configs[1].args[0].endswith("dist/index.js"))
         self.assertEqual(configs[1].env["PYTHONPATH"], "/Applications/KiCad/site-packages")
@@ -421,7 +421,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
                 }
             ]
         )
-        with patch.dict(os.environ, {"TALOS_MCP_SERVERS": raw}, clear=False):
+        with patch.dict(os.environ, {"BUTLER_MCP_SERVERS": raw}, clear=False):
             configs = local_mcp_client._load_mcp_server_configs()
 
         self.assertEqual(len(configs), 1)
@@ -432,15 +432,15 @@ class LocalMcpClientResourceTests(unittest.TestCase):
     def test_load_mcp_server_configs_appends_optional_general_filesystem_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env = {
-                "TALOS_MCP_SERVERS": "",
-                "TALOS_FILESYSTEM_ROOTS": json.dumps([tmpdir]),
+                "BUTLER_MCP_SERVERS": "",
+                "BUTLER_FILESYSTEM_ROOTS": json.dumps([tmpdir]),
             }
             with patch.dict(os.environ, env, clear=False):
                 configs = local_mcp_client._load_mcp_server_configs()
 
         self.assertEqual(
             [config.name for config in configs],
-            ["talos-local", "filesystem", "filesystem-diagnostics"],
+            ["butler-local", "filesystem", "filesystem-diagnostics"],
         )
         self.assertEqual(configs[1].command, "npx")
         self.assertEqual(
@@ -449,13 +449,13 @@ class LocalMcpClientResourceTests(unittest.TestCase):
         )
         self.assertEqual(configs[1].tool_prefix, "fs_")
         self.assertEqual(configs[2].command, sys.executable)
-        self.assertEqual(configs[2].args, ["-m", "talos.mcp_filesystem_diagnostics_server"])
+        self.assertEqual(configs[2].args, ["-m", "butler.mcp_filesystem_diagnostics_server"])
 
     def test_load_mcp_server_configs_accepts_multiple_general_filesystem_roots(self) -> None:
         with tempfile.TemporaryDirectory() as root_a, tempfile.TemporaryDirectory() as root_b:
             env = {
-                "TALOS_MCP_SERVERS": "",
-                "TALOS_FILESYSTEM_ROOTS": json.dumps([root_a, root_b]),
+                "BUTLER_MCP_SERVERS": "",
+                "BUTLER_FILESYSTEM_ROOTS": json.dumps([root_a, root_b]),
             }
             with patch.dict(os.environ, env, clear=False):
                 config = local_mcp_client._optional_filesystem_server_config()
@@ -474,8 +474,8 @@ class LocalMcpClientResourceTests(unittest.TestCase):
     def test_load_mcp_server_configs_adds_filesystem_diagnostics_with_resolved_roots(self) -> None:
         with tempfile.TemporaryDirectory() as root_a, tempfile.TemporaryDirectory() as root_b:
             env = {
-                "TALOS_MCP_SERVERS": "",
-                "TALOS_FILESYSTEM_ROOTS": json.dumps([root_a, root_b]),
+                "BUTLER_MCP_SERVERS": "",
+                "BUTLER_FILESYSTEM_ROOTS": json.dumps([root_a, root_b]),
             }
             with patch.dict(os.environ, env, clear=False):
                 configs = local_mcp_client._load_mcp_server_configs()
@@ -483,14 +483,14 @@ class LocalMcpClientResourceTests(unittest.TestCase):
         diagnostics = configs[2]
         self.assertEqual(diagnostics.name, "filesystem-diagnostics")
         self.assertEqual(
-            json.loads(diagnostics.env["TALOS_FILESYSTEM_ROOTS"]),
+            json.loads(diagnostics.env["BUTLER_FILESYSTEM_ROOTS"]),
             [str(Path(root_a).resolve()), str(Path(root_b).resolve())],
         )
 
     def test_load_mcp_server_configs_appends_optional_minecraft_servers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env = {
-                "TALOS_MCP_SERVERS": "",
+                "BUTLER_MCP_SERVERS": "",
                 "MINECRAFT_SERVER_DIR": tmpdir,
             }
             with patch.dict(os.environ, env, clear=False):
@@ -498,7 +498,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
 
         self.assertEqual(
             [config.name for config in configs],
-            ["talos-local", "minecraft-filesystem", "minecraft-search"],
+            ["butler-local", "minecraft-filesystem", "minecraft-search"],
         )
         self.assertEqual(configs[1].command, "npx")
         self.assertEqual(
@@ -531,7 +531,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
             )
         }
 
-        with patch.dict(os.environ, {"TALOS_FILESYSTEM_ALLOW_WRITES": "0"}, clear=False):
+        with patch.dict(os.environ, {"BUTLER_FILESYSTEM_ALLOW_WRITES": "0"}, clear=False):
             tools = client.list_tools()
 
         self.assertEqual(
@@ -597,7 +597,7 @@ class LocalMcpClientResourceTests(unittest.TestCase):
             )
         }
 
-        with patch.dict(os.environ, {"TALOS_FILESYSTEM_ALLOW_WRITES": "0"}, clear=False):
+        with patch.dict(os.environ, {"BUTLER_FILESYSTEM_ALLOW_WRITES": "0"}, clear=False):
             tools = client.list_tools()
 
         self.assertEqual([tool["name"] for tool in tools], ["fs_list_directory"])

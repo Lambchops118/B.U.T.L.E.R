@@ -1,30 +1,30 @@
 # Minecraft Forge Diagnostics
 
-This TALOS checkout can attach a Minecraft-focused MCP toolset for diagnosing large Forge or modpack server directories without granting broad filesystem access.
+This Butler checkout can attach a Minecraft-focused MCP toolset for diagnosing large Forge or modpack server directories without granting broad filesystem access.
 
-This is a specialization on top of TALOS's general filesystem support, not the core filesystem design. If you want broad local-machine inspection/search capability, start with `TALOS_FILESYSTEM_ROOTS`; use this helper when Minecraft-specific heuristics are valuable.
+This is a specialization on top of Butler's general filesystem support, not the core filesystem design. If you want broad local-machine inspection/search capability, start with `BUTLER_FILESYSTEM_ROOTS`; use this helper when Minecraft-specific heuristics are valuable.
 
 ## What Gets Added
 
-When `MINECRAFT_SERVER_DIR` is set, TALOS appends two MCP servers at startup:
+When `MINECRAFT_SERVER_DIR` is set, Butler appends two MCP servers at startup:
 
 - `minecraft-filesystem`
   - Uses the official `@modelcontextprotocol/server-filesystem` package.
   - Is scoped to `MINECRAFT_SERVER_DIR` by command-line root arguments.
   - Exposes read-only filesystem tools by default from the agent's perspective.
 - `minecraft-search`
-  - Uses TALOS's local `talos.mcp_minecraft_diagnostics_server`.
+  - Uses Butler's local `butler.mcp_minecraft_diagnostics_server`.
   - Wraps `rg` without a shell.
   - Rejects any path that resolves outside `MINECRAFT_SERVER_DIR`.
   - Adds helper tools for layout summaries, recent logs, text search, mod jar listing, duplicate-mod heuristics, and text diffs.
 
-## Why TALOS Does Not Use `mcp-ripgrep` Directly
+## Why Butler Does Not Use `mcp-ripgrep` Directly
 
-The upstream `mcp-ripgrep` package is useful for general-purpose search, but its current implementation accepts arbitrary caller-supplied paths and shells out to `rg` without a root confinement layer. That is not compatible with the "Minecraft server directory only" safety requirement, so TALOS keeps the official filesystem server and replaces the ripgrep surface with a repo-local root-scoped wrapper.
+The upstream `mcp-ripgrep` package is useful for general-purpose search, but its current implementation accepts arbitrary caller-supplied paths and shells out to `rg` without a root confinement layer. That is not compatible with the "Minecraft server directory only" safety requirement, so Butler keeps the official filesystem server and replaces the ripgrep surface with a repo-local root-scoped wrapper.
 
 ## Prerequisites
 
-- Python 3.10+ TALOS environment
+- Python 3.10+ Butler environment
 - Node.js with `npx`
 - ripgrep on PATH
 
@@ -57,11 +57,11 @@ Optional knobs:
 - `MINECRAFT_MCP_RG_TIMEOUT=20`
 - `MINECRAFT_MCP_MAX_TEXT_BYTES=1000000`
 
-Restart TALOS after any `.env` change.
+Restart Butler after any `.env` change.
 
 ## Safety Defaults
 
-- TALOS scopes filesystem access to `MINECRAFT_SERVER_DIR` only.
+- Butler scopes filesystem access to `MINECRAFT_SERVER_DIR` only.
 - The diagnostics search server enforces the same root and rejects symlink escapes.
 - No raw `.jar`, `.class`, `.png`, `.ogg`, `.dat`, `.mca`, `.sqlite`, or `.zip` dumps are performed by the custom diagnostics server.
 - The default search/file traversal excludes noisy paths:
@@ -76,7 +76,7 @@ Restart TALOS after any `.env` change.
   - `cache/`
   - `crash-reports/old/`
 - Write-capable official filesystem tools stay hidden unless `MINECRAFT_MCP_ALLOW_WRITES=1`.
-- Even when writes are enabled, TALOS's prompt overlay tells the agent to require explicit confirmation and prefer diffs or dry runs first.
+- Even when writes are enabled, Butler's prompt overlay tells the agent to require explicit confirmation and prefer diffs or dry runs first.
 
 ## Verification
 
@@ -114,4 +114,4 @@ Expected investigation flow:
 
 ## No Slash Command Surface
 
-This repo does not currently have a custom slash-command registry for TALOS prompts, so there is no `/diagnose-minecraft-server` command to register yet. The example prompt above is the intended reusable workflow entrypoint for now.
+This repo does not currently have a custom slash-command registry for Butler prompts, so there is no `/diagnose-minecraft-server` command to register yet. The example prompt above is the intended reusable workflow entrypoint for now.

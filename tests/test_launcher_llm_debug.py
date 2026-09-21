@@ -9,10 +9,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from talos.launcher.config import LauncherConfig
-from talos.launcher.core import Supervisor
-from talos.launcher.gui import LauncherGUI
-from talos.llm_debug import LLM_DEBUG_PREFIX, emit_llm_io, llm_debug_log_path
+from butler.launcher.config import LauncherConfig
+from butler.launcher.core import Supervisor
+from butler.launcher.gui import LauncherGUI
+from butler.llm_debug import LLM_DEBUG_PREFIX, emit_llm_io, llm_debug_log_path
 
 
 class LLMDebugEmitterTests(unittest.TestCase):
@@ -26,7 +26,7 @@ class LLMDebugEmitterTests(unittest.TestCase):
         payload = {"messages": [{"role": "user", "content": "exact text"}]}
         output = io.StringIO()
         with (
-            mock.patch.dict("os.environ", {"TALOS_LLM_DEBUG_STDOUT": "1"}, clear=True),
+            mock.patch.dict("os.environ", {"BUTLER_LLM_DEBUG_STDOUT": "1"}, clear=True),
             redirect_stdout(output),
         ):
             emit_llm_io("sent", payload, api="chat.completions", operation="stream")
@@ -43,7 +43,7 @@ class LLMDebugEmitterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
                 mock.patch.dict(
-                    "os.environ", {"TALOS_LLM_DEBUG_LOG_DIR": temp_dir}, clear=True
+                    "os.environ", {"BUTLER_LLM_DEBUG_LOG_DIR": temp_dir}, clear=True
                 ),
                 redirect_stdout(output),
             ):
@@ -122,15 +122,15 @@ class LauncherLLMDebugProcessTests(unittest.TestCase):
     def test_launcher_managed_main_process_enables_debug_stdout(self):
         supervisor = Supervisor(LauncherConfig(), log=lambda _source, _message: None)
         with (
-            mock.patch("talos.launcher.core.venv_python", return_value=Path("missing-python")),
+            mock.patch("butler.launcher.core.venv_python", return_value=Path("missing-python")),
             mock.patch.object(supervisor, "_spawn") as spawn,
             mock.patch.object(supervisor, "_wait_port"),
         ):
             supervisor._start_main({})
 
         child_env = spawn.call_args.args[2]
-        self.assertEqual(child_env["TALOS_LLM_DEBUG_STDOUT"], "1")
-        self.assertTrue(child_env["TALOS_LLM_DEBUG_LOG_DIR"].endswith("talos\\logs"))
+        self.assertEqual(child_env["BUTLER_LLM_DEBUG_STDOUT"], "1")
+        self.assertTrue(child_env["BUTLER_LLM_DEBUG_LOG_DIR"].endswith("butler\\logs"))
 
 
 if __name__ == "__main__":

@@ -26,4 +26,4 @@ jobs:
         run: python --version
 
       - name: Verify Python files compile
-        run: python -m compileall InfoPanel Peripherals tests
+        run: python -m compileall butler InfoPanel Peripherals tests

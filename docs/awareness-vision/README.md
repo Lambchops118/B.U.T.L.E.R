@@ -5,7 +5,7 @@ automation system sight so it can know **who** is in a room, **how many**, and
 **what they are doing** — without any video ever leaving the local network.
 
 Vision is **not a new subsystem**. It is a new *sensor source* that feeds the
-existing awareness backend (`talos/awareness/`, spec in
+existing awareness backend (`butler/awareness/`, spec in
 [`../awareness-memory/`](../awareness-memory/)). A local **vision edge worker**
 watches a camera, runs detection/tracking/pose/re-identification locally, and
 publishes small, strict semantic events over MQTT into the pipeline that is

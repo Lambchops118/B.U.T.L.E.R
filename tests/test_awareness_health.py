@@ -14,14 +14,14 @@ try:
 except ImportError as exc:
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
-from talos.awareness.health.service import (
+from butler.awareness.health.service import (
     DEGRADED,
     HEALTHY,
     UNAVAILABLE,
     ComponentStatus,
     aggregate_status,
 )
-from talos.awareness.logging_utils import JsonLogFormatter, configure_logging
+from butler.awareness.logging_utils import JsonLogFormatter, configure_logging
 
 
 def _component(name: str, status: str) -> ComponentStatus:
@@ -81,9 +81,9 @@ class HealthEndpointTest(unittest.TestCase):
     def _client(self, status: str):
         from fastapi.testclient import TestClient
 
-        from talos.awareness.api.app import create_app
-        from talos.awareness.api.routes.health import get_health_service
-        from talos.awareness.config import load_settings
+        from butler.awareness.api.app import create_app
+        from butler.awareness.api.routes.health import get_health_service
+        from butler.awareness.config import load_settings
 
         with patch.dict(os.environ, {}, clear=True):
             settings = load_settings(_env_file=None, db_password="test-only", mqtt_enabled=False)
@@ -125,7 +125,7 @@ class StructuredLoggingTest(unittest.TestCase):
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         handler.setFormatter(JsonLogFormatter())
-        logger = logging.getLogger("talos.awareness.test")
+        logger = logging.getLogger("butler.awareness.test")
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)
         logger.propagate = False

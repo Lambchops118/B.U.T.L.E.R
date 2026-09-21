@@ -18,7 +18,7 @@ import unittest
 import uuid
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -51,7 +51,7 @@ class ActionsIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -95,20 +95,20 @@ class ActionsIntegrationTest(unittest.TestCase):
         asyncio.run(self._run_pump_flow())
 
     async def _run_pump_flow(self) -> None:
-        """run_pump end to end against the canonical quad-pump contract.
+        """run_pump end to end against the canonical plant-waterer contract.
 
         Exercises the registered command envelope, per-channel cooldown scope,
         source-bound acknowledgement handling, and truthful failure — all
         through the real ingestion pipeline with an injected publisher. No
         physical board is involved.
         """
-        from talos.awareness.actions.registry import load_registry
-        from talos.awareness.actions.service import ActionService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.outbox.worker import OutboxWorker
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.registry.sources import SourceRepository
+        from butler.awareness.actions.registry import load_registry
+        from butler.awareness.actions.service import ActionService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.outbox.worker import OutboxWorker
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.registry.sources import SourceRepository
 
         engine = build_engine(self.settings)
         published: list[tuple[str, bytes]] = []
@@ -327,18 +327,18 @@ class ActionsIntegrationTest(unittest.TestCase):
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.actions.registry import (
+        from butler.awareness.actions.registry import (
             ActionDefinition,
             ActionRegistry,
             ParameterSpec,
             load_registry,
         )
-        from talos.awareness.actions.service import ActionService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.outbox.worker import OutboxWorker
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.registry.sources import SourceRepository
+        from butler.awareness.actions.service import ActionService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.outbox.worker import OutboxWorker
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.registry.sources import SourceRepository
 
         engine = build_engine(self.settings)
         published: list[tuple[str, bytes]] = []

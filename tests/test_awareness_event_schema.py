@@ -11,7 +11,7 @@ try:
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
-from talos.awareness.schemas.events import (
+from butler.awareness.schemas.events import (
     HARD_MAX_PAYLOAD_BYTES,
     EventEnvelope,
     PayloadTooLargeError,

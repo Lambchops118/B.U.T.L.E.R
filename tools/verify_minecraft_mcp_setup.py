@@ -8,8 +8,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.mcp_client.client import LocalMcpClient, _load_mcp_server_configs
-from talos.minecraft_diagnostics import configured_minecraft_root
+from butler.mcp_client.client import LocalMcpClient, _load_mcp_server_configs
+from butler.minecraft_diagnostics import configured_minecraft_root
 
 
 def _expect(condition: bool, message: str) -> None:

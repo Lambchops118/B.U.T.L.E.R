@@ -1,7 +1,7 @@
 # Vision Event Schema (draft, v1)
 
 Vision events reuse the canonical `EventEnvelope`
-([`talos/awareness/schemas/events.py`](../../../talos/awareness/schemas/events.py))
+([`butler/awareness/schemas/events.py`](../../../butler/awareness/schemas/events.py))
 unchanged. This document defines the **`vision.*` event types and their
 `payload` shapes**. Payloads are strictly versioned via `payload.payload_version`
 so they can evolve without touching the envelope's `schema_version`.

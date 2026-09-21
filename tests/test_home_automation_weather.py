@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.services import home_automation
+from butler.services import home_automation
 
 
 class _FakeResponse:
@@ -28,7 +28,7 @@ class _FakeResponse:
 class HomeAutomationWeatherTests(unittest.TestCase):
     def test_canonicalizes_city_state_query_for_us_geocoding(self) -> None:
         with mock.patch.object(home_automation, "OPEN_WEATHER_API_KEY", "test-key"), mock.patch(
-            "talos.services.home_automation.requests.get",
+            "butler.services.home_automation.requests.get",
             return_value=_FakeResponse([{"name": "Baltimore", "state": "Maryland", "country": "US", "lat": 39.2904, "lon": -76.6122}]),
         ) as get_mock:
             result = home_automation._resolve_location("Baltimore MD")
@@ -38,7 +38,7 @@ class HomeAutomationWeatherTests(unittest.TestCase):
 
     def test_uses_zip_geocoding_for_us_zip_code(self) -> None:
         with mock.patch.object(home_automation, "OPEN_WEATHER_API_KEY", "test-key"), mock.patch(
-            "talos.services.home_automation.requests.get",
+            "butler.services.home_automation.requests.get",
             return_value=_FakeResponse({"zip": "21043", "name": "Ellicott City", "country": "US", "lat": 39.2673, "lon": -76.7983}),
         ) as get_mock:
             result = home_automation._resolve_location("21043")
@@ -73,7 +73,7 @@ class HomeAutomationWeatherTests(unittest.TestCase):
         ]
 
         with mock.patch.object(home_automation, "OPEN_WEATHER_API_KEY", "test-key"), mock.patch(
-            "talos.services.home_automation.requests.get",
+            "butler.services.home_automation.requests.get",
             side_effect=responses,
         ) as get_mock:
             weather = home_automation.get_current_weather("Baltimore, MD")

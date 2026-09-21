@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.services import awareness_client
+from butler.services import awareness_client
 
 
 class _StubAwarenessHandler(BaseHTTPRequestHandler):
@@ -72,7 +72,7 @@ class AwarenessClientTest(unittest.TestCase):
     def test_situation_fetch_and_router_fallback(self) -> None:
         with _StubServer() as base_url:
             with mock.patch.dict(
-                "os.environ", {"TALOS_AWARENESS_API_URL": base_url}
+                "os.environ", {"BUTLER_AWARENESS_API_URL": base_url}
             ):
                 text = awareness_client.fetch_situation_text()
                 self.assertIn("Situation as of 2026-07-16T12:00:00+00:00", text)
@@ -85,8 +85,8 @@ class AwarenessClientTest(unittest.TestCase):
         with mock.patch.dict(
             "os.environ",
             {
-                "TALOS_AWARENESS_API_URL": "http://127.0.0.1:1",  # nothing listens
-                "TALOS_AWARENESS_CLIENT_TIMEOUT": "0.2",
+                "BUTLER_AWARENESS_API_URL": "http://127.0.0.1:1",  # nothing listens
+                "BUTLER_AWARENESS_CLIENT_TIMEOUT": "0.2",
             },
         ):
             self.assertIsNone(awareness_client.fetch_situation_text())
@@ -99,14 +99,14 @@ class AwarenessClientTest(unittest.TestCase):
 
     def test_disabled_flag_skips_fetch(self) -> None:
         with mock.patch.dict(
-            "os.environ", {"TALOS_AWARENESS_SITUATION_ENABLED": "0"}
+            "os.environ", {"BUTLER_AWARENESS_SITUATION_ENABLED": "0"}
         ):
             self.assertIsNone(awareness_client.fetch_situation_text())
 
     def test_http_error_carries_detail(self) -> None:
         with _StubServer() as base_url:
             with mock.patch.dict(
-                "os.environ", {"TALOS_AWARENESS_API_URL": base_url}
+                "os.environ", {"BUTLER_AWARENESS_API_URL": base_url}
             ):
                 with self.assertRaises(RuntimeError) as ctx:
                     awareness_client.get_json("/bogus")
@@ -117,8 +117,8 @@ class AwarenessClientTest(unittest.TestCase):
             with mock.patch.dict(
                 "os.environ",
                 {
-                    "TALOS_AWARENESS_API_URL": base_url,
-                    "TALOS_AWARENESS_API_TOKEN": "phase-seven-token",
+                    "BUTLER_AWARENESS_API_URL": base_url,
+                    "BUTLER_AWARENESS_API_TOKEN": "phase-seven-token",
                 },
             ):
                 self.assertEqual(
@@ -137,7 +137,7 @@ class AwarenessProviderTest(unittest.TestCase):
 
         from mcp.server.fastmcp import FastMCP
 
-        from talos.mcp_servers.providers.awareness import register
+        from butler.mcp_servers.providers.awareness import register
 
         server = FastMCP("test-awareness")
         register(server)
@@ -169,12 +169,12 @@ class AwarenessProviderTest(unittest.TestCase):
         import asyncio
 
         from mcp.server.fastmcp import FastMCP
-        from talos.mcp_servers.providers.awareness import register
+        from butler.mcp_servers.providers.awareness import register
 
         server = FastMCP("test-awareness")
         register(server)
         with mock.patch(
-            "talos.mcp_servers.providers.awareness.awareness_client.post_json",
+            "butler.mcp_servers.providers.awareness.awareness_client.post_json",
             return_value={"accepted": True, "disposition": "accepted"},
         ) as post:
             asyncio.run(server.call_tool("set_owner_presence", {"present": False}))
@@ -188,15 +188,15 @@ class AwarenessProviderTest(unittest.TestCase):
 
         from mcp.server.fastmcp import FastMCP
 
-        from talos.mcp_servers.providers.awareness import register
+        from butler.mcp_servers.providers.awareness import register
 
         server = FastMCP("test-awareness")
         register(server)
         with mock.patch.dict(
             "os.environ",
             {
-                "TALOS_AWARENESS_API_URL": "http://127.0.0.1:1",
-                "TALOS_AWARENESS_CLIENT_TIMEOUT": "0.2",
+                "BUTLER_AWARENESS_API_URL": "http://127.0.0.1:1",
+                "BUTLER_AWARENESS_CLIENT_TIMEOUT": "0.2",
             },
         ):
             result = asyncio.run(server.call_tool("get_current_state", {"entity_id": "fan"}))

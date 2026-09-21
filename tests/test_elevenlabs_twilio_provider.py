@@ -10,9 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
-from talos.phone.provider import OutboundCallRequest, PhoneConfig
-from talos.phone.store import PhoneCallStore
+from butler.phone.elevenlabs_twilio import ElevenLabsTwilioProvider
+from butler.phone.provider import OutboundCallRequest, PhoneConfig
+from butler.phone.store import PhoneCallStore
 
 
 class ElevenLabsTwilioProviderTests(unittest.TestCase):
@@ -57,12 +57,12 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
                         to_number="+15555550123",
                         purpose="Report the latest weather update",
                         brief_context=(
-                            "You are TALOS, the user's personal AI assistant, placing an outbound phone call.\n"
+                            "You are Butler, the user's personal AI assistant, placing an outbound phone call.\n"
                             "Deliver the requested report directly and concisely."
                         ),
                         contact_name="Thomas",
                         message_to_deliver="It is currently 76 degrees and clear in Ellicott City.",
-                        caller_identity="TALOS",
+                        caller_identity="Butler",
                     )
                 )
 
@@ -88,7 +88,7 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
             dynamic_variables["message_to_deliver"],
             "It is currently 76 degrees and clear in Ellicott City.",
         )
-        self.assertEqual(dynamic_variables["caller_identity"], "TALOS")
+        self.assertEqual(dynamic_variables["caller_identity"], "Butler")
 
         overrides = initiation_data["conversation_config_override"]
         self.assertIsInstance(overrides, dict)
@@ -98,7 +98,7 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
         assert isinstance(agent_override, dict)
         self.assertEqual(
             agent_override["first_message"],
-            "Hello Thomas, this is TALOS. I'm calling with a quick message: "
+            "Hello Thomas, this is Butler. I'm calling with a quick message: "
             "It is currently 76 degrees and clear in Ellicott City.",
         )
         prompt_override = agent_override["prompt"]
@@ -147,7 +147,7 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
         initiation_data = payload["conversation_initiation_client_data"]
         self.assertEqual(
             initiation_data["conversation_config_override"]["agent"]["first_message"],
-            "Hello Mom, this is TALOS. I'm calling regarding a pickup coordination update.",
+            "Hello Mom, this is Butler. I'm calling regarding a pickup coordination update.",
         )
 
     def test_fetch_call_details_refreshes_from_elevenlabs(self) -> None:

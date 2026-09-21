@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.voice.streaming.sentence_chunker import SentenceChunker
+from butler.voice.streaming.sentence_chunker import SentenceChunker
 
 
 def _drain(chunker: SentenceChunker, deltas: list[str]) -> list[str]:
@@ -35,8 +35,8 @@ class SentenceChunkerTests(unittest.TestCase):
 
     def test_does_not_split_decimals_or_domains(self):
         chunker = SentenceChunker(min_chars=1)
-        chunks = _drain(chunker, ["Pi is 3.14 and the site is talos.io for info."])
-        self.assertEqual(chunks, ["Pi is 3.14 and the site is talos.io for info."])
+        chunks = _drain(chunker, ["Pi is 3.14 and the site is butler.io for info."])
+        self.assertEqual(chunks, ["Pi is 3.14 and the site is butler.io for info."])
 
     def test_does_not_split_on_abbreviations(self):
         chunker = SentenceChunker(min_chars=1)

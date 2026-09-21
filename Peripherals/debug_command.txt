@@ -1,4 +1,4 @@
-Use this command in terminal to send a test signal to the pump.
+Use this command in terminal to send a test signal to the plant waterer.
 
 1 = on
 0 = off
@@ -6,5 +6,16 @@ Use this command in terminal to send a test signal to the pump.
 pump pin #s: 16, 17, 18, 19
 
 17 is monstera, 19 is the other pot
+
+Legacy pins map to only two pots. The third pump (connected 2026-09-13, waters
+a Philodendron) is logical channel 3 on the canonical firmware and has no
+legacy pin, so drive it through the canonical command topic instead:
+
+mosquitto_pub -h 192.168.1.160 -p 1883 -t home/irrigation/quad_pump/command -m '{"command_id":"<uuid4>","action":"run_pump","parameters":{"channel":3,"duration_seconds":30}}'
+
+Channel 4 is routed on the board but has no pump plugged into it.
+
+The `quad_pump` topic prefix is the legacy wire name and is still what the
+deployed firmware listens on; the device is the plant waterer everywhere else.
 
 mosquitto_pub -h 192.168.1.160 -p 1883 -t quad_pump/16 -m 1

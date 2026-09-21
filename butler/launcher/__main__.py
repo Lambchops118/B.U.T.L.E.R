@@ -1,0 +1,168 @@
+"""Entry point for ``python -m butler.launcher``.
+
+Default is the GUI control panel. Pass ``--no-gui`` (alias ``--headless``) to
+start the stack straight from the console with the last-saved configuration,
+streaming interleaved logs until Ctrl+C.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from .config import LauncherConfig
+from butler.voice.microphone_profiles import MICROPHONE_PROFILES
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="butler.launcher",
+        description="Start the whole Butler stack (LLM on the 5080, STT on the 2060).",
+    )
+    parser.add_argument(
+        "--no-gui",
+        "--headless",
+        dest="headless",
+        action="store_true",
+        help="Start components directly in the console instead of opening the GUI.",
+    )
+    # Optional per-run component overrides for headless mode.
+    parser.add_argument("--no-ollama", action="store_true", help="Do not start Ollama.")
+    parser.add_argument("--no-awareness", action="store_true", help="Do not start the awareness backend or its DB.")
+    parser.add_argument("--no-main", action="store_true", help="Do not start the main agent.")
+    parser.add_argument("--no-voice", action="store_true", help="Do not start the voice worker.")
+    parser.add_argument(
+        "--microphone",
+        choices=tuple(MICROPHONE_PROFILES),
+        help="Room microphone profile for this headless run (yeti or respeaker).",
+    )
+    parser.add_argument(
+        "--api-models",
+        action="store_true",
+        help="Use hosted OpenAI API models instead of local Ollama/STT (needs OPENAI_API_KEY).",
+    )
+    parser.add_argument(
+        "--disable-mcp",
+        action="append",
+        default=[],
+        metavar="NAME[,NAME...]",
+        help="MCP server or built-in provider group to start without, on top of the saved "
+        "selection (e.g. kicad, home_automation). Repeatable.",
+    )
+    parser.add_argument(
+        "--think-mode",
+        choices=["auto", "always", "never", "off"],
+        help="Reasoning policy for Qwen-family models: always=thinking, never=instant, "
+        "auto=think on complex requests, off=unsupported model. Overrides settings.env for this run.",
+    )
+
+    # Destructive maintenance actions. These run and exit; they do not start the
+    # stack. Each requires --yes to actually proceed.
+    parser.add_argument("--clear-memory", action="store_true", help="Clear awareness + conversation memory, then exit.")
+    parser.add_argument("--clear-awareness-memory", action="store_true", help="Clear awareness long-term memory, then exit.")
+    parser.add_argument("--clear-conversation-memory", action="store_true", help="Clear the persistent conversation store, then exit.")
+    parser.add_argument("--yes", action="store_true", help="Confirm a --clear-* action non-interactively.")
+    return parser
+
+
+def _run_clear(args: argparse.Namespace) -> int:
+    from . import maintenance
+
+    what = []
+    if args.clear_memory:
+        what.append("awareness long-term memory AND the persistent conversation store")
+    else:
+        if args.clear_awareness_memory:
+            what.append("awareness long-term memory")
+        if args.clear_conversation_memory:
+            what.append("the persistent conversation store")
+    target = " and ".join(what)
+
+    if not args.yes:
+        print(f"This will PERMANENTLY delete {target}. This cannot be undone.")
+        reply = input("Type 'yes' to proceed: ").strip().lower()
+        if reply not in {"yes", "y"}:
+            print("Aborted.")
+            return 1
+
+    try:
+        if args.clear_memory:
+            print(maintenance.clear_all_memory())
+        else:
+            if args.clear_awareness_memory:
+                print(maintenance.clear_awareness_memory())
+            if args.clear_conversation_memory:
+                print(maintenance.clear_conversation_memory())
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    return 0
+
+
+def _apply_mcp_overrides(cfg: LauncherConfig, raw_values: list[str]) -> None:
+    """Add ``--disable-mcp`` names to the saved selection for this run only.
+
+    Names are matched against the catalog to decide whether they are servers or
+    built-in provider groups; anything unrecognized is treated as a server name
+    so a server defined only in ``BUTLER_MCP_SERVERS`` can still be switched off.
+    """
+
+    from .config import mcp_catalog
+
+    providers = {entry.key.lower() for entry in mcp_catalog() if entry.kind == "provider"}
+    for raw in raw_values:
+        for part in str(raw).split(","):
+            name = part.strip()
+            if not name:
+                continue
+            target = (
+                cfg.disabled_mcp_providers
+                if name.lower() in providers
+                else cfg.disabled_mcp_servers
+            )
+            if name not in target:
+                target.append(name)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+
+    # Maintenance actions take precedence and never start the stack.
+    if args.clear_memory or args.clear_awareness_memory or args.clear_conversation_memory:
+        return _run_clear(args)
+
+    if not args.headless:
+        from .gui import main as gui_main
+
+        return gui_main()
+
+    cfg = LauncherConfig.load()
+    if args.no_ollama:
+        cfg.start_ollama = False
+    if args.no_awareness:
+        cfg.start_awareness = False
+        cfg.start_awareness_db = False
+    if args.no_main:
+        cfg.start_main = False
+    if args.no_voice:
+        cfg.start_voice = False
+    if args.microphone:
+        cfg.microphone_profile = args.microphone
+    if args.api_models:
+        cfg.use_api_models = True
+    if args.disable_mcp:
+        _apply_mcp_overrides(cfg, args.disable_mcp)
+    if args.think_mode:
+        # A real env var wins over settings.env in the children (which copy the
+        # launcher's environment), so this overrides the persisted value for the run.
+        import os
+
+        os.environ["BUTLER_LLM_THINK_MODE"] = args.think_mode
+
+    from .core import run_headless
+
+    return run_headless(cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

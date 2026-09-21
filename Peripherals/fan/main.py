@@ -1,4 +1,4 @@
-# Part of TALOS
+# Part of Butler
 # Monkey Butler Device Operations System
 
 # Uses MQTT to turn fan on or off. Pin 16 on RPI Pico W

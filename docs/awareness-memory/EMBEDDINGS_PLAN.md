@@ -5,7 +5,7 @@ Status: **planned** (not yet implemented). Owner-authorized to defer, 2026-07-20
 ## Summary
 
 The awareness long-term memory embedding model (`nomic-embed-text`, the default
-for `TALOS_AWARENESS_EMBEDDING_MODEL`) is **not installed in Ollama**, so every
+for `BUTLER_AWARENESS_EMBEDDING_MODEL`) is **not installed in Ollama**, so every
 `work_type=embedding` outbox job fails and dead-letters. Semantic (vector)
 memory search silently degrades to keyword/full-text only. Reminders, voice
 alerts, and device commands are unaffected — this is memory-recall quality only.
@@ -25,11 +25,11 @@ alerts, and device commands are unaffected — this is memory-recall quality onl
      ~300 MB so it co-exists with the chat model on the 5080), **or**
    - run a second Ollama instance pinned to the RTX 2060
      (`CUDA_VISIBLE_DEVICES=1`, its own port) and point
-     `TALOS_AWARENESS_OLLAMA_HOST` at it, to keep embeddings off the chat GPU.
+     `BUTLER_AWARENESS_OLLAMA_HOST` at it, to keep embeddings off the chat GPU.
    The 2060 is not required for performance (the embed model is tiny and the chat
    GPU has headroom); it is only an isolation nicety.
 2. **Dimension check.** `nomic-embed-text` = 768, matching
-   `TALOS_AWARENESS_EMBEDDING_DIMENSION` (768) and the pgvector column. Changing
+   `BUTLER_AWARENESS_EMBEDDING_DIMENSION` (768) and the pgvector column. Changing
    the model family requires a migration + full re-embedding.
 3. **Backfill.** Retry the dead-lettered embedding jobs
    (`POST /outbox/{id}/retry`) and confirm embeddings populate and searches
@@ -45,10 +45,10 @@ alerts, and device commands are unaffected — this is memory-recall quality onl
 
 ## Interim workaround (until implemented)
 
-Set `TALOS_AWARENESS_EMBEDDING_MODEL=` (empty) in `settings.env` so the backend
+Set `BUTLER_AWARENESS_EMBEDDING_MODEL=` (empty) in `settings.env` so the backend
 runs full-text-only cleanly and stops queuing/dead-lettering embedding work.
 
 ## References
 
-- Phase 6 memory design: [`talos/awareness/README.md`](../../talos/awareness/README.md) (Long-term memory section)
-- Proactive-presence work: [`SESSION_HANDOFF_2026-07-20_PROACTIVE_PRESENCE.md`](SESSION_HANDOFF_2026-07-20_PROACTIVE_PRESENCE.md)
+- Phase 6 memory design: [`butler/awareness/README.md`](../../butler/awareness/README.md) (Long-term memory section)
+- Proactive-presence work: [`SESSION_LOG.md` (2026-07-20 PROACTIVE PRESENCE entry)](SESSION_LOG.md#session-handoff-2026-07-20-proactive-presence)

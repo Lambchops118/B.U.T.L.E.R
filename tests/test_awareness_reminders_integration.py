@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -52,7 +52,7 @@ class RemindersIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -93,8 +93,8 @@ class RemindersIntegrationTest(unittest.TestCase):
         asyncio.run(self._run_validation())
 
     async def _run_validation(self) -> None:
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.reminders.service import ReminderService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.reminders.service import ReminderService
 
         engine = build_engine(self.settings)
         try:
@@ -140,10 +140,10 @@ class RemindersIntegrationTest(unittest.TestCase):
     async def _run_fire(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.alerts.service import AlertService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.reminders.service import ReminderService
-        from talos.awareness.reminders.worker import ReminderWorker
+        from butler.awareness.alerts.service import AlertService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.reminders.service import ReminderService
+        from butler.awareness.reminders.worker import ReminderWorker
 
         engine = build_engine(self.settings)
         try:

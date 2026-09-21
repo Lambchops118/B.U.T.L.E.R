@@ -17,8 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.phone import reset_default_phone_provider, reset_default_phone_store
-from talos.text.server import TextAgentHTTPServer, TextServerConfig
+from butler.phone import reset_default_phone_provider, reset_default_phone_store
+from butler.text.server import TextAgentHTTPServer, TextServerConfig
 
 
 def _make_config(*, phone_push_token: str) -> TextServerConfig:
@@ -72,8 +72,8 @@ class PhoneEventsEndpointTests(unittest.TestCase):
         self._env_patch = mock.patch.dict(
             os.environ,
             {
-                "TALOS_PHONE_PROVIDER": "elevenlabs_twilio",
-                "TALOS_PHONE_DB_PATH": str(Path(self._tmpdir.name) / "phone.sqlite3"),
+                "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
+                "BUTLER_PHONE_DB_PATH": str(Path(self._tmpdir.name) / "phone.sqlite3"),
             },
             clear=False,
         )
@@ -102,7 +102,7 @@ class PhoneEventsEndpointTests(unittest.TestCase):
             "outcome": "completed",
             "transcript": [
                 {"role": "user", "message": "Can you pick me up at six?"},
-                {"role": "assistant", "message": "Sure, I will let TALOS know."},
+                {"role": "assistant", "message": "Sure, I will let Butler know."},
             ],
         }
 

@@ -8,8 +8,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.request_classifier import RequestClassification
-from talos.router import _enforce_foreground_for_sensitive_actions, _event_session_id, _must_run_in_foreground
+from butler.request_classifier import RequestClassification
+from butler.router import _enforce_foreground_for_sensitive_actions, _event_session_id, _must_run_in_foreground
 
 
 class RouterPhoneRoutingTests(unittest.TestCase):

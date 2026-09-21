@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import thinking
+from butler.agent import thinking
 
 
 class ResolveThinkModeTests(unittest.TestCase):
@@ -17,15 +17,15 @@ class ResolveThinkModeTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {}, clear=False):
             import os
 
-            os.environ.pop("TALOS_LLM_THINK_MODE", None)
+            os.environ.pop("BUTLER_LLM_THINK_MODE", None)
             self.assertEqual(thinking.resolve_think_mode(), "auto")
 
     def test_unknown_value_falls_back_to_auto(self):
-        with mock.patch.dict("os.environ", {"TALOS_LLM_THINK_MODE": "banana"}):
+        with mock.patch.dict("os.environ", {"BUTLER_LLM_THINK_MODE": "banana"}):
             self.assertEqual(thinking.resolve_think_mode(), "auto")
 
     def test_reads_valid_value_case_insensitively(self):
-        with mock.patch.dict("os.environ", {"TALOS_LLM_THINK_MODE": "  NEVER "}):
+        with mock.patch.dict("os.environ", {"BUTLER_LLM_THINK_MODE": "  NEVER "}):
             self.assertEqual(thinking.resolve_think_mode(), "never")
 
 
@@ -89,7 +89,7 @@ class ThinkingSuffixTests(unittest.TestCase):
         )
 
     def test_mode_defaults_to_env(self):
-        with mock.patch.dict("os.environ", {"TALOS_LLM_THINK_MODE": "off"}):
+        with mock.patch.dict("os.environ", {"BUTLER_LLM_THINK_MODE": "off"}):
             self.assertEqual(thinking.thinking_suffix("anything"), "")
 
     def test_background_lane_thinks_under_auto(self):

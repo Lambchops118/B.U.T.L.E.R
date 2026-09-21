@@ -9,8 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.services import awareness_client
-from talos.text.server import TextAgentRequestHandler, _stream_state_snapshot
+from butler.services import awareness_client
+from butler.text.server import TextAgentRequestHandler, _stream_state_snapshot
 
 
 class TextServerLoggingTests(unittest.TestCase):

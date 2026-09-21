@@ -10,8 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.voice.backends.base import AudioChunk, TranscriptResult
-from talos.voice.backends.stt_faster_whisper import FasterWhisperSTT
+from butler.voice.backends.base import AudioChunk, TranscriptResult
+from butler.voice.backends.stt_faster_whisper import FasterWhisperSTT
 
 
 def _pcm(num_samples: int) -> bytes:

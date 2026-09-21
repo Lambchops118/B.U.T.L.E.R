@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from talos.voice.streaming.windows_audio import normalize_audio_graph_pcm
+from butler.voice.streaming.windows_audio import normalize_audio_graph_pcm
 
 
 class NormalizeAudioGraphPcmTests(unittest.TestCase):

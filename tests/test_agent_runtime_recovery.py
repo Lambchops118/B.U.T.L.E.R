@@ -14,8 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.agent import runtime as agent_runtime
-from talos.memory import MemoryStore
+from butler.agent import runtime as agent_runtime
+from butler.memory import MemoryStore
 
 
 class FakeMcpClient:
@@ -27,7 +27,7 @@ class FakeMcpClient:
         self.inventory_refresh = refresh
         return {
             "tools": [{"name": "local_ping"}],
-            "servers": [{"name": "talos-local", "status": "healthy"}],
+            "servers": [{"name": "butler-local", "status": "healthy"}],
         }
 
     def retry_server(self, server=None):
@@ -153,7 +153,7 @@ class AgentRuntimeRecoveryTests(unittest.TestCase):
 
         self.assertTrue(mcp_client.inventory_refresh)
         self.assertIn("local_ping", result)
-        self.assertIn("talos-local", result)
+        self.assertIn("butler-local", result)
 
     def test_host_tool_retries_mcp_server_explicitly(self) -> None:
         mcp_client = FakeMcpClient()

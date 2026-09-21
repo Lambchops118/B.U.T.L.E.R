@@ -3,7 +3,7 @@ import unittest
 
 import speech_recognition as sr
 
-from talos.voice.streaming.duplex import (
+from butler.voice.streaming.duplex import (
     BoundedFrameQueue,
     DuplexAudioPipeline,
     DuplexRecognizerAudioSource,

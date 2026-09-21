@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 try:
     from tests import test_awareness_state_integration as fixture
     import sqlalchemy as sa
-    from talos.awareness.context.briefing import BriefingAssembler
-    from talos.awareness.db.models import Alert, AttentionItem, Event, Measurement, NotificationDelivery, Reminder, StateTransition
-    from talos.awareness.db.session import build_engine
-    from talos.awareness.registry.bootstrap import seed_registry
+    from butler.awareness.context.briefing import BriefingAssembler
+    from butler.awareness.db.models import Alert, AttentionItem, Event, Measurement, NotificationDelivery, Reminder, StateTransition
+    from butler.awareness.db.session import build_engine
+    from butler.awareness.registry.bootstrap import seed_registry
 except ImportError as exc:
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 

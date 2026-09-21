@@ -8,10 +8,10 @@ from types import SimpleNamespace as Row
 from unittest.mock import AsyncMock
 
 try:
-    from talos.awareness.config import AwarenessSettings
-    from talos.awareness.context.briefing import BriefingAssembler, BriefingAssemblyError, resolve_window
-    from talos.awareness.history.briefing import BriefingRecords
-    from talos.awareness.history.telemetry import QueryBoundsError
+    from butler.awareness.config import AwarenessSettings
+    from butler.awareness.context.briefing import BriefingAssembler, BriefingAssemblyError, resolve_window
+    from butler.awareness.history.briefing import BriefingRecords
+    from butler.awareness.history.telemetry import QueryBoundsError
 except ImportError as exc:
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 

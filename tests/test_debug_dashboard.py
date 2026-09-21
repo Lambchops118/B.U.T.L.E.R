@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.debug_dashboard.server import (
+from butler.debug_dashboard.server import (
     DebugSnapshotService,
     DebugHTTPServer,
     _normalize_remote_host,
@@ -183,7 +183,7 @@ class DebugDashboardDataTests(unittest.TestCase):
                     }
                 }
             },
-            source="http://talos-host/metrics",
+            source="http://butler-host/metrics",
         )
 
         self.assertEqual(host["status"], "available")
@@ -213,7 +213,7 @@ class DebugDashboardDataTests(unittest.TestCase):
                     server.server_close()
                     thread.join(timeout=2)
 
-        self.assertIn("TALOS DEBUG CONSOLE", page)
+        self.assertIn("Butler DEBUG CONSOLE", page)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["snapshot"]["schema_version"], 1)
 

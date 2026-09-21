@@ -16,7 +16,7 @@ import unittest
 import uuid
 
 try:
-    from talos.awareness.config import AwarenessSettings, SettingsError, load_settings
+    from butler.awareness.config import AwarenessSettings, SettingsError, load_settings
 except ImportError as exc:  # awareness deps live in .venv-awareness
     raise unittest.SkipTest(f"awareness dependencies not installed: {exc}")
 
@@ -50,7 +50,7 @@ class MemoryIntegrationTest(unittest.TestCase):
         if not asyncio.run(self._create_scratch_database()):
             self.skipTest("awareness Postgres is not reachable (start docker compose)")
 
-        from talos.awareness.db.migrate import upgrade_to_head
+        from butler.awareness.db.migrate import upgrade_to_head
 
         upgrade_to_head(self.settings.database_url)
 
@@ -93,15 +93,15 @@ class MemoryIntegrationTest(unittest.TestCase):
     async def _run_flow(self) -> None:
         import sqlalchemy as sa
 
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.memory.service import (
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.memory.service import (
             CandidateProposal,
             EvidenceRef,
             MemoryService,
         )
-        from talos.awareness.outbox.worker import OutboxWorker
-        from talos.awareness.memory.embeddings import EmbeddingHandler
-        from talos.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.outbox.worker import OutboxWorker
+        from butler.awareness.memory.embeddings import EmbeddingHandler
+        from butler.awareness.registry.bootstrap import seed_registry
 
         engine = build_engine(self.settings)
         try:
@@ -310,15 +310,15 @@ class MemoryIntegrationTest(unittest.TestCase):
 
         import sqlalchemy as sa
 
-        from talos.awareness.alerts.service import AlertService
-        from talos.awareness.db.session import build_engine
-        from talos.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
-        from talos.awareness.memory.service import MemoryService
-        from talos.awareness.outbox.worker import OutboxWorker
-        from talos.awareness.registry.bootstrap import seed_registry
-        from talos.awareness.registry.sources import SourceRepository
-        from talos.awareness.rules.engine import RuleEngine
-        from talos.awareness.rules.policy import load_policy
+        from butler.awareness.alerts.service import AlertService
+        from butler.awareness.db.session import build_engine
+        from butler.awareness.ingestion.pipeline import InboundMessage, IngestionPipeline
+        from butler.awareness.memory.service import MemoryService
+        from butler.awareness.outbox.worker import OutboxWorker
+        from butler.awareness.registry.bootstrap import seed_registry
+        from butler.awareness.registry.sources import SourceRepository
+        from butler.awareness.rules.engine import RuleEngine
+        from butler.awareness.rules.policy import load_policy
 
         engine = build_engine(self.settings)
         try:

@@ -5,14 +5,14 @@ Status: **Phases A-F implemented; owner-run room corpus and soak pending**
 Date: 2026-07-26
 
 Scope: the room-microphone streaming voice path in
-`talos/voice/agent.py`, `talos/voice/streaming/barge_in.py`, and its focused
+`butler/voice/agent.py`, `butler/voice/streaming/barge_in.py`, and its focused
 tests. This plan does not change the phone voice path, the agent's cancellation
 API, or physical-action authorization.
 
 ## Executive conclusion
 
 The downstream cancellation and conversation-record repair are reasonable:
-once an interruption is trustworthy, TALOS should stop local playback, cancel
+once an interruption is trustworthy, Butler should stop local playback, cancel
 generation, retain only the audible assistant prefix, and dispatch a genuine
 follow-up utterance.
 
@@ -26,7 +26,7 @@ both reported symptoms:
   the loudspeaker echo at the microphone.
 - Speaker dynamics, timing gaps, and room noise can trigger ducking. The captured
   audio is then transcribed with VAD disabled, and any non-empty text that does
-  not resemble TALOS's own words—including a hallucinated "thank you"—is
+  not resemble Butler's own words—including a hallucinated "thank you"—is
   accepted as a user utterance.
 
 Do not make the current energy threshold more permissive. That trades missed
@@ -38,10 +38,10 @@ speech happened.
 ## What was inspected
 
 - Feature commit `f86caee` ("first pass at barge in")
-- `talos/voice/streaming/barge_in.py`
-- `talos/voice/agent.py`
-- `talos/voice/streaming/speaker.py`
-- `talos/voice/backends/stt_faster_whisper.py`
+- `butler/voice/streaming/barge_in.py`
+- `butler/voice/agent.py`
+- `butler/voice/streaming/speaker.py`
+- `butler/voice/backends/stt_faster_whisper.py`
 - `tests/test_barge_in.py`
 - `tests/test_streaming_speaker.py`
 - `tests/test_barge_in_agent_integration.py`
@@ -76,7 +76,7 @@ The learned value is also a decaying maximum shared across utterances. A single
 loud passage can suppress detection through later, quieter passages, while a
 speaker transient above the prior maximum can look like a user.
 
-Relevant code: `talos/voice/streaming/barge_in.py:315-348`.
+Relevant code: `butler/voice/streaming/barge_in.py:315-348`.
 
 ### 2. Every reply begins with a deliberate deaf interval
 
@@ -86,9 +86,9 @@ output is present is echo and refuses to trigger. If a user speaks then, their
 voice can also raise the persistent echo peak and make the rest of the
 interruption harder to detect.
 
-Relevant code: `talos/voice/streaming/barge_in.py:328-335`.
+Relevant code: `butler/voice/streaming/barge_in.py:328-335`.
 
-### 3. The detector is armed when TALOS is not yet speaking
+### 3. The detector is armed when Butler is not yet speaking
 
 `_arm_playback(session)` runs before the LLM has produced a sentence and before
 Polly has returned audio. During that potentially multi-second interval, there
@@ -96,7 +96,7 @@ is no aligned output, so the detector uses the low ambient floor. Sustained room
 noise can start a capture and duck a session whose first audio has not even
 played. Sentence gaps create a similar low-threshold window.
 
-Relevant code: `talos/voice/agent.py:882-918`.
+Relevant code: `butler/voice/agent.py:882-918`.
 
 ### 4. Short real interruptions are penalized twice
 
@@ -109,7 +109,7 @@ After ducking, the capture path can continue using the old, high, pre-duck echo
 threshold. Quieter near-end speech is then counted as silence, which compounds
 the miss.
 
-Relevant code: `talos/voice/streaming/barge_in.py:346-368` and `:410-421`.
+Relevant code: `butler/voice/streaming/barge_in.py:346-368` and `:410-421`.
 
 ### 5. Energy is being treated as speech
 
@@ -124,14 +124,14 @@ average log probability, or segment duration.
 
 Relevant code:
 
-- `talos/voice/streaming/barge_in.py:351-378`
-- `talos/voice/backends/stt_faster_whisper.py:25-40`
-- `talos/voice/backends/stt_faster_whisper.py:85-97`
+- `butler/voice/streaming/barge_in.py:351-378`
+- `butler/voice/backends/stt_faster_whisper.py:25-40`
+- `butler/voice/backends/stt_faster_whisper.py:85-97`
 
 ### 6. A plausible ASR string is incorrectly considered evidence of a person
 
 With wake-word enforcement disabled, every non-empty transcript is accepted
-unless it textually overlaps TALOS's recorded output. A hallucinated "thank
+unless it textually overlaps Butler's recorded output. A hallucinated "thank
 you" does not overlap most replies, so it is accepted and redispatched as a
 user command.
 
@@ -139,7 +139,7 @@ Whisper is a generative ASR model; non-speech hallucination is a known failure
 mode. Phrase blocklists are not a sound correction because the same failure can
 produce other plausible phrases.
 
-Relevant code: `talos/voice/streaming/barge_in.py:495-532`.
+Relevant code: `butler/voice/streaming/barge_in.py:495-532`.
 
 ### 7. Confirmation blocks microphone consumption
 
@@ -149,7 +149,7 @@ overflow and loses the beginning of any continued speech or corrected retry.
 Real-time capture should enqueue bounded work and continue draining the audio
 device.
 
-Relevant code: `talos/voice/agent.py:236-258`.
+Relevant code: `butler/voice/agent.py:236-258`.
 
 ### 8. The recorded "audible prefix" is sentence-granular and can be false
 
@@ -160,8 +160,8 @@ whole sentence.
 
 Relevant code:
 
-- `talos/voice/streaming/speaker.py:98-116`
-- `talos/voice/agent.py:908-915`
+- `butler/voice/streaming/speaker.py:98-116`
+- `butler/voice/agent.py:908-915`
 
 ### 9. The tests encode the optimistic assumptions
 
@@ -198,7 +198,7 @@ statistics. Its documented interface expects approximately 10 ms PCM frames
 and says to place it close to the audio hardware.
 
 On the current Windows deployment, first probe whether the selected capture
-endpoint exposes Windows communications-mode AEC and allows the TALOS render
+endpoint exposes Windows communications-mode AEC and allows the Butler render
 endpoint to be selected as its reference. If that is consistently available on
 the actual hardware, it may be the lowest-maintenance integration. Otherwise,
 use WebRTC APM directly through a maintained, pinned native binding or a small
@@ -236,9 +236,9 @@ Each phase is separately reviewable. Do not begin the next automatically.
 ### Phase A — Containment and measurement
 
 - Treat current barge-in as experimental.
-- Until replacement, run with `TALOS_BARGE_IN=0` for zero false commands.
+- Until replacement, run with `BUTLER_BARGE_IN=0` for zero false commands.
 - If the owner explicitly accepts wake-word-only interruption and missed
-  barge-ins, `TALOS_BARGE_IN_REQUIRE_WAKE_WORD=1` is a partial containment for
+  barge-ins, `BUTLER_BARGE_IN_REQUIRE_WAKE_WORD=1` is a partial containment for
   false redispatch. It does not fix false ducking or create full-duplex audio.
 - Add privacy-safe counters and timings:
   `candidate_started`, `candidate_rejected`, `accepted`, VAD probabilities,
@@ -253,7 +253,7 @@ without silently recording the room.
 
 Implementation record (2026-07-26):
 
-- `TALOS_BARGE_IN=0` is now the tracked setting and the code default. The
+- `BUTLER_BARGE_IN=0` is now the tracked setting and the code default. The
   heuristic remains available only through an explicit diagnostic opt-in.
 - `BargeInMetrics` records bounded counters for candidates started, rejected,
   and accepted, plus numeric summaries for render/mixed-capture RMS, capture and
@@ -303,7 +303,7 @@ Implementation record (2026-07-27):
   far-end signal RMS from 230.426 to 1.196: 45.696 dB ERLE, correlation reduction
   0.053797, 0 callback errors, and 0.1875 CPU-seconds over 4.46 seconds.
 - The old RMS detector is available only as
-  `TALOS_BARGE_IN_BACKEND=heuristic_diagnostic`, never as fallback.
+  `BUTLER_BARGE_IN_BACKEND=heuristic_diagnostic`, never as fallback.
 
 ### Phase C — Real-time audio pipeline
 
@@ -412,7 +412,7 @@ Provisional acceptance targets, to be confirmed by the owner:
 - no regression to idle wake-word latency beyond 50 ms p95;
 - truthful memory prefix at tested interruption points.
 
-Roll out behind `TALOS_BARGE_IN_BACKEND=aec` with the old heuristic unavailable
+Roll out behind `BUTLER_BARGE_IN_BACKEND=aec` with the old heuristic unavailable
 unless explicitly selected for a diagnostic comparison. AEC failure must
 disable barge-in, surface degraded status, and leave ordinary wake-word
 operation working.
@@ -428,7 +428,7 @@ Implementation record (2026-07-27):
 - Added synthetic state-machine/corpus tests for far-end/noise rejection
   mechanics, trigger-duration accounting, bounded overflow behavior, clean idle
   wake capture, and partial-chunk memory truthfulness.
-- Production selection is `TALOS_BARGE_IN_BACKEND=aec`; initialization or
+- Production selection is `BUTLER_BARGE_IN_BACKEND=aec`; initialization or
   endpoint failure visibly disables barge-in and returns to an ordinary
   `SpeechRecognition` microphone source. The tracked feature flag remains off
   until sensitive room fixtures and the eight-hour soak are owner-run.

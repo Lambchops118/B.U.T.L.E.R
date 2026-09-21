@@ -1,4 +1,4 @@
-# Part of TALOS
+# Part of Butler
 # Monkey Butler Device Operations System
 
 #This is some test code that was written by chatgpt to demostrate drawing a 3d wireframe object within a panel in an already existing pygame window.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from talos.services import home_automation
+from butler.services import home_automation
 
 
 class HomeAutomationActionsTest(unittest.TestCase):

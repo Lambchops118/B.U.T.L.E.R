@@ -7,13 +7,34 @@
 
 Monkey Butler is an artificial butler built around a locally hosted agent structure with access to peripherals and built in speech interface.
 
+## A note on names
+
+The project is Butler. Some identifiers deliberately still read `talos`, because
+they are contracts with something outside this source tree and renaming them
+would break a running system rather than tidy it:
+
+| Name | Why it stays |
+| --- | --- |
+| Postgres database `talos_awareness`, role `talos`, container `talos-awareness-db`, `talos-test-mosquitto` | Live database objects. Renaming them orphans the existing data volume. |
+| `db/talos_memory.sqlite3`, `talos_jobs.sqlite3`, `talos_phone.sqlite3`, `talos_sleep_state.json` | Files already on disk holding real conversation, job, call, and sleep state. |
+| Awareness `entity_id` `talos`, `source_id` `talos_agent`, topics `home/agent/talos/*` | Stored primary keys and the MQTT topics bound to them. |
+| MQTT client-ID prefix `talos-quad-pump-` and `FIRMWARE_VERSION` `quad_pump-2.0.0` | Defined in firmware already flashed to the Pico W. |
+| Plant-waterer topics `quad_pump/{pin}` and `home/irrigation/quad_pump/*`, and the `quad_pump.command_ack` event type | The same deployed firmware listens and replies on these. |
+| `talos_session_id` | A dynamic variable ElevenLabs echoes back on phone calls. |
+| The GitHub remote `Lambchops118/Talos` | The repository has not been renamed on GitHub. |
+
+Everything else — the `butler/` package, the `BUTLER_*` environment variables,
+prose, and display names — uses the new name. Display names that live in the
+database are moved by the conditional migrations in
+`butler/awareness/registry/bootstrap.py`.
+
 ## Project Layout
 
-- `talos/`: main locally-run agent, voice/text workers, scheduler, services, and MCP runtime
-- `talos/awareness/`: deterministic presence/state/history/alerts/memory backend (separate process, PostgreSQL-backed) — see [talos/awareness/README.md](talos/awareness/README.md)
+- `butler/`: main locally-run agent, voice/text workers, scheduler, services, and MCP runtime
+- `butler/awareness/`: deterministic presence/state/history/alerts/memory backend (separate process, PostgreSQL-backed) — see [butler/awareness/README.md](butler/awareness/README.md)
 - `InfoPanel/`: pygame display modules and visual assets used by the GUI
 - `Peripherals/fan/`: Raspberry Pi Pico W script for MQTT-controlled fan switching
-- `Peripherals/quad_pump/`: Raspberry Pi Pico W script for MQTT-controlled plant watering
+- `Peripherals/Pump-Power-Controller/`: submodule holding the plant waterer's controller board and its Raspberry Pi Pico W firmware
 - `Peripherals/mqtt_server/control_display.py`: MQTT listener that sends TV power/input commands
 - `archive/`: older InfoPanel prototypes kept for reference
 - `experiments/`: visual and hardware experiments that are not part of the main runtime
@@ -21,13 +42,13 @@ Monkey Butler is an artificial butler built around a locally hosted agent struct
 
 ## Build
 
-This repository does not currently produce packaged installers or binary artifacts. The main build target is the Python host application in `talos/`, with peripheral scripts deployed manually to MicroPython devices.
+This repository does not currently produce packaged installers or binary artifacts. The main build target is the Python host application in `butler/`, with peripheral scripts deployed manually to MicroPython devices.
 
 ### Host Application
 
 Recommended prerequisites for the split-process setup:
 
-- Python 3.10+ for the main TALOS agent/display process
+- Python 3.10+ for the main Butler agent/display process
 - Python 3.12 for the separate voice worker process
 - PortAudio development/runtime libraries for `PyAudio`
 - A reachable MQTT broker
@@ -66,7 +87,7 @@ Configuration is split into two files:
 - **`.env`** — secrets only (API keys, auth tokens, passwords). It is
   git-ignored; copy `.env.example` to `.env` and fill in the values you need.
 
-A real shell environment variable overrides either file. Restart TALOS after
+A real shell environment variable overrides either file. Restart Butler after
 editing.
 
 Local inference uses the existing OpenAI-compatible backend seam pointed at
@@ -74,14 +95,14 @@ Ollama; the OpenAI SDK is only the protocol client and requests stay on
 loopback. The installed custom model ships as the default in `settings.env`:
 
 ```env
-TALOS_LLM_BACKEND=ollama
-TALOS_LLM_BASE_URL=http://127.0.0.1:11434/v1
-TALOS_LLM_MODEL=mb-core-v1:latest
-TALOS_LLM_MAX_TOKENS_PARAM=max_tokens
-TALOS_VOICE_STREAMING=1
-TALOS_REMOTE_LLM_FALLBACK=0
-TALOS_LOCAL_STT=1
-TALOS_REMOTE_STT_FALLBACK=0
+BUTLER_LLM_BACKEND=ollama
+BUTLER_LLM_BASE_URL=http://127.0.0.1:11434/v1
+BUTLER_LLM_MODEL=mb-core-v1:latest
+BUTLER_LLM_MAX_TOKENS_PARAM=max_tokens
+BUTLER_VOICE_STREAMING=1
+BUTLER_REMOTE_LLM_FALLBACK=0
+BUTLER_LOCAL_STT=1
+BUTLER_REMOTE_STT_FALLBACK=0
 ```
 
 `OPENAI_API_KEY` is not required for the streaming Ollama lane or local STT.
@@ -99,23 +120,23 @@ Optional voice settings:
 - `WAKE_WORD_MODE`
 - `WAKE_WORD_MODEL`
 - `OPENAI_VOICE_MODEL`
-- `TALOS_TIMEZONE`
-- `TALOS_WEATHER_LOCATION`
-- `TALOS_WEATHER_UNITS`
-- `TALOS_MCP_SERVERS`
+- `BUTLER_TIMEZONE`
+- `BUTLER_WEATHER_LOCATION`
+- `BUTLER_WEATHER_UNITS`
+- `BUTLER_MCP_SERVERS`
 
 Optional phone settings:
 
-- `TALOS_PHONE_ENABLED`
-- `TALOS_PHONE_PROVIDER`
+- `BUTLER_PHONE_ENABLED`
+- `BUTLER_PHONE_PROVIDER`
 - `ELEVENLABS_API_KEY`
-- `TALOS_PHONE_AGENT_ID`
-- `TALOS_PHONE_NUMBER_ID`
-- `TALOS_PHONE_ALLOWED_OUTBOUND`
-- `TALOS_PHONE_BRIDGE_URL`
-- `TALOS_PHONE_BRIDGE_TOKEN`
-- `TALOS_PHONE_CONTACTS`
-- `TALOS_PHONE_ALLOWLIST`
+- `BUTLER_PHONE_AGENT_ID`
+- `BUTLER_PHONE_NUMBER_ID`
+- `BUTLER_PHONE_ALLOWED_OUTBOUND`
+- `BUTLER_PHONE_BRIDGE_URL`
+- `BUTLER_PHONE_BRIDGE_TOKEN`
+- `BUTLER_PHONE_CONTACTS`
+- `BUTLER_PHONE_ALLOWLIST`
 
 Optional text-agent settings:
 
@@ -129,14 +150,14 @@ Optional text-agent settings:
 Run the host app:
 
 ```bash
-.venv-main/bin/python -m talos
+.venv-main/bin/python -m butler
 ```
 
 Voice benchmark summaries print directly to the main app terminal. Each app run also creates a new timestamped CSV in `logs/`, for example `voice_benchmarks_20260511_124500_123456.csv`.
 
 ### One-Command Startup
 
-TALOS normally runs as several processes across separate virtual environments
+Butler normally runs as several processes across separate virtual environments
 (main agent, voice worker, awareness backend) plus a Postgres container and a
 local Ollama server. The launcher starts and supervises all of them from one
 place, and pins each GPU-bound process to the right card:
@@ -152,13 +173,13 @@ overridden in the GUI.
 Launch the GUI control panel (Windows):
 
 ```powershell
-.\Start-Talos.ps1
+.\Start-Butler.ps1
 ```
 
 or from `cmd`:
 
 ```bat
-talos.cmd
+butler.cmd
 ```
 
 The GUI lets you choose which components to start, the room microphone, the
@@ -176,7 +197,7 @@ blue/cyan and received records are green so the request and response cannot be
 mistaken for one another. The feed is
 enabled only for a launcher-managed main agent and travels over the existing
 local child-process stdout pipe. The same records are permanently appended to a
-per-run `talos/logs/llm_io_<UTC timestamp>_<pid>.jsonl` file; these files have no
+per-run `butler/logs/llm_io_<UTC timestamp>_<pid>.jsonl` file; these files have no
 automatic retention or pruning and are git-ignored. The GUI retains at most the
 latest 5,000,000 displayed characters. Both forms can contain private
 conversation history, remembered facts, awareness context, tool schemas,
@@ -187,28 +208,27 @@ collects everything that is injected in front of the model each turn, as opposed
 to which processes run:
 
 - **Tool surface.** *Send tools to the model* is the master switch; unticking it
-  sets `TALOS_DISABLE_ALL_TOOLS=1`, which starts no MCP server and sends no tool
+  sets `BUTLER_DISABLE_ALL_TOOLS=1`, which starts no MCP server and sends no tool
   schema at all (the OpenAI-compatible backend omits the `tools` key entirely),
-  leaving a bare prompt — useful for timing the model on its own. Below it,
-  kitchen-tool scoping and the reduced KiCad surface can each be turned off to
-  expose those groups in full.
-- **MCP servers & tools.** One box per MCP server — the built-in `talos-local`,
+  leaving a bare prompt — useful for timing the model on its own. Below it, the
+  reduced KiCad surface can be turned off to expose that group in full.
+- **MCP servers & tools.** One box per MCP server — the built-in `butler-local`,
   the optional filesystem, KiCad, and Minecraft helpers, and anything listed in
-  `TALOS_MCP_SERVERS` — with the `talos-local` provider groups (home automation,
-  kitchen recipe screen, awareness) indented beneath it. Unticked entries never
+  `BUTLER_MCP_SERVERS` — with the `butler-local` provider groups (home automation,
+  awareness) indented beneath it. Unticked entries never
   start, so their tools are absent for the whole run. Helpers that are not
   configured in `settings.env` appear greyed out with the variable they need.
 - **Injected context.** Remembered facts (the memory block), the authoritative
   current date/time, and the awareness situation snapshot.
 
 The MCP selection persists to `launcher.config.json` and is applied as per-run
-environment overrides (`TALOS_MCP_DISABLED_SERVERS` /
-`TALOS_MCP_DISABLED_PROVIDERS`); the other boxes write their `settings.env` keys
+environment overrides (`BUTLER_MCP_DISABLED_SERVERS` /
+`BUTLER_MCP_DISABLED_PROVIDERS`); the other boxes write their `settings.env` keys
 in place, since the agent reads those at startup. Headless, add
 `--disable-mcp kicad,home_automation` (repeatable) on top of the saved
 selection.
 
-**Local vs. hosted API models.** By default TALOS runs fully local (Ollama LLM on
+**Local vs. hosted API models.** By default Butler runs fully local (Ollama LLM on
 the 5080, faster-whisper STT on the 2060). Tick **Use hosted API models (OpenAI)
 instead of local** (or pass `--api-models` headless) to run the LLM and STT
 against OpenAI instead (`gpt-4o-mini` by default, plus `whisper-1` for speech).
@@ -219,7 +239,7 @@ untouched. In API mode the launcher skips the local Ollama server (it would only
 waste VRAM).
 
 **Thinking (instant vs. reasoning).** The **Thinking** dropdown sets
-`TALOS_LLM_THINK_MODE`: `Always` forces a reasoning pass every turn, `Never` gives
+`BUTLER_LLM_THINK_MODE`: `Always` forces a reasoning pass every turn, `Never` gives
 instant replies, `Auto` reasons only on complex requests, and `Off` injects
 nothing. This only affects Qwen-family local models (e.g. `mb-core-v1`) that
 understand the `/think` and `/no_think` soft switches — leave it `Off` for
@@ -231,7 +251,7 @@ ignores this and is forced `Off` (OpenAI models don't use the switches). Headles
 permanently deletes the awareness system's long-term memory (the `memories*`
 tables) and the persistent conversation store (`db/talos_memory.sqlite3` — facts,
 summaries, and history). Presence, state, history, and alerts are left intact.
-It asks for confirmation first and requires TALOS to be stopped (the running main
+It asks for confirmation first and requires Butler to be stopped (the running main
 agent holds the conversation database open). Headless, add `--yes` to skip the
 prompt, or use `--clear-awareness-memory` / `--clear-conversation-memory` to clear
 just one. **This is irreversible.**
@@ -240,7 +260,7 @@ Prefer no GUI? Start everything headless in the current console with the
 last-saved configuration:
 
 ```powershell
-.\Start-Talos.ps1 --no-gui
+.\Start-Butler.ps1 --no-gui
 ```
 
 `--no-gui` also accepts `--no-ollama`, `--no-awareness`, `--no-main`,
@@ -255,13 +275,13 @@ want the launcher to pin it to the 5080).
 The launcher can also be invoked directly with any project interpreter:
 
 ```bash
-.venv-main/Scripts/python.exe -m talos.launcher            # GUI
-.venv-main/Scripts/python.exe -m talos.launcher --no-gui   # headless
+.venv-main/Scripts/python.exe -m butler.launcher            # GUI
+.venv-main/Scripts/python.exe -m butler.launcher --no-gui   # headless
 ```
 
 ### Local Debug Dashboard
 
-TALOS includes a separate, read-only web debug console for interaction I/O,
+Butler includes a separate, read-only web debug console for interaction I/O,
 pipeline timings, component/host health, CPU/GPU usage, and available audio
 metrics. It reads the existing conversation database, voice benchmark CSVs, and
 privacy-safe pipeline telemetry without joining the agent or audio hot paths.
@@ -269,7 +289,7 @@ privacy-safe pipeline telemetry without joining the agent or audio hot paths.
 Start it with the main Python environment:
 
 ```powershell
-.venv-main\Scripts\python.exe -m talos.debug_dashboard
+.venv-main\Scripts\python.exe -m butler.debug_dashboard
 ```
 
 Then open `http://127.0.0.1:8787`. The page polls once per second by default,
@@ -279,12 +299,12 @@ JSON/detail rows remain open while polling. New dashboard topics can be added
 through the versioned snapshot's `extensions` list without changing the
 existing tabs.
 
-The console host is not assumed to be the TALOS system host, so it never reports
-its own CPU, GPU, memory, or disk as TALOS metrics. Set
-`TALOS_DEBUG_SYSTEM_METRICS_URL` to a JSON metrics or compatible debug-snapshot
-endpoint on the TALOS host; until then, the hardware cards truthfully show
+The console host is not assumed to be the Butler system host, so it never reports
+its own CPU, GPU, memory, or disk as Butler metrics. Set
+`BUTLER_DEBUG_SYSTEM_METRICS_URL` to a JSON metrics or compatible debug-snapshot
+endpoint on the Butler host; until then, the hardware cards truthfully show
 `NOT_CONFIGURED`. If that endpoint requires a bearer token, set
-`TALOS_DEBUG_SYSTEM_METRICS_TOKEN`. Selecting and deploying the system-host
+`BUTLER_DEBUG_SYSTEM_METRICS_TOKEN`. Selecting and deploying the system-host
 metrics exporter remains a separate task.
 
 The dashboard defaults to loopback because it displays private transcripts and
@@ -295,38 +315,38 @@ not currently persisted by the runtime, so the page labels those feeds as
 unavailable instead of inventing data. Adding them requires a separate,
 explicitly bounded and privacy-reviewed runtime instrumentation task.
 
-#### Note: `TALOS_TEXT_AGENT_URL` and local voice
+#### Note: `BUTLER_TEXT_AGENT_URL` and local voice
 
-The voice worker reaches the main agent over `TALOS_TEXT_AGENT_URL`. A real
+The voice worker reaches the main agent over `BUTLER_TEXT_AGENT_URL`. A real
 environment variable always overrides `settings.env` (`load_environment()` never
 overwrites a variable already present in the process environment). So if a
-persistent machine-level `TALOS_TEXT_AGENT_URL` points at a remote/Tailscale
+persistent machine-level `BUTLER_TEXT_AGENT_URL` points at a remote/Tailscale
 address (e.g. `http://100.x.y.z:8420`), a locally started voice worker inherits
 it and times out — the main agent binds to `localhost`, so nothing answers on
 the remote interface (this shows up as `WinError 10060`, a connection *timeout*,
 not "connection refused").
 
 When the launcher starts the main agent locally it works around this by pinning
-the voice worker's `TALOS_TEXT_AGENT_URL` to `http://127.0.0.1:<TEXT_AGENT_PORT>`
+the voice worker's `BUTLER_TEXT_AGENT_URL` to `http://127.0.0.1:<TEXT_AGENT_PORT>`
 for that child only. If you start the voice worker by hand, or point the
 launcher at a remote agent (uncheck **Main agent**), the inherited value applies
-instead. A machine-level `TALOS_TEXT_AGENT_URL` that names *this* host's remote
+instead. A machine-level `BUTLER_TEXT_AGENT_URL` that names *this* host's remote
 address is usually a mistake — that variable belongs on the *client* device that
 connects in, not on the host running the agent.
 
 ### MCP Tools And Resources
 
-TALOS can expose tools from one or more MCP servers. By default, if `TALOS_MCP_SERVERS` is unset, it uses the built-in local aggregate server in `talos/mcp_server.py`. If `TALOS_MCP_SERVERS` is set, `talos/mcp_client/client.py` treats it as the full MCP server list and manages all configured connections.
+Butler can expose tools from one or more MCP servers. By default, if `BUTLER_MCP_SERVERS` is unset, it uses the built-in local aggregate server in `butler/mcp_server.py`. If `BUTLER_MCP_SERVERS` is set, `butler/mcp_client/client.py` treats it as the full MCP server list and manages all configured connections.
 
 The current flow is:
 
-1. `talos/mcp_client/client.py` starts one or more MCP connections.
+1. `butler/mcp_client/client.py` starts one or more MCP connections.
 2. Each configured server is queried with `tools/list`.
-3. The returned tools are merged into one tool surface for `talos/agent/runtime.py`.
+3. The returned tools are merged into one tool surface for `butler/agent/runtime.py`.
 4. The runtime also exposes host-level helper tools for MCP resources: `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`.
-5. If the model chooses a tool, TALOS routes that call back to the MCP server that owns it.
+5. If the model chooses a tool, Butler routes that call back to the MCP server that owns it.
 
-The runtime also exposes phone orchestration host tools directly from `talos/agent/runtime.py`: `place_phone_call`, `phone_call_status`, `recent_phone_calls`, and `summarize_phone_call`. These are session-aware host tools rather than MCP tools so TALOS can enforce the v1 outbound-call safety policy.
+The runtime also exposes phone orchestration host tools directly from `butler/agent/runtime.py`: `place_phone_call`, `phone_call_status`, `recent_phone_calls`, and `summarize_phone_call`. These are session-aware host tools rather than MCP tools so Butler can enforce the v1 outbound-call safety policy.
 
 Supported transports in the current client:
 
@@ -335,31 +355,28 @@ Supported transports in the current client:
 
 If two servers expose the same tool name, you must set a `tool_prefix` on at least one of them so the merged tool list stays unique.
 
-Tool implementations are registered in provider modules under `talos/mcp_servers/providers/`. The existing home automation tools are defined in `talos/mcp_servers/providers/home_automation.py` with `@server.tool()` decorators, and their actual device logic lives in `talos/services/home_automation.py`.
-
-The built-in local aggregate MCP server now also includes a kitchen recipe screen domain. Those tools live in `talos/mcp_servers/providers/kitchen_recipe_screen.py` and talk to the browser kiosk over HTTP through `talos/services/kitchen_recipe_screen.py`.
+Tool implementations are registered in provider modules under `butler/mcp_servers/providers/`. The existing home automation tools are defined in `butler/mcp_servers/providers/home_automation.py` with `@server.tool()` decorators, and their actual device logic lives in `butler/services/home_automation.py`.
 
 The home automation provider also exposes:
 
-- `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `TALOS_TIMEZONE` in `settings.env` to force an IANA timezone such as `America/New_York`; otherwise TALOS falls back to the host machine's local timezone.
-- `get_current_weather`, which gives the agent the current weather, temperature, humidity, UV index, wind, and today's temperature range. By default it uses `TALOS_WEATHER_LOCATION` and `TALOS_WEATHER_UNITS` from `settings.env`, but the tool can also take a one-off location override. UV comes from OpenWeather One Call, while the initial location lookup uses the standard current-weather endpoint.
+- `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `BUTLER_TIMEZONE` in `settings.env` to force an IANA timezone such as `America/New_York`; otherwise Butler falls back to the host machine's local timezone.
+- `get_current_weather`, which gives the agent the current weather, temperature, humidity, UV index, wind, and today's temperature range. By default it uses `BUTLER_WEATHER_LOCATION` and `BUTLER_WEATHER_UNITS` from `settings.env`, but the tool can also take a one-off location override. UV comes from OpenWeather One Call, while the initial location lookup uses the standard current-weather endpoint.
 
 Server assembly is separate from tool definition:
 
-- `talos/mcp_servers/aggregate.py` defines the tool surface used by the local agent runtime.
-- `talos/mcp_servers/home_automation_server.py` and `talos/mcp_servers/tv_control_server.py` expose standalone servers for specific domains.
-- `talos/mcp_servers/kitchen_recipe_screen_server.py` exposes the kitchen recipe screen tool domain as its own MCP server.
-- `talos/mcp_http_app.py` mounts those domain servers over HTTP.
+- `butler/mcp_servers/aggregate.py` defines the tool surface used by the local agent runtime.
+- `butler/mcp_servers/home_automation_server.py` and `butler/mcp_servers/tv_control_server.py` expose standalone servers for specific domains.
+- `butler/mcp_http_app.py` mounts those domain servers over HTTP.
 
-Example `TALOS_MCP_SERVERS` value:
+Example `BUTLER_MCP_SERVERS` value:
 
 ```json
 [
   {
-    "name": "talos-local",
+    "name": "butler-local",
     "transport": "stdio",
     "command": "python",
-    "args": ["-m", "talos.mcp_server"]
+    "args": ["-m", "butler.mcp_server"]
   },
   {
     "name": "github",
@@ -373,18 +390,18 @@ Example `TALOS_MCP_SERVERS` value:
 
 Notes:
 
-- Once `TALOS_MCP_SERVERS` is set, it replaces the default built-in MCP list. Include your local TALOS server explicitly if you still want local home-automation tools.
-- `auth_token_env` tells TALOS which environment variable contains a bearer token for that remote MCP server.
+- Once `BUTLER_MCP_SERVERS` is set, it replaces the default built-in MCP list. Include your local Butler server explicitly if you still want local home-automation tools.
+- `auth_token_env` tells Butler which environment variable contains a bearer token for that remote MCP server.
 - `headers` can also be provided directly in the JSON config if a server needs custom headers.
 - Remote MCP entries may also set `tls_verify: false` to disable certificate verification for that one server, or `tls_ca_bundle` to point at a custom CA bundle when Python cannot validate the server certificate chain on the current machine.
 - Use `tool_prefix` when a remote server might expose names that collide with local tools.
-- TALOS now supports multi-step tool execution loops. Set `TALOS_MAX_TOOL_CALL_ROUNDS` in `settings.env` if you need to raise or lower the default limit of `8`.
-- Set `TALOS_AGENT_MAX_OUTPUT_TOKENS` in `settings.env` if tool-calling requests need more room to emit long structured arguments, such as full recipe step lists. The default is `400`.
+- Butler now supports multi-step tool execution loops. Set `BUTLER_MAX_TOOL_CALL_ROUNDS` in `settings.env` if you need to raise or lower the default limit of `8`.
+- Set `BUTLER_AGENT_MAX_OUTPUT_TOKENS` in `settings.env` if tool-calling requests need more room to emit long structured arguments, such as full recipe step lists. The default is `400`.
 - Resource reads are text-first. Binary resources are surfaced with MIME metadata and a base64 preview so the model can reason about what is available without flooding context.
 
 KiCad helper integration:
 
-- Set `KICAD_MCP_SERVER_PATH` to a local checkout of `mixelpixx/KiCAD-MCP-Server` and TALOS will append it automatically as a `stdio` MCP server.
+- Set `KICAD_MCP_SERVER_PATH` to a local checkout of `mixelpixx/KiCAD-MCP-Server` and Butler will append it automatically as a `stdio` MCP server.
 - The helper accepts either the repo root or a direct path to `dist/index.js`.
 - Use `KICAD_PYTHONPATH`, `KICAD_PYTHON`, `KICAD_AUTO_LAUNCH`, `KICAD_MCP_LOG_LEVEL`, and `KICAD_MCP_DEV` to mirror the upstream KiCad MCP server environment.
 
@@ -400,39 +417,39 @@ KICAD_PYTHONPATH=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framew
 
 General filesystem MCP support:
 
-- Set `TALOS_FILESYSTEM_ROOTS` and TALOS will append two general-purpose filesystem helpers automatically:
+- Set `BUTLER_FILESYSTEM_ROOTS` and Butler will append two general-purpose filesystem helpers automatically:
   - the official `@modelcontextprotocol/server-filesystem` server
-  - a TALOS-owned diagnostics server that adds tools like `fs_summarize_directory`, `fs_find_recent_files`, `fs_search_text`, and `fs_compare_text_files`
+  - a Butler-owned diagnostics server that adds tools like `fs_summarize_directory`, `fs_find_recent_files`, `fs_search_text`, and `fs_compare_text_files`
 - Use a JSON array of absolute paths for multiple roots. Example:
 
 ```env
-TALOS_FILESYSTEM_ROOTS=["/Users/you/projects","/Volumes/shared/reference"]
-TALOS_FILESYSTEM_ALLOW_WRITES=0
+BUTLER_FILESYSTEM_ROOTS=["/Users/you/projects","/Volumes/shared/reference"]
+BUTLER_FILESYSTEM_ALLOW_WRITES=0
 ```
 
-- TALOS prefixes these tools with `fs_` by default so they can coexist with other MCP providers.
-- Read-only behavior is the default user experience. TALOS hides the official filesystem server's write-capable tools unless `TALOS_FILESYSTEM_ALLOW_WRITES=1` is set explicitly.
-- This is general filesystem support, not just workspace access. TALOS can inspect any configured roots on the local machine that the helper servers are allowed to access.
+- Butler prefixes these tools with `fs_` by default so they can coexist with other MCP providers.
+- Read-only behavior is the default user experience. Butler hides the official filesystem server's write-capable tools unless `BUTLER_FILESYSTEM_ALLOW_WRITES=1` is set explicitly.
+- This is general filesystem support, not just workspace access. Butler can inspect any configured roots on the local machine that the helper servers are allowed to access.
 - Install prerequisites:
   - Node.js with `npx`
   - access to `@modelcontextprotocol/server-filesystem`, usually via `npx -y`
-- Restart TALOS after changing `settings.env` so the MCP list is rebuilt.
+- Restart Butler after changing `settings.env` so the MCP list is rebuilt.
 - Verify the setup with:
 
 ```bash
 .venv-main/bin/python tools/verify_filesystem_mcp_setup.py
 ```
 
-- More detailed setup notes live in [docs/filesystem-mcp.md](/Users/jacksal1/Desktop/Talos/Talos/docs/filesystem-mcp.md).
+- More detailed setup notes live in [docs/filesystem-mcp.md](/Users/jacksal1/Desktop/Talos/Butler/docs/filesystem-mcp.md).
 
 Minecraft Forge/modpack diagnostics:
 
-- Set `MINECRAFT_SERVER_DIR` to a modded server root and TALOS will append two MCP servers automatically:
+- Set `MINECRAFT_SERVER_DIR` to a modded server root and Butler will append two MCP servers automatically:
   - the official `@modelcontextprotocol/server-filesystem` server, scoped to that directory only
-  - a TALOS-owned ripgrep diagnostics server that enforces the same root and adds helpers like `minecraft_find_recent_logs`, `minecraft_search_text`, and `minecraft_detect_duplicate_mods`
-- This is an optional specialization for Minecraft-specific heuristics. The core local-filesystem design is the general `TALOS_FILESYSTEM_ROOTS` flow above.
-- The local ripgrep wrapper exists because the generic `mcp-ripgrep` package exposes arbitrary caller-supplied paths; TALOS needs the search surface constrained to `MINECRAFT_SERVER_DIR` for safe default operation.
-- Read-only behavior is the default user experience. TALOS hides the official filesystem server's write-capable tools unless `MINECRAFT_MCP_ALLOW_WRITES=1` is set explicitly.
+  - a Butler-owned ripgrep diagnostics server that enforces the same root and adds helpers like `minecraft_find_recent_logs`, `minecraft_search_text`, and `minecraft_detect_duplicate_mods`
+- This is an optional specialization for Minecraft-specific heuristics. The core local-filesystem design is the general `BUTLER_FILESYSTEM_ROOTS` flow above.
+- The local ripgrep wrapper exists because the generic `mcp-ripgrep` package exposes arbitrary caller-supplied paths; Butler needs the search surface constrained to `MINECRAFT_SERVER_DIR` for safe default operation.
+- Read-only behavior is the default user experience. Butler hides the official filesystem server's write-capable tools unless `MINECRAFT_MCP_ALLOW_WRITES=1` is set explicitly.
 - Install prerequisites:
   - Node.js with `npx`
   - `rg` on PATH, for example `brew install ripgrep`
@@ -444,7 +461,7 @@ MINECRAFT_SERVER_DIR=/absolute/path/to/minecraft-server
 MINECRAFT_MCP_ALLOW_WRITES=0
 ```
 
-- Restart TALOS after changing `settings.env` so the MCP list is rebuilt.
+- Restart Butler after changing `settings.env` so the MCP list is rebuilt.
 - Verify the setup with:
 
 ```bash
@@ -457,14 +474,14 @@ MINECRAFT_MCP_ALLOW_WRITES=0
 Diagnose my Forge server. Start with logs/latest.log and the newest crash report. Find the most likely bad config, mod, datapack, or script. Do not modify files; give me ranked suspects with evidence.
 ```
 
-- More detailed setup and safety guidance lives in [docs/minecraft-forge-diagnostics.md](/Users/jacksal1/Desktop/Talos/Talos/docs/minecraft-forge-diagnostics.md).
+- More detailed setup and safety guidance lives in [docs/minecraft-forge-diagnostics.md](/Users/jacksal1/Desktop/Talos/Butler/docs/minecraft-forge-diagnostics.md).
 
 To add a new MCP tool in an existing domain:
 
-1. Add the real logic to the relevant service module, such as `talos/services/home_automation.py`.
+1. Add the real logic to the relevant service module, such as `butler/services/home_automation.py`.
 2. Register a tool in the matching provider module with `@server.tool()`.
 3. Use a clear docstring and typed parameters. The MCP SDK uses those to describe the tool and generate its input schema.
-4. Restart the TALOS process so the local MCP client refreshes its cached tool list.
+4. Restart the Butler process so the local MCP client refreshes its cached tool list.
 
 Example:
 
@@ -475,34 +492,28 @@ def set_thermostat(target_f: int) -> str:
     return actions.set_thermostat(target_f)
 ```
 
-Kitchen recipe screen configuration:
-
-- `KITCHEN_RECIPE_SCREEN_URL` points TALOS at the browser kiosk server, defaulting to `http://127.0.0.1:8765`.
-- `KITCHEN_RECIPE_SCREEN_TIMEOUT` controls the per-request timeout in seconds, default `10`.
-- The kitchen screen tools can read/write recipe title, servings, ingredients, steps, notes, timer state, and the top-row link indicator.
-
 To add a new MCP tool domain:
 
-1. Create `talos/mcp_servers/providers/<domain>.py` with a `register(server)` function.
-2. Export that registrar from `talos/mcp_servers/providers/__init__.py`.
-3. Add the registrar to `talos/mcp_servers/aggregate.py` if the main TALOS agent should be able to use it.
-4. Optionally create a dedicated `talos/mcp_servers/<domain>_server.py`.
-5. Optionally mount that server in `talos/mcp_http_app.py` if you want HTTP access.
+1. Create `butler/mcp_servers/providers/<domain>.py` with a `register(server)` function.
+2. Export that registrar from `butler/mcp_servers/providers/__init__.py`.
+3. Add the registrar to `butler/mcp_servers/aggregate.py` if the main Butler agent should be able to use it.
+4. Optionally create a dedicated `butler/mcp_servers/<domain>_server.py`.
+5. Optionally mount that server in `butler/mcp_http_app.py` if you want HTTP access.
 
 ### Personality And Prompt Assembly
 
-TALOS assembles model instructions from versioned, human-editable prompt documents instead of a single hardcoded runtime string.
+Butler assembles model instructions from versioned, human-editable prompt documents instead of a single hardcoded runtime string.
 
-- `talos/personality/monkey_butler.md` contains the stable Monkey Butler soul document.
-- `talos/personality/overlays/voice.md` and `text.md` keep interaction-mode behavior separate.
-- `talos/personality/overlays/kicad.md`, `filesystem.md`, and `tool_usage.md` hold domain and operating guidance.
-- `talos/agent/prompting.py` loads those pieces and injects runtime memory/context blocks without editing the soul document.
+- `butler/personality/monkey_butler.md` contains the stable Monkey Butler soul document.
+- `butler/personality/overlays/voice.md` and `text.md` keep interaction-mode behavior separate.
+- `butler/personality/overlays/kicad.md`, `filesystem.md`, and `tool_usage.md` hold domain and operating guidance.
+- `butler/agent/prompting.py` loads those pieces and injects runtime memory/context blocks without editing the soul document.
 
-Set `TALOS_PERSONALITY_PATH` to point at a different base soul document. The built-in overlays still apply unless the assembly code is configured with alternate overlay paths.
+Set `BUTLER_PERSONALITY_PATH` to point at a different base soul document. The built-in overlays still apply unless the assembly code is configured with alternate overlay paths.
 
 ### Durable Memory
 
-TALOS includes a SQLite-backed conversation and prompt-memory store in `talos/memory/store.py`. It is enabled by default and writes to `db/talos_memory.sqlite3`, which is ignored by git because it can contain private user and session facts.
+Butler includes a SQLite-backed conversation and prompt-memory store in `butler/memory/store.py`. It is enabled by default and writes to `db/talos_memory.sqlite3`, which is ignored by git because it can contain private user and session facts.
 
 The store keeps structured records for:
 
@@ -515,16 +526,16 @@ At request time, the agent retrieves a compact prompt-ready memory block from su
 
 Useful memory settings:
 
-- `TALOS_MEMORY_ENABLED=0` explicitly disables local conversation and prompt memory (it is enabled by default).
-- `TALOS_MEMORY_DB_PATH=/absolute/path/to/talos_memory.sqlite3` overrides the SQLite location.
-- `TALOS_MEMORY_PROJECT_ID=Talos` selects the project summary key used for prompt retrieval.
-- `TALOS_PROMPT_MEMORY_CHAR_LIMIT=1600` bounds prompt memory injection.
-- `TALOS_CONVERSATION_HISTORY_MESSAGE_LIMIT=8` bounds streamed recent-message count.
-- `TALOS_CONVERSATION_HISTORY_CHAR_LIMIT=4000` bounds streamed recent-message text.
+- `BUTLER_MEMORY_ENABLED=0` explicitly disables local conversation and prompt memory (it is enabled by default).
+- `BUTLER_MEMORY_DB_PATH=/absolute/path/to/talos_memory.sqlite3` overrides the SQLite location.
+- `BUTLER_MEMORY_PROJECT_ID=Butler` selects the project summary key used for prompt retrieval.
+- `BUTLER_PROMPT_MEMORY_CHAR_LIMIT=1600` bounds prompt memory injection.
+- `BUTLER_CONVERSATION_HISTORY_MESSAGE_LIMIT=8` bounds streamed recent-message count.
+- `BUTLER_CONVERSATION_HISTORY_CHAR_LIMIT=4000` bounds streamed recent-message text.
 
 ### Split Agent And Voice Worker
 
-TALOS can now run as two separate processes:
+Butler can now run as two separate processes:
 
 - main agent process: router, scheduler, text server, GUI, MCP/runtime
 - voice worker process: microphone, wake word, Whisper, Polly playback
@@ -532,31 +543,31 @@ TALOS can now run as two separate processes:
 Start the main agent:
 
 ```bash
-.venv-main/bin/python -m talos
+.venv-main/bin/python -m butler
 ```
 
 or equivalently:
 
 ```bash
-.venv-main/bin/python -m talos.agent_main
+.venv-main/bin/python -m butler.agent_main
 ```
 
 Start the voice worker separately:
 
 ```bash
-.venv-voice/bin/python -m talos.voice.worker
+.venv-voice/bin/python -m butler.voice.worker
 ```
 
 Start the awareness backend separately (requires its database; see
-[talos/awareness/README.md](talos/awareness/README.md) for setup):
+[butler/awareness/README.md](butler/awareness/README.md) for setup):
 
 ```bash
 docker compose -f docker-compose.awareness.yml up -d --wait
-.venv-awareness/bin/python -m talos.awareness migrate
-.venv-awareness/bin/python -m talos.awareness serve
+.venv-awareness/bin/python -m butler.awareness migrate
+.venv-awareness/bin/python -m butler.awareness serve
 ```
 
-The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `TALOS_TEXT_AGENT_URL` and `TALOS_TEXT_AGENT_TOKEN`.
+The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `BUTLER_TEXT_AGENT_URL` and `BUTLER_TEXT_AGENT_TOKEN`.
 
 ### Room Microphone Profiles
 
@@ -568,7 +579,7 @@ XVF3800 or Blue Yeti profile. The equivalent headless override is
   USB channel 2 (the firmware's auto-selected ASR beam), and retains the
   one-second ambient calibration instead of replacing it with the Yeti's fixed
   threshold. Barge-in and experimental idle VAD are disabled for this profile:
-  TALOS playback uses the BenQ render endpoint, so the XVF3800 has no validated
+  Butler playback uses the BenQ render endpoint, so the XVF3800 has no validated
   far-end reference for hardware AEC.
 - **Yeti** opens the named Yeti explicitly for ordinary wake capture and retains
   its fixed energy threshold. Its existing Windows communications-AEC path is
@@ -579,13 +590,13 @@ XVF3800 or Blue Yeti profile. The equivalent headless override is
 Changing the dropdown takes effect the next time the voice worker starts. The
 tracked default and the current machine-local launcher selection are ReSpeaker.
 
-### Barge-In (Interrupting TALOS While It Speaks)
+### Barge-In (Interrupting Butler While It Speaks)
 
 The room path now uses pinned Windows communications-mode AEC, continuously
 drained bounded capture, Silero speech-probability VAD, and local faster-whisper
 confirmation. The deployed-host Phase B probe measured 45.7 dB echo return loss
 enhancement with no callback errors. Rollout remains fail-closed with
-`TALOS_BARGE_IN=0` until the owner-run room corpus and soak meet the targets in
+`BUTLER_BARGE_IN=0` until the owner-run room corpus and soak meet the targets in
 [the barge-in redesign plan](docs/voice/BARGE_IN_REDESIGN_PLAN.md).
 
 When explicitly enabled, the AEC path lets a user talk over a spoken reply or
@@ -593,7 +604,7 @@ proactive alert. A confirmed interruption stops
 the answer, tells the agent how much was heard, and — unless the utterance only
 asked it to stop — sends the utterance as the next command.
 
-`TALOS_BARGE_IN_BACKEND=aec` is the production selection. The old RMS detector
+`BUTLER_BARGE_IN_BACKEND=aec` is the production selection. The old RMS detector
 is available only as the explicit `heuristic_diagnostic` backend and is never a
 silent fallback. If AEC, endpoint identity, or the VAD stack fails, barge-in is
 disabled while ordinary wake-word capture stays available.
@@ -602,7 +613,7 @@ Ordinary wake commands use SpeechRecognition only for energy-based utterance
 segmentation; the resulting clip is still transcribed once by local
 faster-whisper. Experimental idle Silero endpointing has independent thresholds
 and a 640 ms pre-roll, and cannot activate unless both
-`TALOS_IDLE_VAD_ENDPOINTING=1` and `TALOS_IDLE_VAD_CORPUS_ACCEPTED=1`. The second
+`BUTLER_IDLE_VAD_ENDPOINTING=1` and `BUTLER_IDLE_VAD_CORPUS_ACCEPTED=1`. The second
 flag is an operator acknowledgement that the owner-visible wake/pause/noise
 corpus passed; it must not be set merely to reduce latency. Local STT weights are
 preloaded asynchronously at voice-worker startup, and a bounded priority queue
@@ -616,14 +627,14 @@ transcript content.
 
 An opt-in fixture recorder is available for operator-run corpus collection:
 
-- Set `TALOS_BARGE_IN_FIXTURE_RECORDING=1` only for a visible recording session.
+- Set `BUTLER_BARGE_IN_FIXTURE_RECORDING=1` only for a visible recording session.
 - The voice worker prints a warning with the exact local directory and limits.
 - `capture.wav`, `render.wav`, and `events.jsonl` preserve block timestamps and
   sample offsets for synchronization; `manifest.json` records bounds, dropped
   frames, termination reason, and errors.
 - Audio callbacks enqueue without blocking. The default session is limited to
   120 seconds and 32 MiB of PCM, with at most five owned fixture directories.
-- The recorder is independent of `TALOS_BARGE_IN`, so unsafe interruption can
+- The recorder is independent of `BUTLER_BARGE_IN`, so unsafe interruption can
   remain disabled while fixtures are collected. Raw audio is never recorded by
   default, and fixture files are never uploaded; the existing explicit remote
   STT opt-in remains a separate policy.
@@ -632,7 +643,7 @@ Because synthesis runs ahead of playback, the text the agent generated is longer
 than the text you heard. The voice worker is authoritative about the difference:
 it reports the audible prefix to `POST /interrupt`, which cancels the in-flight
 turn and rewrites the stored assistant turn to what was heard, marked as cut off.
-Without that, TALOS would believe it finished a thought you never heard, and a
+Without that, Butler would believe it finished a thought you never heard, and a
 follow-up like "no, not that one" would have nothing to attach to.
 Only fully emitted sentence chunks are recorded as heard. If interruption lands
 inside a chunk without word alignment, the chunk is marked partially heard and
@@ -642,44 +653,44 @@ Bare stop phrases ("stop", "never mind", "that's enough") end the reply without
 spending a turn on an answer you did not ask for.
 
 The synchronized fixture corpus can be evaluated with
-`python -m talos.voice.diagnostics.barge_in_acceptance <manifest.json>`; start
+`python -m butler.voice.diagnostics.barge_in_acceptance <manifest.json>`; start
 from `docs/voice/barge_in_fixture_manifest.example.json`. Room PCM remains local
 and should not be committed.
 
 Barge-in covers the streaming reply path and proactive speech. The opt-in
-non-streaming fallback (`TALOS_REMOTE_LLM_FALLBACK=1`) is not interruptible: its
+non-streaming fallback (`BUTLER_REMOTE_LLM_FALLBACK=1`) is not interruptible: its
 audio is synthesized in one piece, so there is no way to say which part of it you
 had heard, and recording a guess would be worse than recording nothing.
 
 ### Phone Calling
 
-TALOS phone calling is intentionally separate from the room microphone voice worker.
+Butler phone calling is intentionally separate from the room microphone voice worker.
 
-- The current `talos/voice/agent.py` path remains the local microphone pipeline.
+- The current `butler/voice/agent.py` path remains the local microphone pipeline.
 - Phone calls use ElevenLabs for the real-time conversational voice agent and Twilio for the phone number / PSTN transport.
-- TALOS handles safe outbound call initiation, local call history, transcript summaries, and bridge-based sync.
+- Butler handles safe outbound call initiation, local call history, transcript summaries, and bridge-based sync.
 
 The current phone implementation lives under:
 
-- `talos/phone/` for provider logic, policy, persistence, and user-facing phone commands
-- `talos/phone_bridge/` for the small public webhook/API service that should run outside the private TALOS host
+- `butler/phone/` for provider logic, policy, persistence, and user-facing phone commands
+- `butler/phone_bridge/` for the small public webhook/API service that should run outside the private Butler host
 
-Recommended settings for TALOS itself (secrets — `ELEVENLABS_API_KEY`,
-`TALOS_PHONE_BRIDGE_TOKEN`, `TALOS_PHONE_PUSH_TOKEN` — go in `.env`; the rest in
+Recommended settings for Butler itself (secrets — `ELEVENLABS_API_KEY`,
+`BUTLER_PHONE_BRIDGE_TOKEN`, `BUTLER_PHONE_PUSH_TOKEN` — go in `.env`; the rest in
 `settings.env`):
 
 ```env
-TALOS_PHONE_ENABLED=1
-TALOS_PHONE_PROVIDER=elevenlabs_twilio
+BUTLER_PHONE_ENABLED=1
+BUTLER_PHONE_PROVIDER=elevenlabs_twilio
 ELEVENLABS_API_KEY=...
-TALOS_PHONE_AGENT_ID=...
-TALOS_PHONE_NUMBER_ID=...
-TALOS_PHONE_ALLOWED_OUTBOUND=1
-TALOS_PHONE_BRIDGE_URL=https://your-public-phone-bridge.example.com
-TALOS_PHONE_BRIDGE_TOKEN=shared-bridge-token
-TALOS_PHONE_CONTACTS={"mom":"+15555550123"}
-TALOS_PHONE_ALLOWLIST=["+15555550123"]
-TALOS_PHONE_PUSH_TOKEN=shared-push-token
+BUTLER_PHONE_AGENT_ID=...
+BUTLER_PHONE_NUMBER_ID=...
+BUTLER_PHONE_ALLOWED_OUTBOUND=1
+BUTLER_PHONE_BRIDGE_URL=https://your-public-phone-bridge.example.com
+BUTLER_PHONE_BRIDGE_TOKEN=shared-bridge-token
+BUTLER_PHONE_CONTACTS={"mom":"+15555550123"}
+BUTLER_PHONE_ALLOWLIST=["+15555550123"]
+BUTLER_PHONE_PUSH_TOKEN=shared-push-token
 ```
 
 Recommended bridge settings in the separate public deployment:
@@ -687,15 +698,15 @@ Recommended bridge settings in the separate public deployment:
 ```env
 PHONE_BRIDGE_API_TOKEN=shared-bridge-token
 PHONE_BRIDGE_WEBHOOK_TOKEN=separate-webhook-token
-TALOS_PHONE_DB_PATH=/absolute/path/to/bridge_phone.sqlite3
-TALOS_PHONE_MAIN_NOTIFY_URL=http://your-main-talos-host:8420
-TALOS_PHONE_PUSH_TOKEN=shared-push-token
+BUTLER_PHONE_DB_PATH=/absolute/path/to/bridge_phone.sqlite3
+BUTLER_PHONE_MAIN_NOTIFY_URL=http://your-main-butler-host:8420
+BUTLER_PHONE_PUSH_TOKEN=shared-push-token
 ```
 
 Run the public bridge with:
 
 ```bash
-.venv-main/bin/python -m uvicorn talos.phone_bridge.app:app --host 0.0.0.0 --port 8787
+.venv-main/bin/python -m uvicorn butler.phone_bridge.app:app --host 0.0.0.0 --port 8787
 ```
 
 Then configure the ElevenLabs post-call webhook URL to target:
@@ -707,11 +718,11 @@ https://your-public-phone-bridge.example.com/webhooks/elevenlabs?token=separate-
 Notes:
 
 - v1 outbound calls are allowed only from the active foreground user session.
-- Raw E.164 numbers must be present in `TALOS_PHONE_ALLOWLIST`.
-- Named contacts must resolve through `TALOS_PHONE_CONTACTS`.
-- In the ElevenLabs agent security settings, enable `First message` and `System prompt` overrides. TALOS uses those per-call overrides, plus dynamic variables, so the phone agent knows who it called, why it called, and what message to deliver.
-- The bridge is the only component that should be internet-facing; keep the main TALOS runtime private.
-- When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `TALOS_PHONE_MAIN_NOTIFY_URL` + `TALOS_PHONE_PUSH_TOKEN`, matching `TALOS_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `TALOS_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `TALOS_PHONE_BRIDGE_URL`).
+- Raw E.164 numbers must be present in `BUTLER_PHONE_ALLOWLIST`.
+- Named contacts must resolve through `BUTLER_PHONE_CONTACTS`.
+- In the ElevenLabs agent security settings, enable `First message` and `System prompt` overrides. Butler uses those per-call overrides, plus dynamic variables, so the phone agent knows who it called, why it called, and what message to deliver.
+- The bridge is the only component that should be internet-facing; keep the main Butler runtime private.
+- When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `BUTLER_PHONE_MAIN_NOTIFY_URL` + `BUTLER_PHONE_PUSH_TOKEN`, matching `BUTLER_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `BUTLER_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `BUTLER_PHONE_BRIDGE_URL`).
 
 ### Text Chat Over Tailscale
 
@@ -719,7 +730,7 @@ The host app now starts a small built-in text server alongside the voice pipelin
 
 Recommended setup:
 
-1. Install Tailscale on the homelab machine running TALOS and on the client machine.
+1. Install Tailscale on the homelab machine running Butler and on the client machine.
 2. Join both machines to the same tailnet.
 3. Set `TEXT_AGENT_API_TOKEN` in `.env`.
 4. Leave `TEXT_AGENT_HOST=0.0.0.0`.
@@ -761,19 +772,19 @@ You can also use the built-in terminal client instead of raw `curl`.
 One-shot command:
 
 ```bash
-python -m talos.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc" "turn the fan on"
+python -m butler.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc" "turn the fan on"
 ```
 
 Interactive mode:
 
 ```bash
-python -m talos.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
+python -m butler.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
 ```
 
-On Windows, the repository root now includes `butler.cmd`, which launches the same client. If the repo root is on your `PATH`, you can run:
+On Windows, the repository root includes `butler-chat.cmd`, which launches the same client (`butler.cmd` starts the whole stack instead). If the repo root is on your `PATH`, you can run:
 
 ```powershell
-butler --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
+butler-chat --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
 ```
 
 ### Peripheral Deployment
@@ -794,7 +805,7 @@ Typical flow:
 Current peripheral entry points:
 
 - `Peripherals/fan/main.py`
-- `Peripherals/quad_pump/main.py`
+- `Peripherals/Pump-Power-Controller/Firmware/main.py` (plant waterer)
 
 ## Release
 

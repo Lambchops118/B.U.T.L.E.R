@@ -15,7 +15,7 @@ from . import screen_effects as fx
 from . import windows
 from .screen_effects import GpuCRT
 
-from talos.services import sleep_mode
+from butler.services import sleep_mode
 
 font_path = str(Path(__file__).resolve().parent / "VT323-Regular.ttf")
 

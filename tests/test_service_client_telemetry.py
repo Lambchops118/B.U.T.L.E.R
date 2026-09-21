@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from talos.text.service_client import stream_message
+from butler.text.service_client import stream_message
 
 
 class _FakeSseResponse:
@@ -43,7 +43,7 @@ class ServiceClientTelemetryTests(unittest.TestCase):
         )
         received = []
         with mock.patch(
-            "talos.text.service_client.urllib.request.urlopen",
+            "butler.text.service_client.urllib.request.urlopen",
             return_value=response,
         ) as urlopen:
             deltas = list(

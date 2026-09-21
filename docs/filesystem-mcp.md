@@ -1,47 +1,47 @@
 # Filesystem MCP Support
 
-TALOS can attach a general local-filesystem toolset instead of a Minecraft-specific one-off workflow.
+Butler can attach a general local-filesystem toolset instead of a Minecraft-specific one-off workflow.
 
-When `TALOS_FILESYSTEM_ROOTS` is configured, TALOS appends two complementary MCP servers:
+When `BUTLER_FILESYSTEM_ROOTS` is configured, Butler appends two complementary MCP servers:
 
 - the official `@modelcontextprotocol/server-filesystem` server for directory listing, metadata, reads, and optional writes
-- a TALOS-owned diagnostics server for shallow tree summaries, recent-file inspection, root-scoped ripgrep search, and text diffs
+- a Butler-owned diagnostics server for shallow tree summaries, recent-file inspection, root-scoped ripgrep search, and text diffs
 
 ## Configuration
 
 Add one or more allowed roots to `.env`:
 
 ```env
-TALOS_FILESYSTEM_ROOTS=["/Users/you/projects","/Volumes/shared/reference"]
-TALOS_FILESYSTEM_ALLOW_WRITES=0
+BUTLER_FILESYSTEM_ROOTS=["/Users/you/projects","/Volumes/shared/reference"]
+BUTLER_FILESYSTEM_ALLOW_WRITES=0
 ```
 
 Notes:
 
-- `TALOS_FILESYSTEM_ROOTS` accepts either:
+- `BUTLER_FILESYSTEM_ROOTS` accepts either:
   - a JSON array of paths
   - a single JSON string path
   - a plain platform-separated string, though JSON is preferred
-- Relative paths are resolved relative to the TALOS repo root.
-- TALOS prefixes both filesystem toolsets with `fs_` by default.
+- Relative paths are resolved relative to the Butler repo root.
+- Butler prefixes both filesystem toolsets with `fs_` by default.
 - If multiple roots are configured, the diagnostics tools accept an optional `root` argument so the agent can target a specific configured root.
 
 ## Safety Defaults
 
 - The official filesystem server is limited to the configured roots only.
-- The TALOS diagnostics server enforces the same root scope.
-- TALOS hides write-capable filesystem tools by default.
+- The Butler diagnostics server enforces the same root scope.
+- Butler hides write-capable filesystem tools by default.
 - To expose writes, set:
 
 ```env
-TALOS_FILESYSTEM_ALLOW_WRITES=1
+BUTLER_FILESYSTEM_ALLOW_WRITES=1
 ```
 
-Even with writes exposed, TALOS's prompt guidance still prefers explaining evidence and showing diffs before modifying files.
+Even with writes exposed, Butler's prompt guidance still prefers explaining evidence and showing diffs before modifying files.
 
 ## What This Enables
 
-Once configured, TALOS can use the combined filesystem MCP toolset for:
+Once configured, Butler can use the combined filesystem MCP toolset for:
 
 - listing directories
 - building directory trees
@@ -66,12 +66,12 @@ The smoke check verifies:
 
 1. Filesystem MCP tools are visible.
 2. The configured root can be listed.
-3. The TALOS diagnostics search tools are visible and can search inside the root.
+3. The Butler diagnostics search tools are visible and can search inside the root.
 4. Access outside the configured roots is rejected.
 
 ## Interaction Style
 
-When using the general filesystem server, TALOS should still:
+When using the general filesystem server, Butler should still:
 
 - prefer shallow inspection before deep reads
 - use absolute paths when helpful

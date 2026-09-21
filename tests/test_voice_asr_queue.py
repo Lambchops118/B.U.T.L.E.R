@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from talos.voice.asr_queue import AsrPriority, BoundedAsrQueue
+from butler.voice.asr_queue import AsrPriority, BoundedAsrQueue
 
 
 class BoundedAsrQueueTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from talos.awareness import __main__ as awareness_main
+from butler.awareness import __main__ as awareness_main
 
 
 def test_windows_entrypoint_selects_mqtt_compatible_event_loop(monkeypatch) -> None:

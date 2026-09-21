@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from talos.services import awareness_signals
+from butler.services import awareness_signals
 
 
 class _CapturingClient:
@@ -145,8 +145,8 @@ class SignalEmissionTest(unittest.TestCase):
     def test_disabled_by_environment(self) -> None:
         import os
 
-        original = os.environ.get("TALOS_AWARENESS_SIGNALS_ENABLED")
-        os.environ["TALOS_AWARENESS_SIGNALS_ENABLED"] = "0"
+        original = os.environ.get("BUTLER_AWARENESS_SIGNALS_ENABLED")
+        os.environ["BUTLER_AWARENESS_SIGNALS_ENABLED"] = "0"
         try:
             self.assertFalse(awareness_signals.signals_enabled())
             before = len(self.capture.bodies)
@@ -155,9 +155,9 @@ class SignalEmissionTest(unittest.TestCase):
             self.assertEqual(len(self.capture.bodies), before)
         finally:
             if original is None:
-                os.environ.pop("TALOS_AWARENESS_SIGNALS_ENABLED", None)
+                os.environ.pop("BUTLER_AWARENESS_SIGNALS_ENABLED", None)
             else:
-                os.environ["TALOS_AWARENESS_SIGNALS_ENABLED"] = original
+                os.environ["BUTLER_AWARENESS_SIGNALS_ENABLED"] = original
 
 
 if __name__ == "__main__":
