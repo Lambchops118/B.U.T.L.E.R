@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 import unittest
+import runpy
+from pathlib import Path
 from unittest import mock
 
 from talos.services import home_automation
 
 
 class HomeAutomationActionsTest(unittest.TestCase):
+    def test_unimplemented_lights_tool_is_not_advertised_or_callable(self):
+        # Load this provider without importing unrelated aggregate providers
+        # (e.g. smart plugs, whose optional kasa dependency is not needed here).
+        provider = runpy.run_path(str(
+            Path(home_automation.__file__).parents[1] / "mcp_servers/providers/home_automation.py"
+        ))
+
+        registered = []
+
+        class RecordingServer:
+            def tool(self):
+                def register(function):
+                    registered.append(function.__name__)
+                    return function
+                return register
+
+        provider["register"](RecordingServer())
+        self.assertNotIn("turn_on_lights", registered)
+        self.assertFalse(hasattr(home_automation, "turn_on_lights"))
+        self.assertIn("water_plants", registered)
+
     def test_water_plants_maps_pot_and_reports_unconfirmed_lifecycle(self) -> None:
         with mock.patch.object(
             home_automation.awareness_client,

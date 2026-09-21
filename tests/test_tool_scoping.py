@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -29,6 +30,20 @@ KITCHEN_NAMES = {"kitchen_screen_replace_recipe_content", "kitchen_screen_set_ti
 
 
 class KitchenIntentTests(unittest.TestCase):
+    def test_history_cannot_resurrect_removed_tools_or_override_global_disable(self):
+        client = mock.Mock()
+        client.openai_tool_definitions.return_value = _tools("get_current_state")
+        with mock.patch.object(runtime, "_resource_tool_definitions", return_value=[]), \
+             mock.patch.object(runtime, "TOOLS_DISABLED", False):
+            tools = runtime._build_tool_definitions(
+                client, "Do that again", history_tool_names={"kitchen_screen_control", "turn_on_lights"}
+            )
+        self.assertEqual([t["name"] for t in tools], ["get_current_state"])
+        with mock.patch.object(runtime, "TOOLS_DISABLED", True):
+            self.assertEqual(runtime._build_tool_definitions(
+                client, "Again", history_tool_names={"get_current_state"}
+            ), [])
+
     def test_cooking_request_keeps_kitchen_tools(self):
         for cmd in [
             "start a timer for the cookies",
@@ -97,10 +112,10 @@ class ToolOrderingTests(unittest.TestCase):
             "kicad_get_backend_state",
             "minecraft_search_logs",
             "mcp_admin",
-            "turn_on_lights",
+            "set_smart_plug",
         )
         names = [t["name"] for t in runtime._order_tools_by_volatility(surface)]
-        self.assertEqual(names[:2], ["mcp_admin", "turn_on_lights"])
+        self.assertEqual(names[:2], ["mcp_admin", "set_smart_plug"])
         self.assertEqual(
             set(names[2:]), {"phone", "kicad_get_backend_state", "minecraft_search_logs"}
         )

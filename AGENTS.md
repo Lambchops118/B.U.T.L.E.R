@@ -2,6 +2,12 @@
 
 These instructions apply to every coding-agent session in this repository. For the awareness and memory subsystem, start with [`docs/awareness-memory/IMPLEMENTATION_STATUS.md`](docs/awareness-memory/IMPLEMENTATION_STATUS.md).
 
+For any new or modified agent-facing tool, read and follow
+[`docs/TOOL_IMPLEMENTATION_GUIDE.md`](docs/TOOL_IMPLEMENTATION_GUIDE.md).
+Use consistent typed capability contracts and structured results; preserve
+call/result history and never advertise placeholder success. Existing tool
+inconsistencies are not precedents for new implementations.
+
 ## Scope and phase control
 
 - Work only on the explicitly assigned phase or bounded task.

@@ -10,9 +10,14 @@ Architecture, deployment topology, and owner decisions live in
 [`docs/awareness-memory/DISCOVERY.md`](../../docs/awareness-memory/DISCOVERY.md).
 The implementation follows the phase-gated plan in
 [`docs/awareness-memory/`](../../docs/awareness-memory/README.md)
-(Phase 0 discovery → Phase 8 hardening).
+(Phase 0 discovery through Phase 9 proactive briefing).
 
-**Status: Phase 8 (Retention, Security, and Hardening) complete — all phases implemented.**
+**Status: Phases 0–8 and Phase 9A–9D are implemented; Phase 9 production
+acceptance remains pending.** See the
+[current status](../../docs/awareness-memory/IMPLEMENTATION_STATUS.md) for
+acceptance gaps and subsequent bounded fixes. The
+[architecture review](../../docs/ARCHITECTURE_REVIEW.md) proposes future changes
+but does not authorize them.
 **Follow-on (2026-09-06): human context — presence, interaction, and agent
 outcomes now enter the subsystem, and `POST /ingest` accepts internal and
 manual messages. See "Human context" below.**

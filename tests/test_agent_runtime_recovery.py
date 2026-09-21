@@ -230,7 +230,7 @@ class AgentRuntimeRecoveryTests(unittest.TestCase):
         second = agent_runtime._build_prompt_sections(
             "Turn on the living room lights.",
             "voice",
-            [{"name": "turn_on_lights"}],
+            [{"name": "set_smart_plug"}],
             memory_block="Unrelated remembered fact.",
             interaction_mode="voice",
         )

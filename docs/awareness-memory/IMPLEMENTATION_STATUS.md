@@ -2,6 +2,74 @@
 
 This file reports implementation state, not documentation availability.
 
+## Current bounded repair — tool history and architecture work collection (2026-09-21)
+
+Owner authorized the documentation collection, future-agent tool guidance,
+removal of the no-op lights tool, and multi-turn tool-history repair. See
+[architecture_fixes_09212026](../architecture_fixes_09212026/README.md) and the
+[session handoff](../architecture_fixes_09212026/SESSION_HANDOFF.md).
+
+Implemented: removed `turn_on_lights` service/provider registration; local
+streaming history now stores complete tool exchanges plus used-schema snapshots
+in existing message metadata, replays paired calls/results within budgets, and
+keeps currently available used tools through keyword scoping. Historical schemas
+cannot restore removed/disabled tools. Interruption edits dialogue without
+erasing effects; completed exchanges survive a later inference exception or
+generator closure. Old prose remains readable; no history is invented/backfilled.
+No database migration, cloud inference, or deployed configuration change.
+
+Validation: **160 tests passed, zero failures/errors/skips** across 14 focused
+modules using `.venv/bin/python` (Python 3.12.5). An earlier 158-test run had one
+test import error from the unrelated optional `kasa` dependency; the new provider
+registration test now loads only the provider under test. The complete rerun
+passed. Nine changed Python files compile; all 37 checked local links and
+documentation/patch whitespace checks pass. Exact suites/checks are in the
+handoff. No full suite, live local-model
+accuracy/latency benchmark, hardware action, or audio test ran.
+
+Restart the deployed main agent to load this repair when ready. Live model
+acceptance remains pending; fixing history does not guarantee perfect tool use.
+Stop at these two repairs and documentation. Other architectural work is proposed.
+
+## Current consultation — tool system review (2026-09-21)
+
+The owner requested a deeper tool/schema/execution critique, RAG assessment, and
+InfoPanel capability proposal. See the [review and handoff](../TOOL_SYSTEM_REVIEW.md).
+No runtime, configuration, migration, or deployment changes. Recommendations
+remain proposals. Static inspection counted 26 decorated aggregate-provider
+tools and three host meta-tools before configuration/scoping/external additions.
+
+Four isolated failure-detector diagnostic assertions passed: partial-failure
+prose and empty output are not detected as failures; JSON rejection/error are.
+This confirms a semantic defect, not end-to-end correctness. No existing test
+suite, live provider, model, hardware, or voice benchmark was run. Documentation
+validation is recorded in the review handoff.
+
+Stop: tool consultation complete; no implementation phase is authorized.
+
+## Current consultation — architecture review (2026-09-21)
+
+The owner requested a high-level architectural assessment, with no major
+structural changes. The [review and session handoff](../ARCHITECTURE_REVIEW.md)
+records evidence, recommendations, limitations, and a proposed sequence.
+Runtime, configuration, migrations, and deployment are unchanged. Small README
+corrections clarify product identity and Phase 9 status. Existing untracked
+TUI/wireframe work is untouched.
+
+Current subsystem summary: Phases 0–8 and 9A–9D are implemented; recorded live
+acceptance gaps remain open. Historical tests and deployment observations below
+were not rerun or reverified in this review. Subsequent entries are historical
+session snapshots, not instructions to restart services or begin phases today;
+later decisions may supersede their details.
+
+Validation passed for this documentation-only task: `git diff --check`, all 21
+local Markdown link targets across the six added/edited documents, and a
+trailing-whitespace check on the new review. No validation checks failed. No
+runtime tests, model calls, live audio/hardware checks, or benchmarks were run.
+
+Stop: architecture consultation complete. Technical proposals require a
+separately assigned bounded implementation task.
+
 ## Latest bounded behavior fixes — presence, morning context, quad pump, sleep (2026-09-08)
 
 Four owner-reported defects. Morning briefing context and the quad-pump
