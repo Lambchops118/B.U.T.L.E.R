@@ -297,6 +297,13 @@ class MemoryStore:
             used_chars += size
         return [message for unit in reversed(selected) for message in unit]
 
+    def list_session_ids(self) -> list[str]:
+        """Every session_id with a row in ``sessions``, for a caller that wants
+        to clear or inspect all conversations without knowing their ids up front."""
+        with self._lock:
+            rows = self._conn.execute("SELECT session_id FROM sessions").fetchall()
+        return [str(row["session_id"]) for row in rows]
+
     def clear_session(self, session_id: str) -> None:
         """Clear conversational context while preserving durable facts.
 

@@ -232,6 +232,10 @@ class LauncherGUI:
         self.btn_stop.pack(side="left")
         self.btn_clear = ttk.Button(buttons, text="Clear memory…", command=self._on_clear_memory)
         self.btn_clear.pack(side="left", padx=6)
+        self.btn_clear_chat = ttk.Button(
+            buttons, text="Clear chat history…", command=self._on_clear_chat_history
+        )
+        self.btn_clear_chat.pack(side="left")
         self.status = ttk.Label(buttons, text="idle")
         self.status.pack(side="right")
 
@@ -617,6 +621,45 @@ class LauncherGUI:
             messagebox.showerror("Clear memory failed", str(error))
         else:
             self.status.config(text="memory cleared")
+            self._append_log("clear", summary or "done")
+
+    def _on_clear_chat_history(self) -> None:
+        # Unlike "Clear memory…", this only removes conversation turns (not
+        # facts, not awareness) and does so through a second SQLite connection
+        # rather than deleting the file, so it works whether Butler is running
+        # or stopped -- the fix for a session stuck imitating a bad pattern in
+        # its own recent replies, without losing anything durable.
+        if not messagebox.askyesno(
+            "Clear chat history",
+            "This PERMANENTLY deletes every session's conversation turns "
+            "(what was said back and forth, this turn's tool-history included).\n\n"
+            "Remembered facts, the awareness system, presence, state, history, "
+            "and alerts are NOT affected. This cannot be undone. Proceed?",
+            icon="warning",
+            default="no",
+        ):
+            return
+        self.btn_clear_chat.config(state="disabled")
+        self.status.config(text="clearing chat history...")
+        threading.Thread(target=self._clear_chat_history_worker, daemon=True).start()
+
+    def _clear_chat_history_worker(self) -> None:
+        from . import maintenance
+
+        try:
+            summary = maintenance.clear_chat_history(log=self._enqueue_log)
+            self.root.after(0, lambda: self._on_clear_chat_history_done(summary, None))
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+            self.root.after(0, lambda: self._on_clear_chat_history_done(None, exc))
+
+    def _on_clear_chat_history_done(self, summary: str | None, error: Exception | None) -> None:
+        self.btn_clear_chat.config(state="normal")
+        if error is not None:
+            self.status.config(text="clear failed")
+            self._append_log("clear", f"failed: {error}")
+            messagebox.showerror("Clear chat history failed", str(error))
+        else:
+            self.status.config(text="chat history cleared")
             self._append_log("clear", summary or "done")
 
     def _on_start(self) -> None:

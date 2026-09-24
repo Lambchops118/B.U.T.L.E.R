@@ -147,6 +147,15 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertNotIn("My code is cobalt", memory)
         self.assertIn("preferred_code", memory)
 
+    def test_list_session_ids_returns_every_session(self) -> None:
+        store = MemoryStore(":memory:")
+        store.record_turn("voice", "hi", "hello")
+        store.record_turn("main-pc", "hi", "hello")
+        ids = store.list_session_ids()
+        store.close()
+
+        self.assertEqual(sorted(ids), ["main-pc", "voice"])
+
     def test_recent_messages_are_bounded_chat_history(self) -> None:
         store = MemoryStore(":memory:")
         store.record_turn("voice", "Water the plants.", "Which pot, one or two?")

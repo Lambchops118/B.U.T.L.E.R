@@ -1,9 +1,19 @@
 """One-shot maintenance actions for the launcher (memory clearing).
 
 These are destructive and irreversible; callers must confirm with the user
-first. Both clears require Butler to be stopped: the conversation store is a
-SQLite file that a running main agent holds open (deleting it under a lock fails
-on Windows), and clearing while processes write is otherwise racy.
+first. ``clear_conversation_memory`` and ``clear_awareness_memory`` both require
+Butler to be stopped: the conversation store is a SQLite file that a running
+main agent holds open (deleting it under a lock fails on Windows), and clearing
+while processes write is otherwise racy.
+
+``clear_chat_history`` is lighter and does not require stopping Butler: it
+deletes rows through a second SQLite connection (WAL mode allows a second
+writer briefly) rather than unlinking the file, and it only clears each
+session's turns, not the durable facts table -- the same distinction
+:meth:`butler.memory.store.MemoryStore.clear_session` already makes. Use it to
+recover a session whose recent turns are stuck imitating a bad pattern (e.g. a
+run of confident replies with no tool call behind them) without also losing
+remembered facts or forcing a restart.
 """
 
 from __future__ import annotations
@@ -68,6 +78,43 @@ def clear_conversation_memory(log: Optional[LogFn] = None) -> str:
         return f"cleared conversation memory ({', '.join(removed)})"
     log("clear", f"no conversation memory file found at {path}")
     return "no conversation memory file existed"
+
+
+def clear_chat_history(log: Optional[LogFn] = None) -> str:
+    """Clear every session's conversation turns; leave durable facts alone.
+
+    Safe to run with Butler running or stopped: it opens its own connection to
+    the same SQLite file (WAL mode tolerates a second, short-lived writer)
+    rather than deleting the file, and only removes rows -- ``sessions``,
+    ``messages``, and each session's summary -- via
+    :meth:`MemoryStore.clear_session`, which is the same call the main agent
+    itself uses to reset a session. The ``facts`` table is untouched.
+    """
+
+    log = log or _default_log
+    path = conversation_db_path()
+    if str(path) == ":memory:":
+        log("clear", "conversation memory is in-memory only; nothing to clear.")
+        return "conversation memory is in-memory; nothing to clear"
+    if not path.exists():
+        log("clear", f"no conversation memory file found at {path}")
+        return "no chat history existed"
+
+    from butler.memory.store import MemoryStore
+
+    store = MemoryStore(path)
+    try:
+        session_ids = store.list_session_ids()
+        for session_id in session_ids:
+            store.clear_session(session_id)
+    finally:
+        store.close()
+
+    if session_ids:
+        log("clear", f"cleared chat history for: {', '.join(session_ids)}")
+        return f"cleared chat history ({len(session_ids)} session(s): {', '.join(session_ids)})"
+    log("clear", "no sessions to clear")
+    return "no chat history existed"
 
 
 def clear_awareness_memory(
