@@ -52,22 +52,6 @@ r = sr.Recognizer()
 MICROPHONE_PROFILE = get_microphone_profile(
     os.getenv("BUTLER_MICROPHONE_PROFILE", "respeaker")
 )
-
-# Safety net for a runaway phrase. energy_threshold is calibrated once, at
-# startup, from adjust_for_ambient_noise, and dynamic_energy_threshold=False
-# below means it never re-adjusts. If ambient noise later rises above that
-# fixed threshold (HVAC, a fan spinning up, speaker bleed) for longer than
-# pause_threshold's 0.6s, SpeechRecognition's phrase-boundary detection never
-# fires and one "phrase" keeps growing -- observed on 2026-09-24 at 137792ms
-# (llm_io_20260924T035548, request_id bd6e014a): faster-whisper hallucinated
-# repeated filler over the long near-silent stretch, and the one real command
-# buried in it ("dim the screen") was not acted on until that recording
-# finally closed, ~4 minutes after it was spoken. The longest legitimate
-# command on record (voice_benchmarks.csv) is under 5 seconds; this bounds the
-# worst case without affecting any real command.
-RECOGNIZER_PHRASE_TIME_LIMIT_SECONDS = env_float(
-    "BUTLER_RECOGNIZER_PHRASE_TIME_LIMIT_SECONDS", 12.0
-)
 WAKE_WORD = os.getenv("WAKE_WORD", "butler").lower()
 # What to remove from the front of a transcript once the wake word is found.
 #
@@ -1707,9 +1691,7 @@ def run_voice_recognition():
             f"energy threshold={r.energy_threshold:.1f}."
         )
 
-    stop_listening = r.listen_in_background(
-        mic, recognition_callback, phrase_time_limit=RECOGNIZER_PHRASE_TIME_LIMIT_SECONDS
-    )
+    stop_listening = r.listen_in_background(mic, recognition_callback)
     print("Background listening started.")
     # Deliberately after adjust_for_ambient_noise: boot audio playing during that
     # calibration window would be measured as room noise and raise the energy
