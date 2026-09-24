@@ -1263,12 +1263,24 @@ def _process_recognition_audio(audio_data):
                 return
 
             benchmark.add_note("Wake word detected but no command followed it.")
+            _emit_voice_pipeline_event(
+                benchmark, "voice_turn_rejected", reason="wake_word_without_command", transcript=text_spoken
+            )
             benchmark.emit_summary_once("wake_word_without_command")
             return
 
         # Speech the system overheard but that was never directed at it. Not an
-        # interaction -- deliberately not logged (filtered by _is_meaningful).
+        # interaction for the CSV benchmark log (deliberately not logged there,
+        # filtered by _is_meaningful) -- but it IS the one silent-drop path a
+        # real, wake-word-prefixed command can fall into if the prefix got
+        # clipped or the user dropped "butler" on a follow-up, so it goes to the
+        # pipeline telemetry stream (butler/logs/pipeline_telemetry_*.jsonl,
+        # correlated by request_id with this turn's stt_completed) instead of
+        # only a console print, which is gone the moment it scrolls.
         benchmark.add_note("Transcript did not begin with the configured wake word.")
+        _emit_voice_pipeline_event(
+            benchmark, "voice_turn_rejected", reason="wake_word_missing_in_transcript", transcript=text_spoken
+        )
         benchmark.emit_summary_once("wake_word_missing_in_transcript")
     except sr.UnknownValueError:
         print("Could not understand the audio.")
