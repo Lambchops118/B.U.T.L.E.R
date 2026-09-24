@@ -1672,7 +1672,13 @@ def run_voice_recognition():
     print("Microphone initialized.")
     with mic as source:
         r.adjust_for_ambient_noise(source, duration=1.0)
-        r.dynamic_energy_threshold = False
+        # True so the threshold keeps tracking ambient noise after this one-time
+        # calibration. Fixed (False) meant that if the room got louder later
+        # (HVAC, a fan) than this initial one-second read, pause_threshold's
+        # 0.6s of below-threshold silence could stop arriving at all -- seen
+        # 2026-09-24 as a single phrase recorded for 137792ms (2m18s), acted on
+        # ~4 minutes after it was spoken (llm_io_20260924T035548, bd6e014a).
+        r.dynamic_energy_threshold = True
         r.energy_threshold = resolve_energy_threshold(
             MICROPHONE_PROFILE,
             os.getenv("BUTLER_RECOGNIZER_ENERGY_THRESHOLD"),
