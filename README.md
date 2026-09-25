@@ -12,6 +12,12 @@ household tasks, conversation, and engineering projects. The product reference
 is Jarvis: continuity, timely observations, and competent action. Home automation
 and engineering tools are capabilities within that experience.
 
+![B.U.T.L.E.R system overview](docs/SYSTEM_OVERVIEW.svg)
+
+A newcomer-level map of the system is in
+[docs/SYSTEM_OVERVIEW.svg](docs/SYSTEM_OVERVIEW.svg). It is simplified on
+purpose; amber boxes are in progress or planned.
+
 For the current architectural assessment and proposed evolution, see the
 [architecture review](docs/ARCHITECTURE_REVIEW.md). Its recommendations are
 proposals; runtime changes require a separately assigned scope.

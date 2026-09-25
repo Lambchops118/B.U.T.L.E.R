@@ -1,0 +1,341 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1140" viewBox="0 0 1800 1140" role="img" aria-labelledby="t d">
+<title id="t">B.U.T.L.E.R system overview</title>
+<desc id="d">Block diagram of the Butler home assistant: people talk or type to Butler; a voice worker turns speech into text; the main agent decides what to do with help from a local language model and tool servers; an awareness backend keeps track of the house and speaks up on its own; devices are reached over MQTT or the home network.</desc>
+<defs>
+<style>
+@font-face { font-family: "VT323B"; src: url(data:font/woff2;base64,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) format("woff2"); }
+text { font-family: "VT323B", "VT323", "Courier New", monospace; }
+.glow { filter: url(#glow); }
+.blink { animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+</style>
+<filter id="glow" x="-10%" y="-40%" width="120%" height="180%">
+  <feGaussianBlur stdDeviation="1.6" result="b"/>
+  <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+</filter>
+<pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+  <rect width="4" height="1.3" fill="#000" opacity="0.28"/>
+</pattern>
+<radialGradient id="vig" cx="50%" cy="50%" r="75%">
+  <stop offset="60%" stop-color="#000" stop-opacity="0"/>
+  <stop offset="100%" stop-color="#000" stop-opacity="0.55"/>
+</radialGradient>
+<radialGradient id="bloom" cx="50%" cy="45%" r="60%">
+  <stop offset="0%" stop-color="#1c5a30" stop-opacity="0.35"/>
+  <stop offset="100%" stop-color="#1c5a30" stop-opacity="0"/>
+</radialGradient>
+<marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+  <path d="M0 0 L10 5 L0 10 z" fill="#39e36f"/>
+</marker>
+<marker id="arrs" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+  <path d="M0 0 L10 5 L0 10 z" fill="#39e36f"/>
+</marker>
+</defs>
+<rect width="1800" height="1140" fill="#06100a"/>
+<rect width="1800" height="1140" fill="url(#bloom)"/>
+<text x="30" y="62" font-size="58" fill="#7dffa3" text-anchor="start" class="glow">B.U.T.L.E.R</text>
+<text x="318" y="50" font-size="20" fill="#39e36f" text-anchor="start">Better Understanding Text-to-Speech Large Language Encoder Routine</text>
+<text x="318" y="74" font-size="20" fill="#a9f3c0" text-anchor="start">SYSTEM OVERVIEW  //  how the pieces fit together</text>
+<rect x="694" y="59" width="11" height="17" fill="#7dffa3" class="blink"/>
+<text x="1770" y="50" font-size="20" fill="#39e36f" text-anchor="end">MONKEY BUTLER HOME ASSISTANT</text>
+<text x="1770" y="74" font-size="20" fill="#a9f3c0" text-anchor="end">runs on one home PC  ·  local-first</text>
+<line x1="30" y1="92" x2="1770" y2="92" stroke="#1e7a3e" stroke-width="1.5"/>
+<rect x="30" y="120" width="270" height="320" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M30 130 a10 10 0 0 1 10 -10 h250 a10 10 0 0 1 10 10 v24 h-270 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="42" y="129" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="60" y="145" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">PEOPLE</text>
+<text x="288" y="144" font-size="16" fill="#a9f3c0" text-anchor="end">ways in</text>
+<rect x="45" y="172" width="240" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="54" y="194" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Speak out loud</text>
+<text x="276" y="194" font-size="16" fill="#a9f3c0" text-anchor="end">microphone</text>
+<rect x="45" y="236" width="240" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="54" y="258" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Type a message</text>
+<text x="276" y="258" font-size="16" fill="#a9f3c0" text-anchor="end">chat app</text>
+<rect x="45" y="300" width="240" height="50" rx="6" fill="#1f1a0c" stroke="#ffb347" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="54" y="322" font-size="19" fill="#ffb347" text-anchor="start" class="glow">Text message</text>
+<text x="54" y="343" font-size="16" fill="#f3d7a6" text-anchor="start">built, not live yet</text>
+<rect x="194.2" y="306" width="84.8" height="17" rx="3" fill="#06100a" stroke="#ffb347" stroke-width="1"/>
+<text x="236.6" y="319" font-size="14" fill="#ffb347" text-anchor="middle">SETUP PENDING</text>
+<rect x="45" y="364" width="240" height="60" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="54" y="386" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Phone calls</text>
+<text x="54" y="407" font-size="16" fill="#a9f3c0" text-anchor="start">Butler can place calls for you</text>
+<rect x="222.2" y="370" width="56.800000000000004" height="17" rx="3" fill="#06100a" stroke="#39e36f" stroke-width="1"/>
+<text x="250.6" y="383" font-size="14" fill="#39e36f" text-anchor="middle">OPTIONAL</text>
+<rect x="30" y="470" width="270" height="330" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M30 480 a10 10 0 0 1 10 -10 h250 a10 10 0 0 1 10 10 v24 h-270 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="42" y="479" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="60" y="495" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">WHAT YOU GET</text>
+<text x="288" y="494" font-size="16" fill="#a9f3c0" text-anchor="end">ways out</text>
+<rect x="45" y="520" width="240" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="54" y="542" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Spoken reply</text>
+<text x="276" y="542" font-size="16" fill="#a9f3c0" text-anchor="end">speaker</text>
+<rect x="45" y="580" width="240" height="100" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="54" y="602" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Text &amp; call replies</text>
+<text x="54" y="623" font-size="16" fill="#a9f3c0" text-anchor="start">SMS answers and call summaries,</text>
+<text x="54" y="639" font-size="16" fill="#a9f3c0" text-anchor="start">when those channels are on</text>
+<rect x="45" y="694" width="240" height="92" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="54" y="716" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">InfoPanel wall screen</text>
+<text x="54" y="737" font-size="16" fill="#a9f3c0" text-anchor="start">retro vector portrait, clock,</text>
+<text x="54" y="753" font-size="16" fill="#a9f3c0" text-anchor="start">weather, status, alert banners</text>
+<rect x="30" y="830" width="270" height="230" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M30 840 a10 10 0 0 1 10 -10 h250 a10 10 0 0 1 10 10 v24 h-270 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="42" y="839" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="60" y="855" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">LEGEND</text>
+<rect x="45" y="880" width="42" height="24" rx="4" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="98" y="898" font-size="18" fill="#a9f3c0" text-anchor="start">working today</text>
+<rect x="45" y="916" width="42" height="24" rx="4" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="98" y="934" font-size="18" fill="#a9f3c0" text-anchor="start">optional / off by default</text>
+<rect x="45" y="952" width="42" height="24" rx="4" fill="#1f1a0c" stroke="#ffb347" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="98" y="970" font-size="18" fill="#ffb347" text-anchor="start">in progress / planned</text>
+<path d="M45 1000 H87" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<text x="98" y="1006" font-size="18" fill="#a9f3c0" text-anchor="start">information flow</text>
+<text x="45" y="1040" font-size="16" fill="#39e36f" text-anchor="start">Simplified: not every file is shown.</text>
+<rect x="340" y="120" width="280" height="350" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M340 130 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="352" y="129" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="370" y="145" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">VOICE WORKER</text>
+<text x="608" y="144" font-size="16" fill="#a9f3c0" text-anchor="end">ears &amp; mouth</text>
+<rect x="355" y="172" width="250" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="194" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Microphone</text>
+<text x="596" y="194" font-size="16" fill="#a9f3c0" text-anchor="end">ReSpeaker / Yeti</text>
+<rect x="355" y="230" width="250" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="252" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Wake word</text>
+<text x="596" y="252" font-size="16" fill="#a9f3c0" text-anchor="end">hears "Butler"</text>
+<rect x="355" y="288" width="250" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="310" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Speech to text</text>
+<text x="596" y="310" font-size="16" fill="#a9f3c0" text-anchor="end">Whisper, GPU</text>
+<rect x="355" y="346" width="250" height="46" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="368" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Text to speech</text>
+<text x="596" y="368" font-size="16" fill="#a9f3c0" text-anchor="end">Amazon Polly</text>
+<rect x="355" y="404" width="250" height="54" rx="6" fill="#1f1a0c" stroke="#ffb347" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="364" y="426" font-size="19" fill="#ffb347" text-anchor="start" class="glow">Talk over Butler</text>
+<text x="364" y="447" font-size="16" fill="#f3d7a6" text-anchor="start">interrupt a reply</text>
+<rect x="525.4" y="410" width="73.6" height="17" rx="3" fill="#06100a" stroke="#ffb347" stroke-width="1"/>
+<text x="562.2" y="423" font-size="14" fill="#ffb347" text-anchor="middle">IN PROGRESS</text>
+<rect x="340" y="490" width="280" height="120" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M340 500 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="352" y="499" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="370" y="515" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">LANGUAGE MODEL</text>
+<rect x="355" y="530" width="250" height="68" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="552" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Ollama  mb-core-v1</text>
+<text x="364" y="573" font-size="16" fill="#a9f3c0" text-anchor="start">local AI on the big GPU; cloud</text>
+<text x="364" y="589" font-size="16" fill="#a9f3c0" text-anchor="start">models optional</text>
+<rect x="340" y="620" width="280" height="100" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M340 630 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="352" y="629" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="370" y="645" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">OUTSIDE SERVICES</text>
+<text x="354" y="666" font-size="17" fill="#a9f3c0" text-anchor="start">Polly voice  ·  OpenWeather</text>
+<text x="354" y="686" font-size="17" fill="#a9f3c0" text-anchor="start">Twilio SMS  ·  ElevenLabs calls</text>
+<text x="354" y="706" font-size="17" fill="#a9f3c0" text-anchor="start">OpenAI (only if chosen)</text>
+<rect x="660" y="120" width="480" height="580" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M660 130 a10 10 0 0 1 10 -10 h460 a10 10 0 0 1 10 10 v24 h-480 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="672" y="129" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="690" y="145" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">MAIN AGENT</text>
+<text x="1128" y="144" font-size="16" fill="#a9f3c0" text-anchor="end">the brain  ·  own program</text>
+<rect x="675" y="172" width="450" height="50" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="194" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Inbox</text>
+<text x="1116" y="194" font-size="16" fill="#a9f3c0" text-anchor="end">one front door: voice, chat, SMS, calls</text>
+<rect x="675" y="240" width="450" height="50" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="262" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Router</text>
+<text x="1116" y="262" font-size="16" fill="#a9f3c0" text-anchor="end">quick status answer, or hand to agent</text>
+<rect x="675" y="308" width="450" height="84" rx="6" fill="#0e2517" stroke="#7dffa3" stroke-width="2.4"/>
+<text x="684" y="332" font-size="22" fill="#7dffa3" text-anchor="start" class="glow">Agent loop</text>
+<text x="684" y="354" font-size="16" fill="#a9f3c0" text-anchor="start">asks the language model, runs any tools it</text>
+<text x="684" y="370" font-size="16" fill="#a9f3c0" text-anchor="start">picks, checks results, then writes the reply</text>
+<rect x="675" y="410" width="219" height="62" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="432" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Personality</text>
+<text x="684" y="453" font-size="16" fill="#a9f3c0" text-anchor="start">Monkey Butler's character</text>
+<rect x="906" y="410" width="219" height="62" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="915" y="432" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Conversation memory</text>
+<text x="915" y="453" font-size="16" fill="#a9f3c0" text-anchor="start">facts, summaries, recent chat</text>
+<rect x="675" y="488" width="219" height="62" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="510" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Background jobs</text>
+<text x="684" y="531" font-size="16" fill="#a9f3c0" text-anchor="start">long tasks, tracked</text>
+<rect x="906" y="488" width="219" height="62" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="915" y="510" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Scheduler</text>
+<text x="915" y="531" font-size="16" fill="#a9f3c0" text-anchor="start">weather, reports, screen dim</text>
+<rect x="675" y="566" width="450" height="50" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="588" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Tool connector (MCP)</text>
+<text x="1116" y="588" font-size="16" fill="#a9f3c0" text-anchor="end">finds tools, routes each call</text>
+<rect x="675" y="632" width="450" height="54" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="684" y="654" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Awareness link</text>
+<text x="1116" y="654" font-size="16" fill="#a9f3c0" text-anchor="end">reads house summary, reports events</text>
+<rect x="1180" y="120" width="590" height="350" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M1180 130 a10 10 0 0 1 10 -10 h570 a10 10 0 0 1 10 10 v24 h-590 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="1192" y="129" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="1210" y="145" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">TOOLS</text>
+<text x="1758" y="144" font-size="16" fill="#a9f3c0" text-anchor="end">what Butler can actually do (MCP tool servers)</text>
+<rect x="1195" y="188" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1204" y="210" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Home automation</text>
+<text x="1204" y="231" font-size="16" fill="#a9f3c0" text-anchor="start">fan, weather, clock</text>
+<rect x="1387" y="188" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1396" y="210" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Television</text>
+<text x="1396" y="231" font-size="16" fill="#a9f3c0" text-anchor="start">power, sleep, HDMI input</text>
+<rect x="1579" y="188" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1588" y="210" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Smart plugs</text>
+<text x="1588" y="231" font-size="16" fill="#a9f3c0" text-anchor="start">lamps and outlets</text>
+<rect x="1195" y="278" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1204" y="300" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Sleep mode</text>
+<text x="1204" y="321" font-size="16" fill="#a9f3c0" text-anchor="start">quiet night, dim screen</text>
+<rect x="1387" y="278" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1396" y="300" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Ask the house</text>
+<text x="1396" y="321" font-size="16" fill="#a9f3c0" text-anchor="start">state, history, alerts</text>
+<rect x="1579" y="278" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="1588" y="300" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Phone calls</text>
+<text x="1588" y="321" font-size="16" fill="#a9f3c0" text-anchor="start">place, check, summarize</text>
+<rect x="1692.2" y="284" width="56.800000000000004" height="17" rx="3" fill="#06100a" stroke="#39e36f" stroke-width="1"/>
+<text x="1720.6" y="297" font-size="14" fill="#39e36f" text-anchor="middle">OPTIONAL</text>
+<rect x="1195" y="368" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="1204" y="390" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Files</text>
+<text x="1204" y="411" font-size="16" fill="#a9f3c0" text-anchor="start">read-only file lookup</text>
+<rect x="1308.2" y="374" width="56.800000000000004" height="17" rx="3" fill="#06100a" stroke="#39e36f" stroke-width="1"/>
+<text x="1336.6" y="387" font-size="14" fill="#39e36f" text-anchor="middle">OPTIONAL</text>
+<rect x="1387" y="368" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="1396" y="390" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Minecraft</text>
+<text x="1396" y="411" font-size="16" fill="#a9f3c0" text-anchor="start">game server checkup</text>
+<rect x="1500.2" y="374" width="56.800000000000004" height="17" rx="3" fill="#06100a" stroke="#39e36f" stroke-width="1"/>
+<text x="1528.6" y="387" font-size="14" fill="#39e36f" text-anchor="middle">OPTIONAL</text>
+<rect x="1579" y="368" width="176" height="76" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6" stroke-dasharray="2 4"/>
+<text x="1588" y="390" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">KiCad &amp; more</text>
+<text x="1588" y="411" font-size="16" fill="#a9f3c0" text-anchor="start">any extra MCP server</text>
+<rect x="1692.2" y="374" width="56.800000000000004" height="17" rx="3" fill="#06100a" stroke="#39e36f" stroke-width="1"/>
+<text x="1720.6" y="387" font-size="14" fill="#39e36f" text-anchor="middle">OPTIONAL</text>
+<rect x="1180" y="510" width="590" height="390" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M1180 520 a10 10 0 0 1 10 -10 h570 a10 10 0 0 1 10 10 v24 h-590 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="1192" y="519" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="1210" y="535" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">AWARENESS</text>
+<text x="1758" y="534" font-size="16" fill="#a9f3c0" text-anchor="end">keeps track of the house  ·  own program + database</text>
+<rect x="1195" y="584" width="128" height="84" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1204" y="606" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Receive</text>
+<text x="1204" y="626" font-size="15" fill="#a9f3c0" text-anchor="start">check every device</text>
+<text x="1204" y="641" font-size="15" fill="#a9f3c0" text-anchor="start">message</text>
+<rect x="1339" y="584" width="128" height="84" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1348" y="606" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">State &amp; history</text>
+<text x="1348" y="626" font-size="15" fill="#a9f3c0" text-anchor="start">what's true now,</text>
+<text x="1348" y="641" font-size="15" fill="#a9f3c0" text-anchor="start">what happened</text>
+<path d="M1323 626 H1338" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="1483" y="584" width="128" height="84" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1492" y="606" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Rules</text>
+<text x="1492" y="626" font-size="15" fill="#a9f3c0" text-anchor="start">fixed logic spots</text>
+<text x="1492" y="641" font-size="15" fill="#a9f3c0" text-anchor="start">problems, no AI</text>
+<path d="M1467 626 H1482" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="1627" y="584" width="128" height="84" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1636" y="606" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Alerts</text>
+<text x="1636" y="626" font-size="15" fill="#a9f3c0" text-anchor="start">raised, noticed,</text>
+<text x="1636" y="641" font-size="15" fill="#a9f3c0" text-anchor="start">resolved</text>
+<path d="M1611 626 H1626" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="1195" y="690" width="128" height="90" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1204" y="712" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Announce</text>
+<text x="1204" y="732" font-size="15" fill="#a9f3c0" text-anchor="start">speaks alerts;</text>
+<text x="1204" y="747" font-size="15" fill="#a9f3c0" text-anchor="start">morning briefing</text>
+<rect x="1339" y="690" width="128" height="90" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1348" y="712" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Reminders</text>
+<text x="1348" y="732" font-size="15" fill="#a9f3c0" text-anchor="start">due-time nudges</text>
+<rect x="1483" y="690" width="128" height="90" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1492" y="712" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Safe actions</text>
+<text x="1492" y="732" font-size="15" fill="#a9f3c0" text-anchor="start">checked, logged</text>
+<text x="1492" y="747" font-size="15" fill="#a9f3c0" text-anchor="start">device commands</text>
+<rect x="1627" y="690" width="128" height="90" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1636" y="712" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Long-term</text>
+<text x="1636" y="730" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">memory</text>
+<text x="1636" y="750" font-size="15" fill="#a9f3c0" text-anchor="start">searchable facts &amp;</text>
+<text x="1636" y="765" font-size="15" fill="#a9f3c0" text-anchor="start">events</text>
+<path d="M1195 810 v64 a135.0 10 0 0 0 270 0 v-64" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<ellipse cx="1330.0" cy="810" rx="135.0" ry="10" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1330.0" y="844" font-size="19" fill="#7dffa3" text-anchor="middle" class="glow">PostgreSQL database</text>
+<text x="1330.0" y="864" font-size="16" fill="#a9f3c0" text-anchor="middle">events, sensor history, memory</text>
+<rect x="1483" y="800" width="272" height="84" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1492" y="822" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">Situation snapshot</text>
+<text x="1492" y="843" font-size="16" fill="#a9f3c0" text-anchor="start">short 'what's going on' summary handed</text>
+<text x="1492" y="859" font-size="16" fill="#a9f3c0" text-anchor="start">to Butler every turn</text>
+<rect x="340" y="760" width="800" height="300" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M340 770 a10 10 0 0 1 10 -10 h780 a10 10 0 0 1 10 10 v24 h-800 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="352" y="769" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="370" y="785" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">HOME &amp; DEVICES</text>
+<rect x="370" y="800" width="230" height="64" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="379" y="822" font-size="19" fill="#7dffa3" text-anchor="start" class="glow">MQTT message hub</text>
+<text x="379" y="843" font-size="16" fill="#a9f3c0" text-anchor="start">Raspberry Pi (Mosquitto)</text>
+<rect x="355" y="930" width="118" height="108" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="364" y="952" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Plant waterer</text>
+<text x="364" y="972" font-size="15" fill="#a9f3c0" text-anchor="start">Pico W, 4 pumps</text>
+<rect x="485" y="930" width="118" height="108" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="494" y="952" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Fan switch</text>
+<text x="494" y="972" font-size="15" fill="#a9f3c0" text-anchor="start">Pico W relay</text>
+<rect x="615" y="930" width="118" height="108" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="624" y="952" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Smart plugs</text>
+<text x="624" y="972" font-size="15" fill="#a9f3c0" text-anchor="start">Kasa, over Wi-Fi</text>
+<rect x="745" y="930" width="118" height="108" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="754" y="952" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Television</text>
+<text x="754" y="972" font-size="15" fill="#a9f3c0" text-anchor="start">Android TV (ADB)</text>
+<rect x="875" y="930" width="118" height="108" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="884" y="952" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Wall display</text>
+<text x="884" y="972" font-size="15" fill="#a9f3c0" text-anchor="start">power</text>
+<text x="884" y="987" font-size="15" fill="#a9f3c0" text-anchor="start">standby/wake</text>
+<rect x="1005" y="930" width="118" height="108" rx="6" fill="#1f1a0c" stroke="#ffb347" stroke-width="1.6" stroke-dasharray="7 5"/>
+<text x="1014" y="952" font-size="18" fill="#ffb347" text-anchor="start" class="glow">Camera vision</text>
+<text x="1014" y="972" font-size="15" fill="#f3d7a6" text-anchor="start">PLANNED: who's</text>
+<text x="1014" y="987" font-size="15" fill="#f3d7a6" text-anchor="start">home</text>
+<text x="1014" y="1010" font-size="15" fill="#f3d7a6" text-anchor="start">would feed</text>
+<text x="1014" y="1026" font-size="15" fill="#f3d7a6" text-anchor="start">Awareness</text>
+<path d="M414 864 V928" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M544 864 V928" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)" marker-start="url(#arrs)"/>
+<path d="M285 195 H353" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M312 387 V106 H900 V170" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M285 259 H312" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M285 323 H312" fill="none" stroke="#ffb347" stroke-width="2.2" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<path d="M285 394 H312" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" stroke-dasharray="2 4"/>
+<path d="M285 195 H353" fill="none" stroke="#06100a" stroke-width="9"/>
+<path d="M285 195 H353" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="451.0" y="98" width="178.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="540" y="111" font-size="15" fill="#7dffa3" text-anchor="middle">typed · texted · call events</text>
+<path d="M605 311 H640 V197 H673" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="620.0" y="249" width="40.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="640" y="262" font-size="15" fill="#7dffa3" text-anchor="middle">words</text>
+<path d="M675 369 H607" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="620.0" y="350" width="40.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="640" y="363" font-size="15" fill="#7dffa3" text-anchor="middle">reply</text>
+<path d="M355 369 H328 V543 H287" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M675 384 H648 V564 H622" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)" marker-start="url(#arrs)"/>
+<rect x="625.0" y="457" width="46.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="648" y="470" font-size="15" fill="#7dffa3" text-anchor="middle">prompt</text>
+<path d="M760 700 V745 H287" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="473.0" y="737" width="94.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="520" y="750" font-size="15" fill="#7dffa3" text-anchor="middle">screen updates</text>
+<path d="M1125 591 H1160 V300 H1178" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<g transform="rotate(-90 1160 470)">
+<rect x="1125.0" y="462.0" width="70.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="1160" y="475.0" font-size="15" fill="#7dffa3" text-anchor="middle">tool calls</text>
+</g>
+<path d="M1180 440 H1170 V905 H936" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M674 905 V928" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M804 905 V928" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M934 905 V928" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M1170 905 H674" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round"/>
+<rect x="999.0" y="886" width="82.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="1040" y="899" font-size="15" fill="#7dffa3" text-anchor="middle">home network</text>
+<path d="M1125 659 H1178" fill="none" stroke="#06100a" stroke-width="9"/>
+<path d="M1125 659 H1178" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)" marker-start="url(#arrs)"/>
+<path d="M1180 840 H602" fill="none" stroke="#06100a" stroke-width="9"/>
+<path d="M1180 840 H602" fill="none" stroke="#39e36f" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arr)" marker-start="url(#arrs)"/>
+<rect x="760.0" y="819" width="220.0" height="18" fill="#06100a" opacity="0.92"/>
+<text x="870" y="832" font-size="15" fill="#7dffa3" text-anchor="middle">commands out  ·  sensor readings in</text>
+<rect x="1180" y="930" width="590" height="130" rx="10" fill="#0a1a10" stroke="#1e7a3e" stroke-width="2"/>
+<path d="M1180 940 a10 10 0 0 1 10 -10 h570 a10 10 0 0 1 10 10 v24 h-590 z" fill="#1e7a3e" opacity="0.55"/>
+<rect x="1192" y="939" width="9" height="17" fill="#7dffa3" class="glow"/>
+<text x="1210" y="955" font-size="24" fill="#7dffa3" text-anchor="start" class="glow">BEHIND THE SCENES</text>
+<text x="1758" y="954" font-size="16" fill="#a9f3c0" text-anchor="end">for whoever runs it</text>
+<rect x="1195" y="978" width="176" height="70" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1204" y="1000" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Launcher</text>
+<text x="1204" y="1020" font-size="15" fill="#a9f3c0" text-anchor="start">starts everything, picks</text>
+<text x="1204" y="1035" font-size="15" fill="#a9f3c0" text-anchor="start">GPUs</text>
+<rect x="1387" y="978" width="176" height="70" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1396" y="1000" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Debug dashboard</text>
+<text x="1396" y="1020" font-size="15" fill="#a9f3c0" text-anchor="start">web page of timings &amp;</text>
+<text x="1396" y="1035" font-size="15" fill="#a9f3c0" text-anchor="start">health</text>
+<rect x="1579" y="978" width="176" height="70" rx="6" fill="#0e2517" stroke="#39e36f" stroke-width="1.6"/>
+<text x="1588" y="1000" font-size="18" fill="#7dffa3" text-anchor="start" class="glow">Model I/O log</text>
+<text x="1588" y="1020" font-size="15" fill="#a9f3c0" text-anchor="start">every prompt &amp; reply</text>
+<text x="900" y="1100" font-size="17" fill="#1e7a3e" text-anchor="middle">B.U.T.L.E.R  ·  simplified architecture overview  ·  September 2026</text>
+<rect width="1800" height="1140" fill="url(#scan)" pointer-events="none"/>
+<rect width="1800" height="1140" fill="url(#vig)" pointer-events="none"/>
+</svg>

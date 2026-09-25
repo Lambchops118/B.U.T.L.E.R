@@ -1294,3 +1294,18 @@ Funnel for the node, set the Twilio messaging webhook, and restart Butler.
 US A2P 10DLC (or toll-free verification) is required for outbound replies to
 deliver. Sender allowlist is the authorization boundary and SMS caller ID is
 spoofable. Inbound voice control is not built.
+
+## 2026-09-25 — System overview diagram
+
+**Task:** Owner asked for a newcomer-level SVG block diagram of the whole
+system, green-CRT styled, with unfinished pieces marked or omitted.
+
+**Implemented:** `docs/SYSTEM_OVERVIEW.svg` (self-contained; embeds an ASCII
+subset of the repo's VT323 font) covering people/inputs, voice worker, main
+agent, language model, outside services, MCP tools, awareness backend, home
+devices, and operator tooling. Marked in progress/planned: SMS (setup pending),
+barge-in, camera vision. Optional pieces drawn dotted. README links it.
+Documentation only; no runtime, configuration, or test changes.
+
+**Validation:** Rendered in headless Chromium and visually checked for overlap.
+No tests run (none affected).
