@@ -8,6 +8,7 @@ from InfoPanel import screen as info_panel_screen
 from butler import router
 from butler.config import load_environment
 from butler.scheduler import tasks
+from butler.sms import server as sms_server
 from butler.text import server as text_agent_server
 
 
@@ -42,6 +43,7 @@ def main() -> int:
     router_thread.start()
 
     text_server = text_agent_server.start_text_agent_server(central_queue)
+    sms = sms_server.start_sms_server(central_queue)
     scheduler = tasks.start_scheduler(gui_queue, central_queue)
     _start_agent_warmup()
 
@@ -58,6 +60,7 @@ def main() -> int:
             pass
 
         text_agent_server.shutdown_text_agent_server(text_server)
+        sms_server.shutdown_sms_server(sms)
         print("Exiting cleanly.")
     return 0
 

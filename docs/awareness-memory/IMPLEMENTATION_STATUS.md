@@ -2,6 +2,15 @@
 
 This file reports implementation state, not documentation availability.
 
+## Current bounded task — SMS control channel (2026-09-24)
+
+Owner requested texting commands to Butler via Twilio with text replies.
+Implemented `butler/sms/` (signed, sender-allowlisted Twilio webhook feeding
+the existing `text_cmd` path; replies via Twilio REST), wired into
+`butler/main.py`, disabled by default. 16 focused tests passed; no live
+Twilio/Funnel test. Owner setup and A2P registration pending; see README
+"SMS Control" and the session log. Inbound phone calls are not built.
+
 ## Current bounded repair — tool history and architecture work collection (2026-09-21)
 
 Owner authorized the documentation collection, future-agent tool guidance,

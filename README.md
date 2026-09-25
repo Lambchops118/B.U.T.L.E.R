@@ -733,6 +733,58 @@ Notes:
 - The bridge is the only component that should be internet-facing; keep the main Butler runtime private.
 - When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `BUTLER_PHONE_MAIN_NOTIFY_URL` + `BUTLER_PHONE_PUSH_TOKEN`, matching `BUTLER_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `BUTLER_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `BUTLER_PHONE_BRIDGE_URL`).
 
+### SMS Control
+
+Text the Twilio number to run commands ("water the plants", "turn off the desk
+lamp"); Butler runs the command through the same agent path as typed chat and
+texts the result back. It does not speak in the room.
+
+How it flows:
+
+1. Twilio posts the inbound SMS to `BUTLER_SMS_PUBLIC_URL`, a Tailscale Funnel
+   URL that forwards to the local listener (`butler/sms/`, default
+   `127.0.0.1:8430`). Only this listener is public; the text-agent server stays
+   on the tailnet.
+2. The listener rejects any request without a valid `X-Twilio-Signature` and
+   silently ignores senders not in `BUTLER_SMS_ALLOWED_SENDERS`.
+3. The text becomes a normal `text_cmd` in session `sms:<number>`, so follow-up
+   texts ("yes", "do pot 2 as well") keep conversational context.
+4. The reply goes out through the Twilio Messages API. Background-lane work gets
+   an acknowledgement first and the result when the job finishes.
+
+Setup:
+
+```powershell
+# One time: allow Funnel for this machine in the tailnet policy (nodeAttrs "funnel"),
+# then publish the local listener on https://<machine>.<tailnet>.ts.net
+tailscale funnel --bg 8430
+```
+
+In `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`. In `settings.env`:
+
+```env
+BUTLER_SMS_ENABLED=1
+BUTLER_SMS_PUBLIC_URL=https://<machine>.<tailnet>.ts.net/sms
+BUTLER_SMS_FROM_NUMBER=+1<your Twilio number>
+BUTLER_SMS_ALLOWED_SENDERS=["+1<your cell>"]
+```
+
+In the Twilio console, under the number's **Messaging configuration**, set
+"A message comes in" to Webhook, `HTTP POST`, with exactly the
+`BUTLER_SMS_PUBLIC_URL` value. The number's voice configuration (used by the
+ElevenLabs phone agent) is separate and unaffected.
+
+Notes:
+
+- US numbers must be registered for A2P 10DLC (or toll-free verified) before
+  carriers deliver Twilio's outbound replies; unregistered replies fail with
+  error 30034 even though inbound texts arrive.
+- Sender numbers are the authorization boundary. SMS caller ID can be spoofed,
+  so keep the allowlist to your own phone and keep physical actions' own
+  bounds (cooldowns, durations, confirmation settings) in place.
+- Startup logs `SMS webhook not started; missing settings: ...` when enabled
+  but incomplete; the rest of Butler runs normally.
+
 ### Text Chat Over Tailscale
 
 The host app now starts a small built-in text server alongside the voice pipeline. Voice and text both go through the same agent runtime and MCP tool path.

@@ -1263,3 +1263,34 @@ restarted before the entity exists in the live database (it is absent as of
 this session). Nothing was done about the three diagnosed defects, the pump's
 MQTT flapping, or the last-will health false positive; the pot-2 species is
 still unrecorded.
+
+## 2026-09-24 — SMS control channel over Twilio
+
+**Task:** Owner asked to text the system commands (e.g. water plants, adjust
+lights) through their Twilio number and get replies by text, not speech.
+Calling deferred.
+
+**Implemented:** New `butler/sms/` package. `twilio.py` holds `SmsConfig`,
+stdlib Twilio signature validation, and REST send. `server.py` is a local
+listener (default `127.0.0.1:8430`) meant to be exposed only via Tailscale
+Funnel; it rejects bad `X-Twilio-Signature`, silently ignores non-allowlisted
+senders, dedupes `MessageSid`, answers Twilio with empty TwiML at once, and
+enqueues a normal `text_cmd` (session `sms:<number>`, source `sms`, SMS
+formatting note as `extra_context`). Replies go out via the Messages API;
+background-lane jobs get the ack and then the job result. `butler/main.py`
+starts/stops it; it is disabled by default and refuses to start without public
+URL, Twilio SID/token, from-number, and sender allowlist. Settings added to
+`settings.env` and `.env.example`; README "SMS Control" section added. No
+new agent tool, migration, or dependency; the text-agent server is unchanged
+and stays private.
+
+**Validation:** `tests/test_sms_webhook.py` (11 tests, including Twilio's
+documented signature vector) plus `tests/test_text_server_phone_events.py`
+(5 tests): 16 passed in `.venv-main` via `unittest`. `butler.main` imports.
+No live Twilio send, Funnel exposure, restart, or full-suite run occurred.
+
+**Limitations / outstanding:** Owner must add Twilio credentials, enable
+Funnel for the node, set the Twilio messaging webhook, and restart Butler.
+US A2P 10DLC (or toll-free verification) is required for outbound replies to
+deliver. Sender allowlist is the authorization boundary and SMS caller ID is
+spoofable. Inbound voice control is not built.
