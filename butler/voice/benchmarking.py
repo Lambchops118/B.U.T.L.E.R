@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 import threading
 import time
 import uuid
@@ -19,6 +20,26 @@ CSV_LOG_PATH = LOG_DIR / "voice_benchmarks.csv"
 
 _LOG_LOCK = threading.Lock()
 _schema_reconciled = False
+try:
+    _CSV_MAX_BYTES = max(
+        1,
+        int(os.getenv("BUTLER_VOICE_BENCHMARK_MAX_BYTES", str(32 * 1024 * 1024))),
+    )
+except (TypeError, ValueError):
+    _CSV_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _rotate_csv_if_needed() -> None:
+    """Archive a full benchmark CSV without deleting any historical rows."""
+    global _schema_reconciled
+    try:
+        if not CSV_LOG_PATH.exists() or CSV_LOG_PATH.stat().st_size < _CSV_MAX_BYTES:
+            return
+        suffix = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+        CSV_LOG_PATH.replace(LOG_DIR / f"voice_benchmarks_{suffix}.csv")
+        _schema_reconciled = False
+    except OSError:
+        return
 
 TIMESTAMP_COLUMNS = [
     "callback_started",
@@ -505,6 +526,7 @@ class VoiceBenchmarkSession:
         for name in METRIC_COLUMNS:
             row[name] = lat.get(name)
 
+        _rotate_csv_if_needed()
         _reconcile_csv_schema()
         write_header = not CSV_LOG_PATH.exists()
         with CSV_LOG_PATH.open("a", newline="", encoding="utf-8") as fh:

@@ -6,8 +6,9 @@ import threading
 import time
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
-from butler.text.service_client import get_json, request_json
+from butler.text.service_client import get_json
 
 
 class RemoteDisplayQueue:
@@ -65,20 +66,13 @@ class RemoteDisplayQueue:
             self._consumed_sequence = sequence
         return item
 
-    def _send_heartbeat(self) -> None:
+    def _state_path(self) -> str:
         if self._consumed_sequence is None:
-            return
-        request_json(
-            self.base_url,
-            "/display/heartbeat",
-            {
-                "client_id": self.client_id,
-                "sequence": self._consumed_sequence,
-                "status": "rendered",
-            },
-            token=self.token,
-            timeout=max(2.0, self.poll_seconds * 2),
+            return "/display/state"
+        query = urlencode(
+            {"client_id": self.client_id, "sequence": self._consumed_sequence}
         )
+        return f"/display/state?{query}"
 
     def _publish(self, snapshot: dict[str, Any]) -> None:
         item = ("DISPLAY_STATE", snapshot)
@@ -94,15 +88,9 @@ class RemoteDisplayQueue:
     def _poll(self) -> None:
         while not self._stop.is_set():
             try:
-                try:
-                    self._send_heartbeat()
-                except Exception:
-                    # A stale/older main process may not expose acknowledgements
-                    # yet. State delivery must remain backward compatible.
-                    pass
                 snapshot = get_json(
                     self.base_url,
-                    "/display/state",
+                    self._state_path(),
                     token=self.token,
                     timeout=max(2.0, self.poll_seconds * 2),
                 )

@@ -108,6 +108,15 @@ class DisplayEndpointTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
         self.assertEqual(self.state.snapshot()["clients"]["panel-1"]["sequence"], 9)
 
+    def test_display_state_piggybacks_render_acknowledgement(self) -> None:
+        request = urllib.request.Request(
+            self.url + "?client_id=panel-2&sequence=11",
+            headers={"Authorization": "Bearer display-secret"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.state.snapshot()["clients"]["panel-2"]["sequence"], 11)
+
 
 class RemoteDisplayQueueTests(unittest.TestCase):
     def test_queue_keeps_only_the_latest_snapshot(self) -> None:
@@ -117,6 +126,7 @@ class RemoteDisplayQueueTests(unittest.TestCase):
         self.assertEqual(updates.get_nowait(), ("DISPLAY_STATE", {"sequence": 2}))
         with self.assertRaises(queue.Empty):
             updates.get_nowait()
+        self.assertIn("sequence=2", updates._state_path())
 
 
 class LauncherBoundaryTests(unittest.TestCase):

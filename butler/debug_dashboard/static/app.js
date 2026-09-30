@@ -149,8 +149,9 @@ function renderInteractions(snapshot) {
   const benchmarks = io.voice_benchmarks;
   const conversation = io.conversation;
   const pipeline = io.pipeline;
+  const contentCapture = io.content_capture || {};
   const summary = byId("interaction-summary");
-  summary.textContent = `voice CSV: ${benchmarks.status} (${benchmarks.rows.length} rows, newest ${shortTime(benchmarks.newest_timestamp)}) | conversation DB: ${conversation.status} (${conversation.messages.length} messages) | pipeline: ${pipeline.status} (${pipeline.events.length} events)`;
+  summary.textContent = `voice CSV: ${benchmarks.status} (${benchmarks.rows.length} rows, newest ${shortTime(benchmarks.newest_timestamp)}) | conversation DB: ${conversation.status} (${conversation.messages.length} messages) | pipeline: ${pipeline.status} (${pipeline.events.length} events) | content: ${contentCapture.enabled ? "VISIBLE" : "REDACTED"}`;
   summary.className = `status-strip ${benchmarks.status === "degraded" || conversation.status === "degraded" ? "degraded" : ""}`;
 
   const voiceRows = benchmarks.rows

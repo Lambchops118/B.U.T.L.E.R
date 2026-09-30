@@ -1363,3 +1363,17 @@ from Git; non-launcher deployments can supply `BUTLER_BUILD_SHA`. Dashboard host
 process-retained, not a new durable metrics database. Barge-in accuracy still
 requires the existing opt-in fixture/ground-truth workflow; runtime counters
 alone cannot infer false negatives.
+
+**Optimization follow-up:** Removed the synchronous display-heartbeat request;
+the last rendered sequence is now acknowledged on the next normal state GET,
+halving steady-state display HTTP traffic and removing a possible two-second
+delay. Dashboard file/database/remote feeds now use bounded TTL caches, the
+three cold remote reads run concurrently, and only 300 downsampled host-history
+points are transported while the process retains up to 3,600. Conversation and
+voice-benchmark text is redacted unless `BUTLER_DEBUG_INCLUDE_CONTENT=1`.
+Pipeline JSONL and voice benchmark CSVs rotate non-destructively at configurable
+32 MiB limits. The dashboard now reads both the current rolling
+`voice_benchmarks.csv` and archived timestamped files; it previously ignored
+the current file. Automatic deletion was not added because no retention window
+was authorized. Updated focused coverage is 111 passing tests; JS syntax and
+patch whitespace checks also pass.

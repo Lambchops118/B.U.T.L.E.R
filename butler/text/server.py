@@ -146,7 +146,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         if path == "/display/state":
             if not self._authorize_request(require_token=True):
                 return
-            self._handle_display_state()
+            self._handle_display_state(parse_qs(parsed.query))
             return
         if path.startswith("/jobs/"):
             if not self._authorize_request(require_token=True):
@@ -230,7 +230,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         )
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
 
-    def _handle_display_state(self) -> None:
+    def _handle_display_state(self, query: dict[str, list[str]] | None = None) -> None:
         """Return the latest display projection for local or remote panels."""
         state = self.server.display_state
         if state is None:
@@ -239,6 +239,20 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 {"ok": False, "error": "Display state is unavailable."},
             )
             return
+        query = query or {}
+        client_id = str((query.get("client_id") or [""])[0]).strip()
+        sequence_text = str((query.get("sequence") or [""])[0]).strip()
+        if client_id and sequence_text:
+            try:
+                state.record_client_heartbeat(
+                    client_id,
+                    sequence=int(sequence_text),
+                    status="rendered",
+                )
+            except (TypeError, ValueError):
+                # A malformed acknowledgement must not prevent a display from
+                # recovering the current state.
+                pass
         payload = state.snapshot()
         payload["ok"] = True
         payload["connected"] = True

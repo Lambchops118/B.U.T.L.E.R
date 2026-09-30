@@ -162,8 +162,13 @@ def _read_csv_tail(path: Path, *, max_rows: int) -> tuple[list[dict[str, str]], 
 
 def read_voice_benchmarks(log_root: Path, *, limit: int) -> dict[str, Any]:
     limit = _bounded_int(limit, 50, minimum=1, maximum=MAX_BENCHMARK_ROWS)
+    candidates = (
+        {log_root / "voice_benchmarks.csv", *log_root.glob("voice_benchmarks_*.csv")}
+        if log_root.exists()
+        else set()
+    )
     files = sorted(
-        log_root.glob("voice_benchmarks_*.csv"),
+        (path for path in candidates if path.exists()),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )[:MAX_LOG_FILES]
@@ -185,7 +190,7 @@ def read_voice_benchmarks(log_root: Path, *, limit: int) -> dict[str, Any]:
                 break
     return {
         "status": "available" if files else "not_available",
-        "source": "butler/logs/voice_benchmarks_*.csv",
+        "source": "butler/logs/voice_benchmarks*.csv",
         "rows": output,
         "files_scanned": len(files),
         "errors": errors[:10],
@@ -785,6 +790,11 @@ class DebugSnapshotService:
         self.job_db = Path(job_db)
         self.sampler = sampler
         self._host_history: deque[dict[str, Any]] = deque(maxlen=3600)
+        self._cache: dict[str, tuple[float, Any]] = {}
+        self._cache_lock = threading.Lock()
+        self.include_content = os.getenv(
+            "BUTLER_DEBUG_INCLUDE_CONTENT", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self.system_metrics_url = (
             system_metrics_url
             if system_metrics_url is not None
@@ -808,23 +818,56 @@ class DebugSnapshotService:
         event_limit: int = 150,
         interaction_limit: int = 50,
     ) -> dict[str, Any]:
-        telemetry = read_pipeline_events(self.log_root, limit=event_limit)
-        benchmarks = read_voice_benchmarks(self.log_root, limit=interaction_limit)
-        messages = read_conversation_messages(self.memory_db, limit=interaction_limit * 2)
-        jobs = read_jobs(self.job_db, limit=interaction_limit)
-        host = self._host_snapshot()
+        telemetry = self._cached(
+            f"telemetry:{event_limit}", 1.5,
+            lambda: read_pipeline_events(self.log_root, limit=event_limit),
+        )
+        benchmarks = self._cached(
+            f"benchmarks:{interaction_limit}", 2.0,
+            lambda: read_voice_benchmarks(self.log_root, limit=interaction_limit),
+        )
+        messages = self._cached(
+            f"messages:{interaction_limit}", 2.0,
+            lambda: read_conversation_messages(self.memory_db, limit=interaction_limit * 2),
+        )
+        jobs = self._cached(
+            f"jobs:{interaction_limit}", 2.0,
+            lambda: read_jobs(self.job_db, limit=interaction_limit),
+        )
+        host = self._cached("host", 1.0, self._host_snapshot)
         self._record_host_history(host)
-        services = self._service_health()
-        awareness_metrics = read_json_endpoint(
-            f"{self.awareness_url}/metrics", token=self.awareness_token
-        )
-        awareness_actions = read_json_endpoint(
-            f"{self.awareness_url}/actions?limit={min(200, interaction_limit)}",
-            token=self.awareness_token,
-        )
-        main_runtime = read_json_endpoint(
-            f"{self.main_url}/health", token=self.main_token
-        )
+        services = list(self._cached("services", 2.0, self._service_health))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            metrics_future = executor.submit(
+                self._cached,
+                "awareness_metrics",
+                3.0,
+                lambda: read_json_endpoint(
+                    f"{self.awareness_url}/metrics", token=self.awareness_token
+                ),
+            )
+            actions_future = executor.submit(
+                self._cached,
+                f"awareness_actions:{interaction_limit}",
+                5.0,
+                lambda: read_json_endpoint(
+                    f"{self.awareness_url}/actions?limit={min(200, interaction_limit)}",
+                    token=self.awareness_token,
+                ),
+            )
+            main_future = executor.submit(
+                self._cached,
+                "main_runtime",
+                2.0,
+                lambda: read_json_endpoint(
+                    f"{self.main_url}/health", token=self.main_token
+                ),
+            )
+            awareness_metrics = metrics_future.result()
+            awareness_actions = actions_future.result()
+            main_runtime = main_future.result()
+        visible_benchmarks = self._visible_benchmarks(benchmarks)
+        visible_messages = self._visible_messages(messages)
         events = telemetry.get("events", [])
         request_traces = build_request_traces(events, limit=interaction_limit)
         services.append(
@@ -840,9 +883,17 @@ class DebugSnapshotService:
             "generated_at": _iso_now(),
             "refresh_hint_ms": 1000,
             "interaction_io": {
-                "conversation": messages,
-                "voice_benchmarks": benchmarks,
+                "conversation": visible_messages,
+                "voice_benchmarks": visible_benchmarks,
                 "pipeline": telemetry,
+                "content_capture": {
+                    "enabled": self.include_content,
+                    "reason": (
+                        "Exact stored conversation and voice benchmark text is visible."
+                        if self.include_content
+                        else "Content is redacted by default; set BUTLER_DEBUG_INCLUDE_CONTENT=1 only for a private debugging session."
+                    ),
+                },
                 "prompt_capture": {
                     "status": "not_available",
                     "reason": (
@@ -858,7 +909,8 @@ class DebugSnapshotService:
             "system_health": {
                 "services": services,
                 "host": host,
-                "history": list(self._host_history),
+                "history": self._downsampled_host_history(),
+                "history_total_samples": len(self._host_history),
             },
             "live_audio": build_audio_snapshot(telemetry, benchmarks),
             "operations": {
@@ -872,6 +924,54 @@ class DebugSnapshotService:
             },
             "extensions": [],
         }
+
+    def _cached(self, key: str, ttl_seconds: float, loader: Any) -> Any:
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+        value = loader()
+        with self._cache_lock:
+            self._cache[key] = (time.monotonic() + max(0.0, ttl_seconds), value)
+        return value
+
+    @staticmethod
+    def _redacted(value: Any) -> str:
+        length = len(str(value or ""))
+        return f"[redacted; {length} chars]"
+
+    def _visible_benchmarks(self, source: dict[str, Any]) -> dict[str, Any]:
+        if self.include_content:
+            return source
+        result = dict(source)
+        result["rows"] = [
+            {
+                **row,
+                "transcript": self._redacted(row.get("transcript")),
+                "command": self._redacted(row.get("command")),
+                "response_preview": self._redacted(row.get("response_preview")),
+            }
+            for row in source.get("rows", [])
+        ]
+        return result
+
+    def _visible_messages(self, source: dict[str, Any]) -> dict[str, Any]:
+        if self.include_content:
+            return source
+        result = dict(source)
+        result["messages"] = [
+            {**message, "content": self._redacted(message.get("content"))}
+            for message in source.get("messages", [])
+        ]
+        return result
+
+    def _downsampled_host_history(self, max_points: int = 300) -> list[dict[str, Any]]:
+        points = list(self._host_history)
+        if len(points) <= max_points:
+            return points
+        scale = (len(points) - 1) / (max_points - 1)
+        return [points[round(index * scale)] for index in range(max_points)]
 
     def _record_host_history(self, host: dict[str, Any]) -> None:
         point: dict[str, Any] = {

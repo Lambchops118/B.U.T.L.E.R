@@ -88,6 +88,14 @@ class DebugDashboardDataTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["transcript"], "Butler turn on the light")
         self.assertEqual(result["rows"][0]["input_rms"], 418.5)
 
+    def test_reads_current_single_rolling_voice_benchmark_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            path = root / "voice_benchmarks.csv"
+            path.write_text("run_started_at,session_id,input_rms\n2026-08-10T00:00:00Z,req-2,12\n", encoding="utf-8")
+            result = read_voice_benchmarks(root, limit=10)
+        self.assertEqual(result["rows"][0]["session_id"], "req-2")
+
     def test_reads_conversation_database_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "memory.sqlite3"
@@ -157,6 +165,39 @@ class DebugDashboardDataTests(unittest.TestCase):
         self.assertEqual(snapshot["extensions"], [])
         self.assertIn("request_traces", snapshot["operations"])
         self.assertEqual(len(snapshot["system_health"]["history"]), 1)
+
+    def test_content_is_redacted_by_default_and_cache_avoids_duplicate_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with mock.patch.dict("os.environ", {"BUTLER_DEBUG_INCLUDE_CONTENT": "0"}):
+                service = DebugSnapshotService(
+                    log_root=root,
+                    memory_db=root / "missing.sqlite3",
+                    sampler=_FakeSampler(),
+                )
+            visible = service._visible_messages({"messages": [{"content": "private"}]})
+            loader = mock.Mock(return_value={"value": 1})
+            first = service._cached("test", 10, loader)
+            second = service._cached("test", 10, loader)
+
+        self.assertEqual(visible["messages"][0]["content"], "[redacted; 7 chars]")
+        self.assertIs(first, second)
+        loader.assert_called_once()
+
+    def test_host_history_is_downsampled_for_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = DebugSnapshotService(
+                log_root=root,
+                memory_db=root / "missing.sqlite3",
+                sampler=_FakeSampler(),
+            )
+            service._host_history.extend({"timestamp": str(index)} for index in range(1000))
+            result = service._downsampled_host_history(max_points=100)
+
+        self.assertEqual(len(result), 100)
+        self.assertEqual(result[0]["timestamp"], "0")
+        self.assertEqual(result[-1]["timestamp"], "999")
 
     def test_console_does_not_sample_its_own_host_without_explicit_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

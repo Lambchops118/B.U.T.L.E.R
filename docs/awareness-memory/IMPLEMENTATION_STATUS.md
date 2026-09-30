@@ -11,7 +11,10 @@ timestamps. Runtime health exposes central/awareness queue pressure, MCP
 lifecycle state, and acknowledged remote-display sequences. Telemetry now
 includes host/process/boot/runtime/build/config-fingerprint dimensions. No
 schema migration, raw audio capture, prompt capture, tool-argument capture, or
-physical action occurred. Focused validation is recorded in the session log.
+physical action occurred. Follow-up optimization removed the display heartbeat
+round trip, added feed caching/concurrent cold reads and history downsampling,
+default-redacted stored content, and non-destructive 32 MiB log rotation.
+Focused validation is recorded in the session log.
 
 ## Current bounded task — SMS control channel (2026-09-24)
 

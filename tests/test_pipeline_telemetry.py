@@ -46,6 +46,30 @@ class PipelineTelemetryTests(unittest.TestCase):
             self.assertNotIn("transcript", payload)
             self.assertNotIn("response", payload)
 
+    def test_rotates_full_log_without_deleting_previous_part(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            original = log_dir / "pipeline.jsonl"
+            original.write_text("already full\n", encoding="utf-8")
+            with (
+                mock.patch.object(telemetry, "_ENABLED", True),
+                mock.patch.object(telemetry, "_LOG_DIR", log_dir),
+                mock.patch.object(telemetry, "_LOG_PATH", original),
+                mock.patch.object(telemetry, "_MAX_LOG_BYTES", 1),
+                mock.patch.object(telemetry, "_WRITE_COUNT", 255),
+                mock.patch.object(telemetry, "_PART", 0),
+            ):
+                telemetry.emit_pipeline_event(
+                    request_id="req-rotate",
+                    component="test",
+                    event="stage_completed",
+                )
+                rotated = telemetry.telemetry_log_path()
+
+            self.assertTrue(original.exists())
+            self.assertNotEqual(rotated, original)
+            self.assertTrue(rotated.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

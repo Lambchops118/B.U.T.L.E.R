@@ -33,11 +33,25 @@ _LOG_DIR = Path(
 _RUN_ID = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 _LOG_PATH = _LOG_DIR / f"pipeline_telemetry_{_RUN_ID}_{os.getpid()}.jsonl"
 _LOCK = threading.Lock()
+_WRITE_COUNT = 0
+_PART = 0
 _BOOT_ID = os.getenv("BUTLER_BOOT_ID", uuid.uuid4().hex[:16])
 _HOST_ID = os.getenv("BUTLER_HOST_ID", socket.gethostname())[:100]
 _PROCESS_NAME = os.getenv("BUTLER_PROCESS_NAME", Path(sys.argv[0]).stem or "python")[:100]
 _BUILD_SHA = os.getenv("BUTLER_BUILD_SHA", "unknown")[:100]
 _RUNTIME_VERSION = f"python-{platform.python_version()}"
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_MAX_LOG_BYTES = _positive_int_env(
+    "BUTLER_PIPELINE_TELEMETRY_MAX_BYTES", 32 * 1024 * 1024
+)
 
 # Only operational, non-secret settings participate.  The digest is enough to
 # correlate a regression with configuration drift without copying addresses,
@@ -63,6 +77,20 @@ def _config_fingerprint() -> str:
 def telemetry_log_path() -> Path:
     """Return this process's telemetry path (whether or not logging is enabled)."""
     return _LOG_PATH
+
+
+def _rotate_log_if_needed() -> None:
+    """Start a new bounded part without deleting prior diagnostic evidence."""
+    global _LOG_PATH, _PART
+    try:
+        if not _LOG_PATH.exists() or _LOG_PATH.stat().st_size < _MAX_LOG_BYTES:
+            return
+        _PART += 1
+        _LOG_PATH = _LOG_DIR / (
+            f"pipeline_telemetry_{_RUN_ID}_{os.getpid()}_part{_PART}.jsonl"
+        )
+    except OSError:
+        return
 
 
 def emit_pipeline_event(
@@ -103,6 +131,11 @@ def emit_pipeline_event(
         line = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         with _LOCK:
+            global _WRITE_COUNT
+            _WRITE_COUNT += 1
+            # Avoid a filesystem stat on every hot-path event.
+            if _WRITE_COUNT == 1 or _WRITE_COUNT % 256 == 0:
+                _rotate_log_if_needed()
             with _LOG_PATH.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
     except Exception:

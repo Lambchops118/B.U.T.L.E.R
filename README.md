@@ -317,7 +317,9 @@ Start it with the main Python environment:
 Then open `http://127.0.0.1:8787`. The page polls once per second by default,
 can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
 GPU, memory, and disk history in the dashboard process so browser reloads do not
-erase it. RMS and audio-measurement history comes from bounded telemetry. Expanded
+erase it; at most 300 downsampled points are transported per snapshot. Source
+files and remote feeds are cached at separate bounded intervals, and cold remote
+reads run concurrently. RMS and audio-measurement history comes from bounded telemetry. Expanded
 JSON/detail rows remain open while polling. New dashboard topics can be added
 through the versioned snapshot's `extensions` list without changing the
 existing tabs.
@@ -337,6 +339,16 @@ text, tool arguments, raw PCM, and continuously sampled idle-room RMS are
 not currently persisted by the runtime, so the page labels those feeds as
 unavailable instead of inventing data. Adding them requires a separate,
 explicitly bounded and privacy-reviewed runtime instrumentation task.
+
+Stored conversation and voice-benchmark text is redacted in dashboard responses
+by default. Set `BUTLER_DEBUG_INCLUDE_CONTENT=1` only for a private debugging
+session that genuinely needs exact text.
+
+Pipeline JSONL and voice benchmark CSV files rotate at 32 MiB by default
+(`BUTLER_PIPELINE_TELEMETRY_MAX_BYTES` and
+`BUTLER_VOICE_BENCHMARK_MAX_BYTES`). Rotation preserves old files; automatic
+deletion is intentionally not enabled without an operator-approved retention
+window.
 
 #### Note: `BUTLER_TEXT_AGENT_URL` and local voice
 
