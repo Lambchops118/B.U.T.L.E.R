@@ -3,8 +3,8 @@ setlocal
 set SCRIPT_DIR=%~dp0
 cd /d "%SCRIPT_DIR%"
 
-if exist "%SCRIPT_DIR%\.venv-main\Scripts\python.exe" (
-    "%SCRIPT_DIR%\.venv-main\Scripts\python.exe" -m butler.text.client %*
+if exist "%SCRIPT_DIR%\.venv-runtime\Scripts\python.exe" (
+    "%SCRIPT_DIR%\.venv-runtime\Scripts\python.exe" -m butler.text.client %*
 ) else if exist "%SCRIPT_DIR%\.venv\Scripts\python.exe" (
     "%SCRIPT_DIR%\.venv\Scripts\python.exe" -m butler.text.client %*
 ) else (

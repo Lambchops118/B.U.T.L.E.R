@@ -24,7 +24,7 @@ The upstream `mcp-ripgrep` package is useful for general-purpose search, but its
 
 ## Prerequisites
 
-- Python 3.10+ Butler environment
+- Python 3.12 Butler runtime environment
 - Node.js with `npx`
 - ripgrep on PATH
 
@@ -83,7 +83,7 @@ Restart Butler after any `.env` change.
 Run:
 
 ```bash
-.venv-main/bin/python tools/verify_minecraft_mcp_setup.py
+.venv-runtime/bin/python tools/verify_minecraft_mcp_setup.py
 ```
 
 The smoke check attempts to verify:

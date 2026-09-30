@@ -1,10 +1,10 @@
 """One-command startup for the whole Butler stack.
 
-Butler normally runs as several cooperating processes in separate virtual
-environments (main agent, voice worker, awareness backend) plus a Postgres
-container and a local Ollama server. Starting them by hand means several
-terminals. This package supervises all of them from a single entry point and
-pins each GPU-bound process to the right card:
+Butler normally runs as several cooperating processes: main and voice share a
+runtime environment, while display and awareness use focused environments.
+The stack also includes a Postgres container and local Ollama server. Starting
+them by hand means several terminals. This package supervises all of them from
+a single entry point and pins each GPU-bound process to the right card:
 
 - the language model (Ollama) runs on the RTX 5080
 - the speech-to-text model (faster-whisper in the voice worker) runs on the

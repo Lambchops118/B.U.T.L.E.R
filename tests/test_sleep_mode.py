@@ -495,7 +495,7 @@ class WakeWordStripTest(unittest.TestCase):
     def _pattern():
         try:
             from butler.voice.agent import _WAKE_WORD_PREFIX
-        except ImportError as exc:  # voice deps live in .venv-voice
+        except ImportError as exc:  # voice deps live in .venv-runtime
             raise unittest.SkipTest(f"voice dependencies not installed: {exc}")
         return _WAKE_WORD_PREFIX
 

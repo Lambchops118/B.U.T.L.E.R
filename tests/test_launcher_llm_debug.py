@@ -130,7 +130,10 @@ class LauncherLLMDebugProcessTests(unittest.TestCase):
 
         child_env = spawn.call_args.args[2]
         self.assertEqual(child_env["BUTLER_LLM_DEBUG_STDOUT"], "1")
-        self.assertTrue(child_env["BUTLER_LLM_DEBUG_LOG_DIR"].endswith("butler\\logs"))
+        self.assertEqual(
+            Path(child_env["BUTLER_LLM_DEBUG_LOG_DIR"]).parts[-2:],
+            ("butler", "logs"),
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,33 @@
+# Butler main agent and voice worker processes.
+# Both run as separate processes from one Python 3.12 environment:
+#   python3.12 -m venv .venv-runtime
+
+APScheduler==3.11.1
+boto3==1.40.65
+faster-whisper
+httpx==0.28.1
+mcp[cli]
+numpy==2.3.4
+openai==2.7.0
+openai-whisper
+openwakeword
+paho-mqtt==2.1.0
+PyAudio==0.2.14
+pyowm
+python-dotenv==1.2.1
+python-kasa==0.7.7
+requests==2.32.5
+SpeechRecognition==3.14.3
+starlette
+winrt-runtime==3.2.1; sys_platform == "win32"
+winrt-Windows-Devices-Enumeration==3.2.1; sys_platform == "win32"
+winrt-Windows-Foundation==3.2.1; sys_platform == "win32"
+winrt-Windows-Foundation-Collections==3.2.1; sys_platform == "win32"
+winrt-Windows-Media==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-Audio==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-Capture==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-Devices==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-Effects==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-MediaProperties==3.2.1; sys_platform == "win32"
+winrt-Windows-Media-Render==3.2.1; sys_platform == "win32"
+winrt-Windows-Storage-Streams==3.2.1; sys_platform == "win32"

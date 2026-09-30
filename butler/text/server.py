@@ -100,10 +100,12 @@ class TextAgentHTTPServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         central_queue: queue.Queue,
         config: TextServerConfig,
+        display_state=None,
     ) -> None:
         super().__init__(server_address, TextAgentRequestHandler)
         self.central_queue = central_queue
         self.config = config
+        self.display_state = display_state
 
 
 class TextAgentRequestHandler(BaseHTTPRequestHandler):
@@ -122,6 +124,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/health":
             self._write_json(HTTPStatus.OK, {"ok": True, "status": "healthy"})
+            return
+        if path == "/display/state":
+            if not self._authorize_request(require_token=True):
+                return
+            self._handle_display_state()
             return
         if path.startswith("/jobs/"):
             if not self._authorize_request(require_token=True):
@@ -178,8 +185,8 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
     def _handle_notify(self) -> None:
         """Deterministic GUI banner for the awareness backend (no LLM).
 
-        The message goes through the router's ``ui`` lane straight to the
-        pygame GUI queue; 200 means enqueued for display, not seen by a human.
+        The message goes through the router's ``ui`` lane into the display-state
+        projection; 200 means enqueued for display, not seen by a human.
         """
         try:
             body = self._read_json_body()
@@ -201,6 +208,21 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             Message(type="ui", payload=("VOICE_CMD", banner_title, text or title))
         )
         self._write_json(HTTPStatus.OK, {"ok": True, "enqueued": True})
+
+    def _handle_display_state(self) -> None:
+        """Return the latest display projection for local or remote panels."""
+        state = self.server.display_state
+        if state is None:
+            self._write_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"ok": False, "error": "Display state is unavailable."},
+            )
+            return
+        payload = state.snapshot()
+        payload["ok"] = True
+        payload["connected"] = True
+        payload["sleep"] = sleep_mode.state()
+        self._write_json(HTTPStatus.OK, payload)
 
     def _handle_speak(self) -> None:
         """Enqueue already-rendered speech, without command classification.
@@ -573,7 +595,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         return note
 
     def _publish_turn_banner(self, command: str, response: str) -> None:
-        """Show one completed turn on the pygame panel via the router's ui lane.
+        """Publish one completed turn to displays via the router's ui lane.
 
         Best-effort by design: the banner is an add-on to a turn the user has
         already heard, so a queue that is missing or full must never surface as
@@ -906,7 +928,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 """
 
 
-def start_text_agent_server(central_queue: queue.Queue) -> TextAgentHTTPServer | None:
+def start_text_agent_server(
+    central_queue: queue.Queue,
+    *,
+    display_state=None,
+) -> TextAgentHTTPServer | None:
     try:
         config = TextServerConfig.from_env()
         if not config.enabled:
@@ -914,7 +940,12 @@ def start_text_agent_server(central_queue: queue.Queue) -> TextAgentHTTPServer |
             return None
 
         print(f"Starting text agent server on {config.host}:{config.port}...")
-        server = TextAgentHTTPServer((config.host, config.port), central_queue, config)
+        server = TextAgentHTTPServer(
+            (config.host, config.port),
+            central_queue,
+            config,
+            display_state=display_state,
+        )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 

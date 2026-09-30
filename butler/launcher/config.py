@@ -39,8 +39,9 @@ LAUNCHER_CONFIG_PATH = REPO_ROOT / "launcher.config.json"
 # Per-component Python interpreters. Windows layout (Scripts) with a POSIX
 # fallback so the same code works if the repo is ever run under WSL/Linux.
 VENV_DIRS = {
-    "main": ".venv-main",
-    "voice": ".venv-voice",
+    "main": ".venv-runtime",
+    "voice": ".venv-runtime",
+    "display": ".venv-display",
     "awareness": ".venv-awareness",
 }
 
@@ -446,6 +447,7 @@ class LauncherConfig:
     start_awareness: bool = True
     start_main: bool = True
     start_voice: bool = True
+    start_display: bool = True
     microphone_profile: str = DEFAULT_MICROPHONE_PROFILE
 
     # Discord voice frontend (separate repo). Off by default: it is an optional

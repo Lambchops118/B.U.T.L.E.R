@@ -110,12 +110,14 @@ class LauncherGUI:
         self.var_awareness = tk.BooleanVar()
         self.var_main = tk.BooleanVar()
         self.var_voice = tk.BooleanVar()
+        self.var_display = tk.BooleanVar()
         self.var_discord = tk.BooleanVar()
         ttk.Checkbutton(comp, text="Ollama (LLM server)", variable=self.var_ollama).pack(anchor="w")
         ttk.Checkbutton(comp, text="Awareness DB (Docker Postgres)", variable=self.var_awareness_db).pack(anchor="w")
         ttk.Checkbutton(comp, text="Awareness backend", variable=self.var_awareness).pack(anchor="w")
         ttk.Checkbutton(comp, text="Main agent", variable=self.var_main).pack(anchor="w")
         ttk.Checkbutton(comp, text="Voice worker", variable=self.var_voice).pack(anchor="w")
+        ttk.Checkbutton(comp, text="InfoPanel display", variable=self.var_display).pack(anchor="w")
         ttk.Checkbutton(comp, text="Discord voice frontend", variable=self.var_discord).pack(anchor="w")
 
         # --- Options ------------------------------------------------------
@@ -467,6 +469,7 @@ class LauncherGUI:
         self.var_awareness.set(self.cfg.start_awareness)
         self.var_main.set(self.cfg.start_main)
         self.var_voice.set(self.cfg.start_voice)
+        self.var_display.set(self.cfg.start_display)
         self.var_microphone.set(
             self._microphone_label_for(self.cfg.microphone_profile)
         )
@@ -502,6 +505,7 @@ class LauncherGUI:
         self.cfg.start_awareness = self.var_awareness.get()
         self.cfg.start_main = self.var_main.get()
         self.cfg.start_voice = self.var_voice.get()
+        self.cfg.start_display = self.var_display.get()
         self.cfg.microphone_profile = self._microphone_value_from(
             self.var_microphone.get()
         )

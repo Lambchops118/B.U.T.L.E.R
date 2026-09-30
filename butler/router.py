@@ -88,7 +88,7 @@ def _announcement_severity(title: str) -> str:
 
 def _run_agent_command(
     command: str,
-    gui_queue: queue.Queue,
+    display_sink,
     snapshot: str,
     *,
     session_id: str,
@@ -104,7 +104,7 @@ def _run_agent_command(
         runtime_lane=runtime_lane,
         extra_context=extra_context,
     )
-    gui_queue.put(("VOICE_CMD", command, response_text))
+    display_sink.put(("VOICE_CMD", command, response_text))
     return response_text
 
 
@@ -244,18 +244,18 @@ def _compact_text(value: str, limit: int) -> str:
     return compacted[: limit - 3].rsplit(" ", 1)[0] + "..."
 
 
-def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal: Optional[object] = None):
+def router_loop(central_queue: queue.Queue, display_sink, stop_signal: Optional[object] = None):
     """
     Central dispatcher:
     - status/event updates refresh StateStore (no API calls)
     - voice/text commands trigger LLM handling with a small state snapshot
-    - ui messages forward directly to the GUI queue
+    - ui messages update the network-visible display projection
     """
     state = StateStore()
     job_manager = JobManager(
         lambda job: _run_agent_command(
             job.request_text,
-            gui_queue,
+            display_sink,
             str((job.metadata or {}).get("state_snapshot") or "no recent status"),
             session_id=job.session_id,
             interaction_mode=str((job.metadata or {}).get("interaction_mode") or "text"),
@@ -276,7 +276,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                 announcement: AnnouncementPayload = msg.payload
                 # System output is neither a task request nor evidence that a
                 # human spoke. Never classify it, run tools, or emit presence.
-                gui_queue.put(("VOICE_CMD", announcement.title, announcement.text))
+                display_sink.put(("VOICE_CMD", announcement.title, announcement.text))
                 # The morning wake-up ends sleep mode; everything else routine
                 # stays silent until it does. The banner above is queued either
                 # way, so the notification is still on the record -- on a panel
@@ -321,7 +321,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     if decision.mode == "status":
                         response_text = _run_agent_command(
                             vp.command,
-                            gui_queue,
+                            display_sink,
                             snapshot,
                             session_id="voice",
                             interaction_mode="voice",
@@ -338,12 +338,12 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                             classification_reason=decision.reason,
                         )
                         ack_text = decision.response.strip() or BACKGROUND_ACK
-                        gui_queue.put(("VOICE_CMD", vp.command, f"{ack_text} Job ID: {job.job_id}"))
+                        display_sink.put(("VOICE_CMD", vp.command, f"{ack_text} Job ID: {job.job_id}"))
                         _speak_via_voice_worker(ack_text)
                     else:
                         response_text = _run_agent_command(
                             vp.command,
-                            gui_queue,
+                            display_sink,
                             snapshot,
                             session_id="voice",
                             interaction_mode="voice",
@@ -396,7 +396,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     if decision.mode == "status":
                         response_text = _run_agent_command(
                             tp.command,
-                            gui_queue,
+                            display_sink,
                             snapshot,
                             session_id=tp.session_id,
                             interaction_mode=interaction_mode,
@@ -435,7 +435,7 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
 
                     response_text = _run_agent_command(
                         tp.command,
-                        gui_queue,
+                        display_sink,
                         snapshot,
                         session_id=tp.session_id,
                         interaction_mode=interaction_mode,
@@ -475,13 +475,13 @@ def router_loop(central_queue: queue.Queue, gui_queue: queue.Queue, stop_signal:
                     snapshot = awareness_client.snapshot_with_fallback(state.snapshot())
                     _run_agent_command(
                         f"Event {msg.payload.name}: {msg.payload.data}",
-                        gui_queue,
+                        display_sink,
                         snapshot,
                         session_id=_event_session_id(msg.payload.data),
                         interaction_mode="text",
                     )
 
             elif msg.type == "ui":
-                gui_queue.put(msg.payload)
+                display_sink.put(msg.payload)
     finally:
         job_manager.shutdown(wait=False)

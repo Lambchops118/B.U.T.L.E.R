@@ -385,6 +385,16 @@ class Supervisor:
             self._say(f"pointing voice worker at local main agent: {local_url}")
         self._spawn("voice", [str(py), "-m", "butler.voice.worker"], env)
 
+    def _start_display(self, base: dict[str, str]) -> None:
+        """Start the independently deployable InfoPanel client."""
+        py = venv_python("display")
+        env = _venv_env(base, py)
+        if self._cfg.start_main:
+            local_url = f"http://127.0.0.1:{self._ports.text_agent}"
+            env["BUTLER_DISPLAY_AGENT_URL"] = local_url
+            self._say(f"pointing display at local main agent: {local_url}")
+        self._spawn("display", [str(py), "-m", "butler.display.worker"], env)
+
     def _discord_root(self) -> Path:
         """Locate the Discord-Voice-Frontend checkout.
 
@@ -533,6 +543,8 @@ class Supervisor:
             self._start_awareness(base)
         if self._cfg.start_main:
             self._start_main(base)
+        if self._cfg.start_display:
+            self._start_display(base)
         if self._cfg.start_voice:
             self._start_voice(base)
         if self._cfg.start_discord:
@@ -606,6 +618,7 @@ def run_headless(cfg: LauncherConfig, log: Optional[LogFn] = None) -> int:
             cfg.start_awareness_db,
             cfg.start_awareness,
             cfg.start_main,
+            cfg.start_display,
             cfg.start_voice,
             cfg.start_discord,
         ]

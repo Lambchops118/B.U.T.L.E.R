@@ -2,22 +2,18 @@ from __future__ import annotations
 
 import queue
 import threading
-
-from InfoPanel import screen as info_panel_screen
+import time
 
 from butler import router
 from butler.config import load_environment
+from butler.display import DisplayState
 from butler.scheduler import tasks
 from butler.sms import server as sms_server
 from butler.text import server as text_agent_server
 
 
-DISPLAY_MODE = "info_panel"
-DISPLAY_SCALE = 0.75
-
-
 def _start_agent_warmup() -> None:
-    """Warm the agent's first-turn caches without delaying the GUI."""
+    """Warm the agent's first-turn caches without delaying service startup."""
     from butler.agent.runtime import STARTUP_WARMUP_ENABLED, warm_agent_runtime
 
     if not STARTUP_WARMUP_ENABLED:
@@ -32,24 +28,30 @@ def _start_agent_warmup() -> None:
 def main() -> int:
     load_environment()
 
-    gui_queue = queue.Queue()
+    display_state = DisplayState()
     central_queue = queue.Queue()
 
     router_thread = threading.Thread(
         target=router.router_loop,
-        args=(central_queue, gui_queue),
+        args=(central_queue, display_state),
         daemon=True,
     )
     router_thread.start()
 
-    text_server = text_agent_server.start_text_agent_server(central_queue)
+    text_server = text_agent_server.start_text_agent_server(
+        central_queue,
+        display_state=display_state,
+    )
     sms = sms_server.start_sms_server(central_queue)
-    scheduler = tasks.start_scheduler(gui_queue, central_queue)
+    scheduler = tasks.start_scheduler(display_state, central_queue)
     _start_agent_warmup()
 
     try:
-        if DISPLAY_MODE == "info_panel":
-            info_panel_screen.run_info_panel_gui(gui_queue, DISPLAY_SCALE)
+        print("Main agent running headless. Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopping main agent.")
     finally:
         central_queue.put(None)
         router_thread.join(timeout=2)

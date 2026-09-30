@@ -96,7 +96,7 @@ You need:
 
 - Docker Desktop running.
 - Python 3.12 for `.venv-awareness`.
-- The main Butler environment, `.venv-main`, if you also want to talk to Butler.
+- The shared Butler runtime environment, `.venv-runtime`, if you also want to talk to Butler.
 - A repository `.env` file.
 - Access to the Raspberry Pi MQTT broker for live devices, or MQTT disabled for
   a safe API-only desk setup.
@@ -173,13 +173,13 @@ Terminal 1, awareness backend:
 Terminal 2, main Butler app:
 
 ```bash
-.venv-main/bin/python -m butler
+.venv-runtime/bin/python -m butler
 ```
 
 Terminal 3, optional local microphone worker:
 
 ```bash
-.venv-voice/bin/python -m butler.voice.worker
+.venv-runtime/bin/python -m butler.voice.worker
 ```
 
 The awareness backend is usable without the voice worker. The main app is
@@ -593,7 +593,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
 Main-agent integration:
 
 ```bash
-.venv-main/bin/python -m unittest \
+.venv-runtime/bin/python -m unittest \
   tests.test_text_server_notify \
   tests.test_awareness_client_and_provider \
   tests.test_home_automation_actions

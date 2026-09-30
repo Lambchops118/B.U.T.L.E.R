@@ -1294,3 +1294,36 @@ Funnel for the node, set the Twilio messaging webhook, and restart Butler.
 US A2P 10DLC (or toll-free verification) is required for outbound replies to
 deliver. Sender allowlist is the authorization boundary and SMS caller ID is
 spoofable. Inbound voice control is not built.
+
+## 2026-09-30 — Shared runtime and remote-ready InfoPanel boundary
+
+**Task:** Consolidate the main and voice Python versions/environments, and
+split the GUI from main so it can later run on another machine.
+
+**Implemented:** Replaced the main/voice requirement manifests with one Python
+3.12 `requirements-runtime-py312.txt` and mapped both launcher components to
+`.venv-runtime`. The explicit NumPy conflict is resolved at 2.3.4. Added a
+focused `requirements-display-py312.txt` / `.venv-display`. Main is now
+headless: it owns a thread-safe latest display projection and serves it through
+authenticated `GET /display/state`, including the authoritative sleep/dim
+state. `butler.display.worker` polls that endpoint and feeds the existing pygame
+renderer without importing the main runtime or reading its local state file.
+The launcher starts the display independently, supports `--no-display`, and
+pins local display traffic to loopback while allowing a separately configured
+remote agent URL. Bootstrap scripts and active documentation now use the new
+environment names.
+
+**Validation:** Six display-boundary/launcher tests, 20 text-server tests, 65
+barge-in tests, six microphone-profile launcher tests, and 15 MCP-selection
+tests passed. A composed Python 3.12 import using the installed main and voice
+site packages loaded NumPy 2.3.4, MCP, pygame/ModernGL, faster-whisper,
+openwakeword, PyAudio, SpeechRecognition, `butler.main`, `butler.voice.agent`,
+and the display client together. `git diff --check` passed. The first compileall
+attempt could not write existing `__pycache__` directories in this relocated
+checkout; imports and tests supplied syntax/import coverage instead.
+
+**Limitations / deployment:** No live Windows install, microphone/AEC session,
+or pygame display smoke test was run. Create `.venv-runtime` and `.venv-display`
+from the new manifests before deployment. A remote panel also requires a
+reachable `TEXT_AGENT_HOST`, an allowed panel network, and matching bearer
+token; the defaults remain loopback-safe. Awareness remains in its own venv.

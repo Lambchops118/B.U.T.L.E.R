@@ -30,7 +30,7 @@ manual messages. See "Human context" below.**
 #    Binds to 127.0.0.1:5433 (5432 is often taken by a host PostgreSQL).
 docker compose -f docker-compose.awareness.yml up -d --wait
 
-# 2. Python environment (separate venv, matching the main/voice split).
+# 2. Python environment (separate from the shared main/voice runtime).
 python3.12 -m venv .venv-awareness
 .venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
 
@@ -866,7 +866,7 @@ docker compose -f docker-compose.awareness.yml --profile test up -d --wait
   tests.test_awareness_presence_integration
 
 # Main-venv integration (text-server /notify, awareness client + MCP tools):
-.venv-main/bin/python -m unittest tests.test_text_server_notify \
+.venv-runtime/bin/python -m unittest tests.test_text_server_notify \
   tests.test_awareness_client_and_provider tests.test_home_automation_actions
 ```
 

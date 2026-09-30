@@ -487,6 +487,25 @@ for sources lacking the key and would have silently disabled offline detection
 fleet-wide; a regression test asserts a silent device still faults while the
 agent does not.
 
+## ADR-055 — Share one Python 3.12 runtime while keeping process boundaries
+
+Date: 2026-09-30. Status: accepted (owner request).
+
+The main agent and room-voice worker remain separate processes but use one
+Python 3.12 `.venv-runtime` and one dependency manifest. The InfoPanel is a
+third process with a focused `.venv-display` and consumes an authenticated,
+latest-value `GET /display/state` projection over the existing text-agent HTTP
+service. The main process is headless and authoritative for display content and
+sleep/dim state. This resolves the unsupported NumPy 1/2 environment split
+without coupling real-time audio, GPU selection, or display lifecycle to the
+agent event loop, and makes a future remote panel a host/configuration change.
+
+Rejected: merging main and voice into one process, because GPU visibility,
+audio failure containment, and independent restart remain useful; retaining an
+in-memory GUI queue, because it cannot cross a machine boundary; letting a
+remote display read the main host's sleep-state file, because that creates a
+shared-filesystem dependency and multiple sources of truth.
+
 ## New decision template
 
 ```text

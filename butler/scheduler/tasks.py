@@ -36,7 +36,7 @@ def degrees_to_compass(deg):
 # ==== SPECIFIC TIME BASED FUNCTIONS ==================================================================================
 
 #Define Time based jobs
-def debug_job(gui_queue, central_queue=None):
+def debug_job(display_sink, central_queue=None):
     print("DEBUG JOB ACTIVATED")
     
 def wake_display():
@@ -76,7 +76,7 @@ def dim_display():
         print(f"Could not enter sleep mode: {exc}")
         display_power.apply(asleep=True)
 
-def update_infopanel_information(gui_queue, central_queue=None):
+def update_infopanel_information(display_sink, central_queue=None):
     # fetch data here
     # This will NOT BLOCK infopanel GUI or voice commands because its in a separate thread
     mgr         = _weather_manager()
@@ -103,12 +103,12 @@ def update_infopanel_information(gui_queue, central_queue=None):
         uptime = "ERR"
     )
 
-def update_dynamo_information(gui_queue, central_queue=None):
+def update_dynamo_information(display_sink, central_queue=None):
     None
 
 
 # VOICE FUNCTIONS #####################################################################################################################################
-def morning_report_job(gui_queue, central_queue=None):
+def morning_report_job(display_sink, central_queue=None):
     mgr         = _weather_manager()
     observation = mgr.weather_at_place(city)
     weather     = observation.weather
@@ -151,7 +151,7 @@ def push_status(central_queue, **values):
     central_queue.put(Message(type="ui", payload=("STATUS", values)))
 
 
-def start_scheduler(gui_queue, central_queue=None):
+def start_scheduler(display_sink, central_queue=None):
     scheduler = BackgroundScheduler(
         timezone     = TZ,
         job_defaults = {
@@ -167,7 +167,7 @@ def start_scheduler(gui_queue, central_queue=None):
     #scheduler.add_job(
     #    debug_job,
     #    trigger  = CronTrigger(hour=13, minute=31),
-    #    args     = [gui_queue, central_queue],
+    #    args     = [display_sink, central_queue],
     #    id       = "debug_task",
     #    replace_existing = True,
     #)
@@ -191,7 +191,7 @@ def start_scheduler(gui_queue, central_queue=None):
     scheduler.add_job(
         update_infopanel_information,
         trigger  = CronTrigger(minute="*/1"), # Every 1 Minute
-        args     = [gui_queue, central_queue],
+        args     = [display_sink, central_queue],
         id       = "update_infopane_information",
         replace_existing = True,
     )
@@ -204,7 +204,7 @@ def start_scheduler(gui_queue, central_queue=None):
     #scheduler.add_job(
     #    morning_report_job,
     #    trigger  = CronTrigger(hour=7, minute=30),
-    #    args     = [gui_queue, central_queue],
+    #    args     = [display_sink, central_queue],
     #    id       = "morning_report_job",
     #    replace_existing = True,
     #)

@@ -9,7 +9,7 @@ This repo implements the Butler locally-run voice/text agent plus a pygame displ
 - Archive and experiments: `archive/` and `experiments/` are not part of the main runtime.
 
 2. Runtime Flow
-- `.venv-main/bin/python -m butler` starts the main process in `butler/main.py`.
+- `.venv-runtime/bin/python -m butler` starts the main process in `butler/main.py`.
 - `butler/router.py` consumes central messages and calls `butler.agent.runtime.run_command(...)` for foreground agent work.
 - `butler/text/server.py` exposes the local HTTP chat API.
 - `butler/voice/worker.py` starts the microphone/wake-word/STT/TTS voice process.
@@ -17,10 +17,11 @@ This repo implements the Butler locally-run voice/text agent plus a pygame displ
 
 3. Common Commands
 ```bash
-.venv-main/bin/python -m butler
-.venv-voice/bin/python -m butler.voice.worker
-.venv-main/bin/python -m butler.text.client --health
-.venv-main/bin/python -m unittest tests/test_agent_runtime_recovery.py tests/test_local_mcp_client_resources.py
+.venv-runtime/bin/python -m butler
+.venv-runtime/bin/python -m butler.voice.worker
+.venv-display/bin/python -m butler.display.worker
+.venv-runtime/bin/python -m butler.text.client --health
+.venv-runtime/bin/python -m unittest tests/test_agent_runtime_recovery.py tests/test_local_mcp_client_resources.py
 ```
 
 4. Where To Change Things
@@ -38,7 +39,7 @@ This repo implements the Butler locally-run voice/text agent plus a pygame displ
 5. Gotchas
 - Pygame belongs on the main thread.
 - Audio dependencies can fail on headless machines.
-- The main process is intended to run from Python 3.10+ so MCP can operate normally.
-- The voice worker is intended to run from Python 3.12 and is the only path that imports Whisper/openwakeword.
+- The main and voice processes share the Python 3.12 `.venv-runtime`; only the voice process imports Whisper/openwakeword.
+- The InfoPanel is a separate HTTP client process with its own `.venv-display` so it can move to another host.
 - Do not put new agent/runtime files under `InfoPanel`; that directory is only the GUI/display artifact now.
 - Keep hardware/MQTT changes isolated in `butler/services/` or `Peripherals/`.

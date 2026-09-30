@@ -57,35 +57,35 @@ This repository does not currently produce packaged installers or binary artifac
 
 Recommended prerequisites for the split-process setup:
 
-- Python 3.10+ for the main Butler agent/display process
-- Python 3.12 for the separate voice worker process
+- Python 3.12 for the main agent and voice worker runtime
+- Python 3.12 on the InfoPanel host when the display is enabled
 - PortAudio development/runtime libraries for `PyAudio`
 - A reachable MQTT broker
 - A local Ollama installation with the configured chat model
 - API credentials only for optional hosted integrations you choose to enable
 
-Setup the main agent environment:
+Setup the shared main-agent/voice runtime environment:
 
 ```bash
-python3.10 -m venv .venv-main
-source .venv-main/bin/activate
+python3.12 -m venv .venv-runtime
+source .venv-runtime/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-main-py310.txt
+python -m pip install -r requirements-runtime-py312.txt
 ```
 
-Setup the voice worker environment:
+Setup the independently deployable display environment:
 
 ```bash
-python3.12 -m venv .venv-voice
-source .venv-voice/bin/activate
+python3.12 -m venv .venv-display
+source .venv-display/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-voice-py312.txt
+python -m pip install -r requirements-display-py312.txt
 ```
 
 On Windows PowerShell, activate the environment with:
 
 ```powershell
-.venv-main\Scripts\Activate.ps1
+.venv-runtime\Scripts\Activate.ps1
 ```
 
 Configuration is split into two files:
@@ -155,21 +155,27 @@ Optional text-agent settings:
 - `TEXT_AGENT_API_TOKEN`
 - `TEXT_AGENT_TIMEOUT`
 - `TEXT_AGENT_ALLOWED_NETWORKS`
+- `BUTLER_DISPLAY_AGENT_URL`
+- `BUTLER_DISPLAY_POLL_SECONDS`
+- `BUTLER_DISPLAY_AGENT_TOKEN` (secret; falls back to the text-agent token)
 
 Run the host app:
 
 ```bash
-.venv-main/bin/python -m butler
+.venv-runtime/bin/python -m butler
 ```
 
-Voice benchmark summaries print directly to the main app terminal. Each app run also creates a new timestamped CSV in `logs/`, for example `voice_benchmarks_20260511_124500_123456.csv`.
+Voice benchmark summaries print in the voice-worker output. Each worker run also
+creates a timestamped CSV in `logs/`, for example
+`voice_benchmarks_20260511_124500_123456.csv`.
 
 ### One-Command Startup
 
-Butler normally runs as several processes across separate virtual environments
-(main agent, voice worker, awareness backend) plus a Postgres container and a
-local Ollama server. The launcher starts and supervises all of them from one
-place, and pins each GPU-bound process to the right card:
+Butler normally runs as several processes: main and voice share one runtime
+environment, while display and awareness use focused environments. The stack
+also uses a Postgres container and a local Ollama server. The launcher starts
+and supervises all of them from one place, and pins each GPU-bound process to
+the right card:
 
 - the language model (Ollama) runs on the **RTX 5080** and may use all of it
 - speech-to-text (faster-whisper, in the voice worker) runs on the **RTX 2060**
@@ -273,10 +279,11 @@ last-saved configuration:
 ```
 
 `--no-gui` also accepts `--no-ollama`, `--no-awareness`, `--no-main`,
-`--no-voice`, `--microphone {respeaker,yeti}`, and `--api-models` to adjust a
-single run. The launcher brings up
+`--no-voice`, `--no-display`, `--microphone {respeaker,yeti}`, and `--api-models`
+to adjust a single run. The launcher brings up
 the awareness Postgres container, runs migrations, waits for each service's port,
-then starts the main agent and voice worker; Ctrl+C stops them all. It skips
+then starts the main agent, display client, and voice worker; Ctrl+C stops them
+all. It skips
 Ollama if a server is already listening on `127.0.0.1:11434` (in which case that
 server keeps whatever GPU it was started with — quit a tray Ollama first if you
 want the launcher to pin it to the 5080).
@@ -284,8 +291,8 @@ want the launcher to pin it to the 5080).
 The launcher can also be invoked directly with any project interpreter:
 
 ```bash
-.venv-main/Scripts/python.exe -m butler.launcher            # GUI
-.venv-main/Scripts/python.exe -m butler.launcher --no-gui   # headless
+.venv-runtime/Scripts/python.exe -m butler.launcher            # GUI
+.venv-runtime/Scripts/python.exe -m butler.launcher --no-gui   # headless
 ```
 
 ### Local Debug Dashboard
@@ -298,7 +305,7 @@ privacy-safe pipeline telemetry without joining the agent or audio hot paths.
 Start it with the main Python environment:
 
 ```powershell
-.venv-main\Scripts\python.exe -m butler.debug_dashboard
+.venv-runtime\Scripts\python.exe -m butler.debug_dashboard
 ```
 
 Then open `http://127.0.0.1:8787`. The page polls once per second by default,
@@ -446,7 +453,7 @@ BUTLER_FILESYSTEM_ALLOW_WRITES=0
 - Verify the setup with:
 
 ```bash
-.venv-main/bin/python tools/verify_filesystem_mcp_setup.py
+.venv-runtime/bin/python tools/verify_filesystem_mcp_setup.py
 ```
 
 - More detailed setup notes live in [docs/filesystem-mcp.md](/Users/jacksal1/Desktop/Talos/Butler/docs/filesystem-mcp.md).
@@ -474,7 +481,7 @@ MINECRAFT_MCP_ALLOW_WRITES=0
 - Verify the setup with:
 
 ```bash
-.venv-main/bin/python tools/verify_minecraft_mcp_setup.py
+.venv-runtime/bin/python tools/verify_minecraft_mcp_setup.py
 ```
 
 - Example prompt:
@@ -542,29 +549,36 @@ Useful memory settings:
 - `BUTLER_CONVERSATION_HISTORY_MESSAGE_LIMIT=8` bounds streamed recent-message count.
 - `BUTLER_CONVERSATION_HISTORY_CHAR_LIMIT=4000` bounds streamed recent-message text.
 
-### Split Agent And Voice Worker
+### Split Runtime Processes
 
-Butler can now run as two separate processes:
+Butler runs the agent, voice path, and display as separate processes:
 
-- main agent process: router, scheduler, text server, GUI, MCP/runtime
+- main agent process: router, scheduler, text server, display-state projection, MCP/runtime
 - voice worker process: microphone, wake word, Whisper, Polly playback
+- display process: pygame InfoPanel client consuming authenticated HTTP state
 
 Start the main agent:
 
 ```bash
-.venv-main/bin/python -m butler
+.venv-runtime/bin/python -m butler
 ```
 
 or equivalently:
 
 ```bash
-.venv-main/bin/python -m butler.agent_main
+.venv-runtime/bin/python -m butler.agent_main
 ```
 
 Start the voice worker separately:
 
 ```bash
-.venv-voice/bin/python -m butler.voice.worker
+.venv-runtime/bin/python -m butler.voice.worker
+```
+
+Start the InfoPanel locally or on a different machine:
+
+```bash
+.venv-display/bin/python -m butler.display.worker
 ```
 
 Start the awareness backend separately (requires its database; see
@@ -576,7 +590,13 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 .venv-awareness/bin/python -m butler.awareness serve
 ```
 
-The voice worker sends recognized commands to the main agent over the text-agent HTTP API using `BUTLER_TEXT_AGENT_URL` and `BUTLER_TEXT_AGENT_TOKEN`.
+The voice worker sends recognized commands to the main agent over the text-agent
+HTTP API using `BUTLER_TEXT_AGENT_URL` and `BUTLER_TEXT_AGENT_TOKEN`. The display
+polls `GET /display/state` using `BUTLER_DISPLAY_AGENT_URL` and
+`BUTLER_DISPLAY_AGENT_TOKEN` (falling back to the text-agent token). Configure a
+token before exposing the endpoint beyond loopback. For a remote panel, bind the
+text server to a reachable trusted interface and include the panel address in
+`TEXT_AGENT_ALLOWED_NETWORKS`.
 
 ### Room Microphone Profiles
 
@@ -715,7 +735,7 @@ BUTLER_PHONE_PUSH_TOKEN=shared-push-token
 Run the public bridge with:
 
 ```bash
-.venv-main/bin/python -m uvicorn butler.phone_bridge.app:app --host 0.0.0.0 --port 8787
+.venv-runtime/bin/python -m uvicorn butler.phone_bridge.app:app --host 0.0.0.0 --port 8787
 ```
 
 Then configure the ElevenLabs post-call webhook URL to target:

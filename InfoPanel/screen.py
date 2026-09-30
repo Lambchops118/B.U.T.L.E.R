@@ -15,8 +15,6 @@ from . import screen_effects as fx
 from . import windows
 from .screen_effects import GpuCRT
 
-from butler.services import sleep_mode
-
 font_path = str(Path(__file__).resolve().parent / "VT323-Regular.ttf")
 
 # =============== PYGAME INFO PANEL ===============
@@ -139,6 +137,7 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
     # so we can display them in the GUI.
     last_command  = "\"butler, water the monstera\""
     last_response = "of course, sir. i have activated the pump for the pot with the monstera."
+    remote_sleep_state = {"asleep": False, "display_level": 1.0}
 
 
     #========================================================================================
@@ -294,6 +293,20 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
                     # msg structure: ("STATUS", {"key": value, ...})
                     if isinstance(msg[1], dict):
                         widget_statuses.update(msg[1])
+                elif msg[0] == "DISPLAY_STATE" and isinstance(msg[1], dict):
+                    snapshot = msg[1]
+                    if not snapshot.get("connected", True):
+                        last_command = "Display disconnected from Butler"
+                        last_response = str(snapshot.get("error", "Connection unavailable"))
+                        continue
+                    last_command = str(snapshot.get("last_command", last_command))
+                    last_response = str(snapshot.get("last_response", last_response))
+                    statuses = snapshot.get("statuses")
+                    if isinstance(statuses, dict):
+                        widget_statuses.update(statuses)
+                    sleep = snapshot.get("sleep")
+                    if isinstance(sleep, dict):
+                        remote_sleep_state = sleep
 
         # --- RENDER THE FRAME --- 
         framebuffer.fill((0, 1, 0)) 
@@ -376,9 +389,8 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         # crush the mid-tones on the way in. The plain-pygame fallback has no
         # such pass, so a single BLEND_MULT fill is both correct and cheaper
         # than a re-render there.
-        sleep_state = sleep_mode.state()
-        asleep = bool(sleep_state["asleep"])
-        display_level = float(sleep_state["display_level"])
+        asleep = bool(remote_sleep_state.get("asleep", False))
+        display_level = float(remote_sleep_state.get("display_level", 1.0))
 
         if crt is not None:
             crt.set_dim(display_level)
@@ -398,4 +410,4 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
         mob_angle += 0.01
 
     pygame.quit()
-    sys.exit()
+    return

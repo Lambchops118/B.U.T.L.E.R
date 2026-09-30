@@ -1,0 +1,7 @@
+# Independently deployable InfoPanel client.
+# It talks to the main agent over HTTP and owns no agent or audio dependencies.
+
+moderngl==5.12.0
+numpy==2.3.4
+pygame==2.6.1
+python-dotenv==1.2.1

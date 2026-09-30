@@ -12,9 +12,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
-# The launcher needs tkinter + dotenv, both present in the main-agent venv.
+# The launcher runs from the shared main/voice runtime environment.
 $Candidates = @(
-    (Join-Path $ScriptDir ".venv-main\Scripts\python.exe"),
+    (Join-Path $ScriptDir ".venv-runtime\Scripts\python.exe"),
     (Join-Path $ScriptDir ".venv\Scripts\python.exe")
 )
 
@@ -26,7 +26,7 @@ if (-not $Python) {
     $Python = (Get-Command python -ErrorAction SilentlyContinue).Source
 }
 if (-not $Python) {
-    Write-Error "No Python interpreter found (.venv-main missing and 'python' not on PATH)."
+    Write-Error "No Python interpreter found (.venv-runtime missing and 'python' not on PATH)."
     exit 1
 }
 

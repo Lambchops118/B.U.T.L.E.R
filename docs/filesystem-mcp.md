@@ -59,7 +59,7 @@ Once configured, Butler can use the combined filesystem MCP toolset for:
 Run:
 
 ```bash
-.venv-main/bin/python tools/verify_filesystem_mcp_setup.py
+.venv-runtime/bin/python tools/verify_filesystem_mcp_setup.py
 ```
 
 The smoke check verifies:
