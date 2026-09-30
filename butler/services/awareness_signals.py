@@ -82,7 +82,10 @@ def signals_enabled() -> bool:
 def stats() -> dict[str, int]:
     """Truthful counters, including signals dropped rather than sent."""
     with _stats_lock:
-        return dict(_stats)
+        result = dict(_stats)
+    result["queue_depth"] = _queue.qsize() if _queue is not None else 0
+    result["queue_capacity"] = MAX_QUEUE_DEPTH
+    return result
 
 
 def _bump(key: str) -> None:

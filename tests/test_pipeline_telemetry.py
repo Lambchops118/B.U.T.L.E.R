@@ -34,6 +34,11 @@ class PipelineTelemetryTests(unittest.TestCase):
 
             payload = json.loads(log_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["request_id"], "req-1")
+            self.assertEqual(payload["trace_id"], "req-1")
+            self.assertEqual(payload["schema_version"], 2)
+            self.assertTrue(payload["boot_id"])
+            self.assertTrue(payload["config_fingerprint"])
+            self.assertIn("runtime_version", payload)
             self.assertEqual(payload["component"], "test")
             self.assertEqual(payload["duration_ms"], 12.5)
             self.assertEqual(payload["dimensions"], {"backend": "ollama"})

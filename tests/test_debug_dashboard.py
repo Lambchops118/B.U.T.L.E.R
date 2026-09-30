@@ -20,7 +20,10 @@ from butler.debug_dashboard.server import (
     DebugHTTPServer,
     _normalize_remote_host,
     build_audio_snapshot,
+    build_request_traces,
+    build_tool_reliability,
     read_conversation_messages,
+    read_jobs,
     read_pipeline_events,
     read_voice_benchmarks,
 )
@@ -149,9 +152,11 @@ class DebugDashboardDataTests(unittest.TestCase):
             with mock.patch.object(service, "_service_health", return_value=[]):
                 snapshot = service.snapshot(event_limit=5, interaction_limit=5)
 
-        self.assertEqual(snapshot["schema_version"], 1)
+        self.assertEqual(snapshot["schema_version"], 2)
         self.assertEqual(snapshot["interaction_io"]["prompt_capture"]["status"], "not_available")
         self.assertEqual(snapshot["extensions"], [])
+        self.assertIn("request_traces", snapshot["operations"])
+        self.assertEqual(len(snapshot["system_health"]["history"]), 1)
 
     def test_console_does_not_sample_its_own_host_without_explicit_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -215,7 +220,49 @@ class DebugDashboardDataTests(unittest.TestCase):
 
         self.assertIn("Butler DEBUG CONSOLE", page)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["snapshot"]["schema_version"], 1)
+        self.assertEqual(payload["snapshot"]["schema_version"], 2)
+
+    def test_builds_correlated_traces_and_tool_reliability(self) -> None:
+        events = [
+            {"timestamp": "2026-08-10T00:00:00Z", "request_id": "req-1", "component": "agent", "event": "prompt_ready", "prompt_assembly_ms": 10},
+            {"timestamp": "2026-08-10T00:00:01Z", "request_id": "req-1", "component": "agent", "event": "tool_call_completed", "tool_name": "water", "transport": "mcp", "tool_ms": 40, "failed": False},
+            {"timestamp": "2026-08-10T00:00:02Z", "request_id": "req-2", "component": "agent", "event": "tool_call_completed", "tool_name": "water", "transport": "mcp", "tool_ms": 80, "failed": True},
+        ]
+
+        traces = build_request_traces(events)
+        tools = build_tool_reliability(events)
+
+        self.assertEqual(len(traces), 2)
+        self.assertEqual(next(row for row in traces if row["trace_id"] == "req-2")["outcome"], "failed")
+        self.assertEqual(tools[0]["tool_name"], "water")
+        self.assertEqual(tools[0]["failures"], 1)
+        self.assertEqual(tools[0]["success_rate_percent"], 50.0)
+
+    def test_reads_jobs_without_exposing_request_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.sqlite3"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                """
+                CREATE TABLE jobs (
+                    job_id TEXT, session_id TEXT, source TEXT, request_text TEXT,
+                    status TEXT, created_at TEXT, updated_at TEXT, started_at TEXT,
+                    finished_at TEXT, requires_user_input INTEGER, error_message TEXT,
+                    resource_locks_json TEXT
+                );
+                INSERT INTO jobs VALUES ('job-1', 'voice', 'voice', 'private request',
+                    'failed', '2026-08-10T00:00:00Z', '2026-08-10T00:00:01Z', NULL,
+                    '2026-08-10T00:00:01Z', 0, 'private failure detail', '["speaker"]');
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            result = read_jobs(db_path, limit=10)
+
+        self.assertEqual(result["jobs"][0]["status"], "failed")
+        self.assertNotIn("request_text", result["jobs"][0])
+        self.assertNotIn("error_message", result["jobs"][0])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -53,6 +54,20 @@ def _base_env() -> dict[str, str]:
     env = os.environ.copy()
     env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     env["PYTHONUNBUFFERED"] = "1"
+    if not env.get("BUTLER_BUILD_SHA"):
+        try:
+            revision = subprocess.run(
+                ["git", "rev-parse", "--short=12", "HEAD"],
+                cwd=str(REPO_ROOT),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            ).stdout.strip()
+            if revision:
+                env["BUTLER_BUILD_SHA"] = revision[:100]
+        except (OSError, subprocess.SubprocessError):
+            pass
     return env
 
 
@@ -206,6 +221,9 @@ class Supervisor:
         cwd: Optional[Path] = None,
     ) -> ManagedProcess:
         self._say(f"starting {name}: {' '.join(str(a) for a in args)}")
+        env = dict(env)
+        env["BUTLER_PROCESS_NAME"] = name
+        env.setdefault("BUTLER_BOOT_ID", uuid.uuid4().hex[:16])
         creationflags = 0
         if os.name == "nt":
             # New process group so we can send CTRL_BREAK to the group without

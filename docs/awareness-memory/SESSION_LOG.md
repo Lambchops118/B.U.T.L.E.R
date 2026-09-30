@@ -1327,3 +1327,39 @@ or pygame display smoke test was run. Create `.venv-runtime` and `.venv-display`
 from the new manifests before deployment. A remote panel also requires a
 reachable `TEXT_AGENT_HOST`, an allowed panel network, and matching bearer
 token; the defaults remain loopback-safe. Awareness remains in its own venv.
+
+## 2026-09-30 — Correlated observability and operations visualization
+
+**Task:** Implement the repo-wide visualization recommendations for bug
+reduction, latency optimization, and operational analysis.
+
+**Implemented:** Upgraded privacy-safe pipeline telemetry to schema v2 with a
+trace ID plus host, process, PID, process boot ID, runtime version, build SHA,
+and non-secret configuration fingerprint. Launcher-managed children receive
+stable process/boot identities. The debug dashboard now builds correlated
+request traces with timed-stage bars and p50/p95/max latency, aggregates
+per-tool success/failure and latency, reads sanitized durable job state, and
+pulls awareness worker/queue metrics plus physical-action lifecycle timestamps.
+Host resource history is retained by the dashboard process across browser
+reloads. Main health now exposes central queue depth, bounded awareness-signal
+queue/counters, side-effect-free MCP lifecycle state, and remote display
+clients. The display client reports the last snapshot sequence consumed through
+an authenticated heartbeat. No prompt text, tool arguments, job request text,
+raw PCM, credentials, or continuous idle-room audio were added to telemetry.
+
+**Validation:** Pipeline telemetry (1), debug dashboard (10), display boundary
+(8), text server (3), launcher (18), MCP disable/selection (15), awareness signals
+(7), awareness action unit tests (20), barge-in observability (6), and barge-in
+agent integration (16) passed: 104 focused tests total. JavaScript syntax validation and
+`git diff --check` passed. The MCP lifecycle module could not be collected by
+the repository's current unittest-discovery invocation because it imports
+`tests.test_local_mcp_client_resources` while `tests/` is not a package; the
+separate MCP selection suite passed. No live model, voice session, MQTT action,
+remote display, or production awareness database was used.
+
+**Deployment / limitations:** Restart the main, voice, display, awareness, and
+dashboard processes to populate the new feeds. The launcher derives build SHA
+from Git; non-launcher deployments can supply `BUTLER_BUILD_SHA`. Dashboard host history is
+process-retained, not a new durable metrics database. Barge-in accuracy still
+requires the existing opt-in fixture/ground-truth workflow; runtime counters
+alone cannot infer false negatives.

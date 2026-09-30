@@ -48,6 +48,13 @@ class DisplayStateTests(unittest.TestCase):
         snapshot["statuses"]["nested"]["value"] = 2
         self.assertEqual(state.snapshot()["statuses"]["nested"]["value"], 1)
 
+    def test_client_heartbeat_is_bounded_and_visible(self) -> None:
+        state = DisplayState()
+        state.record_client_heartbeat("panel-1", sequence=7)
+        client = state.snapshot()["clients"]["panel-1"]
+        self.assertEqual(client["sequence"], 7)
+        self.assertEqual(client["status"], "rendered")
+
 
 class DisplayEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -86,6 +93,20 @@ class DisplayEndpointTests(unittest.TestCase):
         self.assertTrue(payload["connected"])
         self.assertEqual(payload["last_command"], "hello")
         self.assertEqual(payload["sleep"], {"asleep": True, "display_level": 0.05})
+
+    def test_display_heartbeat_requires_auth_and_records_sequence(self) -> None:
+        request = urllib.request.Request(
+            self.url.replace("/display/state", "/display/heartbeat"),
+            data=json.dumps({"client_id": "panel-1", "sequence": 9}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer display-secret",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.state.snapshot()["clients"]["panel-1"]["sequence"], 9)
 
 
 class RemoteDisplayQueueTests(unittest.TestCase):

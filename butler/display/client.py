@@ -4,9 +4,10 @@ import os
 import queue
 import threading
 import time
+import uuid
 from typing import Any
 
-from butler.text.service_client import get_json
+from butler.text.service_client import get_json, request_json
 
 
 class RemoteDisplayQueue:
@@ -37,6 +38,8 @@ class RemoteDisplayQueue:
         self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=1)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.client_id = os.getenv("BUTLER_DISPLAY_CLIENT_ID", uuid.uuid4().hex[:12])[:100]
+        self._consumed_sequence: int | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -55,7 +58,27 @@ class RemoteDisplayQueue:
         self._thread = None
 
     def get_nowait(self) -> tuple[str, dict[str, Any]]:
-        return self._queue.get_nowait()
+        item = self._queue.get_nowait()
+        snapshot = item[1]
+        sequence = snapshot.get("sequence") if isinstance(snapshot, dict) else None
+        if isinstance(sequence, int):
+            self._consumed_sequence = sequence
+        return item
+
+    def _send_heartbeat(self) -> None:
+        if self._consumed_sequence is None:
+            return
+        request_json(
+            self.base_url,
+            "/display/heartbeat",
+            {
+                "client_id": self.client_id,
+                "sequence": self._consumed_sequence,
+                "status": "rendered",
+            },
+            token=self.token,
+            timeout=max(2.0, self.poll_seconds * 2),
+        )
 
     def _publish(self, snapshot: dict[str, Any]) -> None:
         item = ("DISPLAY_STATE", snapshot)
@@ -71,6 +94,12 @@ class RemoteDisplayQueue:
     def _poll(self) -> None:
         while not self._stop.is_set():
             try:
+                try:
+                    self._send_heartbeat()
+                except Exception:
+                    # A stale/older main process may not expose acknowledgements
+                    # yet. State delivery must remain backward compatible.
+                    pass
                 snapshot = get_json(
                     self.base_url,
                     "/display/state",

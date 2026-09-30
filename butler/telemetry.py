@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import platform
+import socket
+import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +33,31 @@ _LOG_DIR = Path(
 _RUN_ID = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 _LOG_PATH = _LOG_DIR / f"pipeline_telemetry_{_RUN_ID}_{os.getpid()}.jsonl"
 _LOCK = threading.Lock()
+_BOOT_ID = os.getenv("BUTLER_BOOT_ID", uuid.uuid4().hex[:16])
+_HOST_ID = os.getenv("BUTLER_HOST_ID", socket.gethostname())[:100]
+_PROCESS_NAME = os.getenv("BUTLER_PROCESS_NAME", Path(sys.argv[0]).stem or "python")[:100]
+_BUILD_SHA = os.getenv("BUTLER_BUILD_SHA", "unknown")[:100]
+_RUNTIME_VERSION = f"python-{platform.python_version()}"
+
+# Only operational, non-secret settings participate.  The digest is enough to
+# correlate a regression with configuration drift without copying addresses,
+# credentials, prompts, or user content into every telemetry event.
+_CONFIG_FINGERPRINT_KEYS = (
+    "BUTLER_LLM_BACKEND",
+    "BUTLER_LLM_MODEL",
+    "BUTLER_STT_BACKEND",
+    "BUTLER_STT_MODEL",
+    "BUTLER_MICROPHONE_PROFILE",
+    "BUTLER_BARGE_IN_BACKEND",
+    "BUTLER_BARGE_IN_ENABLED",
+    "BUTLER_ASR_QUEUE_CAPACITY",
+)
+
+
+def _config_fingerprint() -> str:
+    selected = {key: os.getenv(key, "") for key in _CONFIG_FINGERPRINT_KEYS}
+    encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def telemetry_log_path() -> Path:
@@ -52,10 +82,21 @@ def emit_pipeline_event(
         return
 
     payload = {
+        "schema_version": 2,
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "trace_id": str(fields.pop("trace_id", request_id) or request_id or "unknown")[:100],
         "request_id": str(request_id or "unknown")[:100],
         "component": str(component or "unknown")[:100],
         "event": str(event or "unknown")[:100],
+        "host_id": _HOST_ID,
+        "process": _PROCESS_NAME,
+        "pid": os.getpid(),
+        "boot_id": _BOOT_ID,
+        "build_sha": _BUILD_SHA,
+        "runtime_version": _RUNTIME_VERSION,
+        # Settings files are loaded after imports in some entry points, so this
+        # must be evaluated at emission time rather than module import time.
+        "config_fingerprint": _config_fingerprint(),
         **_safe_fields(fields),
     }
     try:

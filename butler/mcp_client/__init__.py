@@ -1,5 +1,5 @@
 from .client import LocalMcpClient, McpProtocolError, McpServerConfig, McpServerStatus
-from .client import get_local_mcp_client, shutdown_local_mcp_client
+from .client import get_local_mcp_client, peek_local_mcp_status, shutdown_local_mcp_client
 
 __all__ = [
     "LocalMcpClient",
@@ -7,5 +7,6 @@ __all__ = [
     "McpServerConfig",
     "McpServerStatus",
     "get_local_mcp_client",
+    "peek_local_mcp_status",
     "shutdown_local_mcp_client",
 ]

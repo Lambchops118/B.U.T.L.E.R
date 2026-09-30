@@ -116,6 +116,10 @@ async def list_actions(
             ActionRequest.status,
             ActionRequest.actor,
             ActionRequest.created_at,
+            ActionRequest.dispatched_at,
+            ActionRequest.acknowledged_at,
+            ActionRequest.completed_at,
+            ActionRequest.timeout_at,
             ActionRequest.error,
         )
         .order_by(ActionRequest.created_at.desc())
@@ -135,6 +139,10 @@ async def list_actions(
                 "status": row.status,
                 "actor": row.actor,
                 "created_at": row.created_at.isoformat(),
+                "dispatched_at": row.dispatched_at.isoformat() if row.dispatched_at else None,
+                "acknowledged_at": row.acknowledged_at.isoformat() if row.acknowledged_at else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "timeout_at": row.timeout_at.isoformat() if row.timeout_at else None,
                 "error": row.error,
             }
             for row in rows

@@ -153,7 +153,7 @@ pre { margin: 5px 0 0; max-width: 900px; white-space: pre-wrap; overflow-wrap: a
 .chart-meta { padding: 2px 5px; color: #555; font: 10px var(--mono); }
 
 .badge { display: inline-block; min-width: 82px; padding: 1px 4px; border: 1px solid #000; text-align: center; font-weight: bold; }
-.badge.healthy, .badge.available { background: #b8f5b8; }
+.badge.healthy, .badge.available, .badge.completed, .badge.succeeded, .badge.acknowledged { background: #b8f5b8; }
 .badge.degraded { background: #fff2a8; }
 .badge.unavailable, .badge.not_available, .badge.failed { background: #ffc0c0; }
 .empty { padding: 12px; color: #555; font: italic 11px var(--mono); }
@@ -161,6 +161,11 @@ pre { margin: 5px 0 0; max-width: 900px; white-space: pre-wrap; overflow-wrap: a
 .metric-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; font: 11px var(--mono); }
 .metric-list dt { font-weight: bold; }
 .metric-list dd { margin: 0; overflow-wrap: anywhere; }
+.waterfall { min-width: 300px; }
+.waterfall-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(80px, 2fr); align-items: center; gap: 6px; margin: 2px 0; }
+.waterfall-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.waterfall-track { display: block; height: 8px; background: #d0d0d0; }
+.waterfall-bar { display: block; height: 100%; background: var(--navy); }
 
 footer {
   display: flex;

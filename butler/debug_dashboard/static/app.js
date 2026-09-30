@@ -128,6 +128,22 @@ function eventDuration(event) {
   return "--";
 }
 
+function durationCell(stages) {
+  const td = document.createElement("td");
+  td.className = "waterfall";
+  const timed = (stages || []).filter((stage) => Number.isFinite(Number(stage.duration_ms)));
+  const max = Math.max(1, ...timed.map((stage) => Number(stage.duration_ms)));
+  if (!timed.length) { td.textContent = "no timed stages"; return td; }
+  timed.forEach((stage) => {
+    const row = document.createElement("div"); row.className = "waterfall-row";
+    const label = document.createElement("span"); label.textContent = `${text(stage.event)} ${number(stage.duration_ms)} ms`;
+    const track = document.createElement("span"); track.className = "waterfall-track";
+    const bar = document.createElement("span"); bar.className = "waterfall-bar"; bar.style.width = `${Math.max(2, Number(stage.duration_ms) / max * 100)}%`;
+    track.appendChild(bar); row.append(label, track); td.appendChild(row);
+  });
+  return td;
+}
+
 function renderInteractions(snapshot) {
   const io = snapshot.interaction_io;
   const benchmarks = io.voice_benchmarks;
@@ -220,9 +236,16 @@ function renderHealth(snapshot) {
   const memory = host.memory || {};
   const disk = host.disk || {};
   const gpu = host.gpu || {};
-  appendHistory("cpu", cpu.utilization_percent);
-  appendHistory("memory", memory.used_percent);
-  appendHistory("disk", disk.used_percent);
+  const serverHistory = health.history || [];
+  if (serverHistory.length) {
+    state.hostHistory.cpu = serverHistory.filter((point) => Number.isFinite(Number(point.cpu_percent))).map((point) => ({ timestamp: point.timestamp, value: Number(point.cpu_percent) }));
+    state.hostHistory.memory = serverHistory.filter((point) => Number.isFinite(Number(point.memory_percent))).map((point) => ({ timestamp: point.timestamp, value: Number(point.memory_percent) }));
+    state.hostHistory.disk = serverHistory.filter((point) => Number.isFinite(Number(point.disk_percent))).map((point) => ({ timestamp: point.timestamp, value: Number(point.disk_percent) }));
+  } else {
+    appendHistory("cpu", cpu.utilization_percent);
+    appendHistory("memory", memory.used_percent);
+    appendHistory("disk", disk.used_percent);
+  }
   const gpus = gpu.gpus || [];
   gpus.forEach((gpu) => {
     const key = String(gpu.index);
@@ -250,6 +273,58 @@ function renderHealth(snapshot) {
     { name: "DISK USED", unit: "%", values: state.hostHistory.disk },
     ...gpus.map((gpu) => ({ name: `GPU ${gpu.index} UTILIZATION`, unit: "%", values: state.gpuHistory[String(gpu.index)] || [] })),
   ]);
+}
+
+function renderOperations(snapshot) {
+  const operations = snapshot.operations || {};
+  const traces = operations.request_traces || [];
+  const jobs = operations.jobs || { status: "not_available", jobs: [] };
+  const actionFeed = operations.actions || { status: "unavailable", data: {} };
+  const awareness = operations.awareness_metrics || { status: "unavailable", data: {} };
+  const main = operations.main_runtime || { status: "unavailable", data: {} };
+  const failures = traces.filter((trace) => trace.outcome !== "completed").length;
+  const latency = operations.latency_summary || {};
+  const summary = byId("operations-summary");
+  summary.textContent = `${traces.length} trace(s), ${failures} failed/interrupted | latency p50 ${number(latency.p50_ms)} ms / p95 ${number(latency.p95_ms)} ms | jobs: ${jobs.status} | awareness: ${awareness.status} | actions: ${actionFeed.status}`;
+  summary.className = `status-strip ${failures || awareness.status !== "available" ? "degraded" : ""}`;
+
+  const traceRows = traces.filter((trace) => matchesFilter(trace.trace_id, trace.outcome, trace.components, trace.stages)).map((trace, index) => [
+    cell(shortTime(trace.started_at), "nowrap"), cell(trace.trace_id, "nowrap"), cell(trace.session_id, "nowrap"), badge(trace.outcome), cell(`${number(trace.elapsed_ms)} ms`, "nowrap"),
+    cell(trace.components.join(" → "), "wrap"), durationCell(trace.stages),
+    detailsCell("stages", trace.stages, eventKey("trace", trace, index)),
+  ]);
+  renderTable(byId("trace-table"), ["START", "TRACE", "SESSION", "OUTCOME", "ELAPSED", "COMPONENTS", "TIMED STAGES", "DETAIL"], traceRows, "No correlated pipeline events available.");
+
+  const toolRows = (operations.tool_reliability || []).map((tool) => [
+    cell(tool.tool_name), cell(tool.transport), cell(tool.calls), cell(tool.failures),
+    cell(`${number(tool.success_rate_percent)}%`), cell(`${number(tool.average_ms)} ms`), cell(`${number(tool.p95_ms)} ms`), cell(`${number(tool.max_ms)} ms`),
+  ]);
+  renderTable(byId("tool-reliability-table"), ["TOOL", "TYPE", "CALLS", "FAIL", "SUCCESS", "AVG", "P95", "MAX"], toolRows, "No per-tool telemetry in the current window.");
+
+  const jobRows = (jobs.jobs || []).map((job, index) => [
+    cell(shortTime(job.created_at), "nowrap"), cell(job.job_id, "nowrap"), badge(job.status), cell(job.source),
+    cell(job.requires_user_input ? "yes" : "no"), detailsCell("fields", job, eventKey("job", job, index)),
+  ]);
+  renderTable(byId("jobs-table"), ["CREATED", "JOB", "STATUS", "SOURCE", "INPUT?", "DETAIL"], jobRows, "No durable jobs found.");
+
+  const actions = actionFeed.data?.requests || [];
+  const actionRows = actions.map((action, index) => [
+    cell(shortTime(action.created_at), "nowrap"), cell(action.action_name), badge(action.status), cell(action.actor),
+    cell(action.error || "--", "wrap"), detailsCell("fields", action, eventKey("action", action, index)),
+  ]);
+  renderTable(byId("actions-table"), ["CREATED", "ACTION", "STATUS", "ACTOR", "ERROR", "DETAIL"], actionRows, "No action requests available.");
+
+  const runtime = byId("runtime-inspector"); clear(runtime);
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify({
+    main: main.data || {},
+    ingestion: awareness.data?.ingestion || {},
+    freshness_worker: awareness.data?.freshness_worker || {},
+    outbox_worker: awareness.data?.outbox_worker || {},
+    reminder_worker: awareness.data?.reminder_worker || {},
+    briefing_worker: awareness.data?.briefing_worker || {},
+  }, null, 2);
+  runtime.appendChild(pre);
 }
 
 function prettyMetric(name) { return String(name).replaceAll("_", " ").toUpperCase(); }
@@ -285,7 +360,7 @@ function renderCharts(target, seriesList, emptyText = "No samples yet.") {
     const title = document.createElement("span"); title.textContent = series.name;
     const latest = document.createElement("span"); const point = latestPoint(series.values); latest.textContent = point ? `${number(point.value, 2)}${series.unit}` : "--";
     const canvas = document.createElement("canvas"); canvas.width = 480; canvas.height = 180;
-    const meta = document.createElement("div"); meta.className = "chart-meta"; meta.textContent = `${series.values.length} sample(s), browser-retained max 180`;
+    const meta = document.createElement("div"); meta.className = "chart-meta"; meta.textContent = `${series.values.length} sample(s), dashboard-process history`;
     heading.append(title, latest); card.append(heading, canvas, meta); target.appendChild(card);
     drawChart(canvas, series.values);
   });
@@ -335,7 +410,7 @@ function render(snapshot) {
   byId("schema-version").textContent = text(snapshot.schema_version);
   byId("snapshot-time").textContent = new Date(snapshot.generated_at).toLocaleString();
   byId("footer-source").textContent = `pipeline files: ${snapshot.interaction_io.pipeline.files_scanned}; benchmark files: ${snapshot.interaction_io.voice_benchmarks.files_scanned}; generated ${snapshot.generated_at}`;
-  renderInteractions(snapshot); renderHealth(snapshot); renderAudio(snapshot); renderRaw(snapshot); renderExtensions(snapshot);
+  renderInteractions(snapshot); renderHealth(snapshot); renderAudio(snapshot); renderOperations(snapshot); renderRaw(snapshot); renderExtensions(snapshot);
 }
 
 async function fetchSnapshot() {
@@ -373,7 +448,7 @@ document.querySelectorAll('[role="tab"]').forEach(bindTab);
 byId("refresh-now").addEventListener("click", () => { state.paused = false; byId("pause-toggle").textContent = "Pause"; fetchSnapshot(); });
 byId("pause-toggle").addEventListener("click", () => { state.paused = !state.paused; byId("pause-toggle").textContent = state.paused ? "Resume" : "Pause"; byId("connection-text").textContent = state.paused ? "PAUSED" : "LIVE / POLLING"; if (state.paused) clearTimeout(state.timer); else fetchSnapshot(); });
 byId("refresh-rate").addEventListener("change", schedule);
-filterInput.addEventListener("input", () => { if (state.snapshot) { renderInteractions(state.snapshot); renderRaw(state.snapshot); } });
+filterInput.addEventListener("input", () => { if (state.snapshot) { renderInteractions(state.snapshot); renderOperations(state.snapshot); renderRaw(state.snapshot); } });
 setInterval(() => { byId("snapshot-age").textContent = state.receivedAt ? `${((Date.now() - state.receivedAt) / 1000).toFixed(1)} s` : "--"; }, 250);
 
 const requestedTab = location.hash.slice(1);

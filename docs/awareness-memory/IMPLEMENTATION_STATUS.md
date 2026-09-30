@@ -2,6 +2,17 @@
 
 This file reports implementation state, not documentation availability.
 
+## Current observability implementation — correlated operations dashboard (2026-09-30)
+
+The existing debug console now correlates privacy-safe pipeline events into
+request traces and latency distributions, aggregates tool reliability, reads
+durable job state, and consumes awareness metrics plus physical-action lifecycle
+timestamps. Runtime health exposes central/awareness queue pressure, MCP
+lifecycle state, and acknowledged remote-display sequences. Telemetry now
+includes host/process/boot/runtime/build/config-fingerprint dimensions. No
+schema migration, raw audio capture, prompt capture, tool-argument capture, or
+physical action occurred. Focused validation is recorded in the session log.
+
 ## Current bounded task — SMS control channel (2026-09-24)
 
 Owner requested texting commands to Butler via Twilio with text replies.

@@ -38,6 +38,7 @@ STATIC_ROOT = PACKAGE_ROOT / "static"
 REPO_ROOT = PACKAGE_ROOT.parents[1]
 DEFAULT_LOG_ROOT = REPO_ROOT / "butler" / "logs"
 DEFAULT_MEMORY_DB = REPO_ROOT / "db" / "talos_memory.sqlite3"
+DEFAULT_JOB_DB = REPO_ROOT / "db" / "talos_jobs.sqlite3"
 
 MAX_TELEMETRY_EVENTS = 500
 MAX_BENCHMARK_ROWS = 200
@@ -46,6 +47,8 @@ MAX_LOG_FILES = 20
 MAX_LOG_BYTES_PER_FILE = 2 * 1024 * 1024
 MAX_CSV_BYTES_PER_FILE = 8 * 1024 * 1024
 MAX_REMOTE_METRICS_BYTES = 256 * 1024
+MAX_JOB_ROWS = 200
+MAX_TRACE_ROWS = 100
 
 
 def _iso_now() -> str:
@@ -253,6 +256,183 @@ def read_conversation_messages(memory_db: Path, *, limit: int) -> dict[str, Any]
         "messages": messages,
         "newest_timestamp": messages[0]["created_at"] if messages else None,
     }
+
+
+def read_jobs(job_db: Path, *, limit: int) -> dict[str, Any]:
+    """Read recent durable jobs without opening the writer-owned store."""
+    limit = _bounded_int(limit, 50, minimum=1, maximum=MAX_JOB_ROWS)
+    if not job_db.exists():
+        return {"status": "not_available", "source": str(job_db), "jobs": []}
+    uri = f"file:{job_db.as_posix()}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=0.5)
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute(
+                """
+                SELECT job_id, session_id, source, status, created_at, updated_at,
+                       started_at, finished_at, requires_user_input, error_message,
+                       resource_locks_json
+                FROM jobs ORDER BY created_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        return {
+            "status": "degraded",
+            "source": str(job_db),
+            "jobs": [],
+            "reason": str(exc)[:300],
+        }
+    jobs = []
+    for row in rows:
+        try:
+            locks = json.loads(row["resource_locks_json"] or "[]")
+        except json.JSONDecodeError:
+            locks = []
+        jobs.append({
+            "job_id": row["job_id"],
+            "session_id": row["session_id"],
+            "source": row["source"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "requires_user_input": bool(row["requires_user_input"]),
+            "error_type": "job_failed" if row["error_message"] else None,
+            "resource_locks": locks if isinstance(locks, list) else [],
+        })
+    return {"status": "available", "source": str(job_db), "jobs": jobs}
+
+
+_DURATION_FIELDS = (
+    "text_stream_total_ms", "agent_stream_total_ms", "llm_request_ms",
+    "tool_execution_ms", "tool_ms", "prompt_assembly_ms",
+    "awareness_snapshot_ms", "barge_in_decision_ms", "duration_ms",
+)
+
+
+def _duration_from_event(event: dict[str, Any]) -> float | None:
+    for key in _DURATION_FIELDS:
+        value = event.get(key)
+        if isinstance(value, (int, float)):
+            return round(float(value), 1)
+    return None
+
+
+def _elapsed_ms(start: Any, end: Any) -> float | None:
+    try:
+        started = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+        return round(max(0.0, (finished - started).total_seconds() * 1000.0), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_request_traces(events: list[dict[str, Any]], *, limit: int = 100) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        trace_id = str(event.get("trace_id") or event.get("request_id") or "unknown")
+        grouped.setdefault(trace_id, []).append(event)
+    traces = []
+    for trace_id, trace_events in grouped.items():
+        ordered = sorted(trace_events, key=lambda item: str(item.get("timestamp") or ""))
+        names = [str(item.get("event") or "unknown") for item in ordered]
+        failures = [name for name in names if any(marker in name for marker in ("failed", "rejected", "interrupted", "timed_out", "dropped"))]
+        failures.extend(
+            str(item.get("event") or "failure")
+            for item in ordered
+            if item.get("failed") is True
+        )
+        stages = [
+            {
+                "timestamp": item.get("timestamp"),
+                "component": item.get("component"),
+                "event": item.get("event"),
+                "duration_ms": _duration_from_event(item),
+            }
+            for item in ordered
+        ]
+        elapsed_ms = _elapsed_ms(ordered[0].get("timestamp"), ordered[-1].get("timestamp"))
+        traces.append({
+            "trace_id": trace_id,
+            "request_id": ordered[-1].get("request_id"),
+            "session_id": next((item.get("session_id") for item in ordered if item.get("session_id")), None),
+            "started_at": ordered[0].get("timestamp"),
+            "finished_at": ordered[-1].get("timestamp"),
+            "outcome": "failed" if failures else "completed",
+            "failure_event": failures[-1] if failures else None,
+            "components": sorted({str(item.get("component") or "unknown") for item in ordered}),
+            "stage_count": len(stages),
+            "elapsed_ms": elapsed_ms,
+            "stages": stages,
+        })
+    traces.sort(key=lambda item: str(item.get("finished_at") or ""), reverse=True)
+    return traces[: max(1, min(MAX_TRACE_ROWS, int(limit)))]
+
+
+def build_latency_summary(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    values = sorted(
+        float(trace["elapsed_ms"])
+        for trace in traces
+        if isinstance(trace.get("elapsed_ms"), (int, float))
+    )
+    if not values:
+        return {"count": 0, "p50_ms": None, "p95_ms": None, "max_ms": None}
+
+    def percentile(fraction: float) -> float:
+        index = max(0, min(len(values) - 1, round((len(values) - 1) * fraction)))
+        return round(values[index], 1)
+
+    return {
+        "count": len(values),
+        "p50_ms": percentile(0.50),
+        "p95_ms": percentile(0.95),
+        "max_ms": round(values[-1], 1),
+    }
+
+
+def build_tool_reliability(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        if event.get("event") == "tool_call_completed" and event.get("tool_name"):
+            grouped.setdefault(str(event["tool_name"]), []).append(event)
+    rows = []
+    for name, calls in grouped.items():
+        durations = sorted(float(call["tool_ms"]) for call in calls if isinstance(call.get("tool_ms"), (int, float)))
+        p95_index = max(0, min(len(durations) - 1, int((len(durations) - 1) * 0.95))) if durations else 0
+        failures = sum(bool(call.get("failed")) for call in calls)
+        rows.append({
+            "tool_name": name,
+            "transport": calls[-1].get("transport"),
+            "calls": len(calls),
+            "failures": failures,
+            "success_rate_percent": round((len(calls) - failures) / len(calls) * 100.0, 1),
+            "average_ms": round(sum(durations) / len(durations), 1) if durations else None,
+            "p95_ms": round(durations[p95_index], 1) if durations else None,
+            "max_ms": round(durations[-1], 1) if durations else None,
+        })
+    return sorted(rows, key=lambda item: (-item["failures"], -(item["p95_ms"] or 0), item["tool_name"]))
+
+
+def read_json_endpoint(url: str, *, token: str = "", timeout: float = 0.8) -> dict[str, Any]:
+    request = urllib.request.Request(url, method="GET")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(MAX_REMOTE_METRICS_BYTES + 1)
+        if len(raw) > MAX_REMOTE_METRICS_BYTES:
+            raise ValueError("response exceeded bounded dashboard limit")
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("endpoint returned non-object JSON")
+        return {"status": "available", "source": url, "data": payload}
+    except Exception as exc:
+        return {"status": "unavailable", "source": url, "data": {}, "reason": str(exc)[:300]}
 
 
 def _http_probe(name: str, url: str, *, timeout: float = 0.4) -> dict[str, Any]:
@@ -595,19 +775,32 @@ class DebugSnapshotService:
         *,
         log_root: Path = DEFAULT_LOG_ROOT,
         memory_db: Path = DEFAULT_MEMORY_DB,
+        job_db: Path = DEFAULT_JOB_DB,
         sampler: SystemSampler | None = None,
         system_metrics_url: str | None = None,
     ) -> None:
         load_environment()
         self.log_root = Path(log_root)
         self.memory_db = Path(memory_db)
+        self.job_db = Path(job_db)
         self.sampler = sampler
+        self._host_history: deque[dict[str, Any]] = deque(maxlen=3600)
         self.system_metrics_url = (
             system_metrics_url
             if system_metrics_url is not None
             else os.getenv("BUTLER_DEBUG_SYSTEM_METRICS_URL", "")
         ).strip()
         self.system_metrics_token = os.getenv("BUTLER_DEBUG_SYSTEM_METRICS_TOKEN", "").strip()
+        self.awareness_url = os.getenv(
+            "BUTLER_AWARENESS_API_URL", "http://127.0.0.1:8600"
+        ).rstrip("/")
+        self.awareness_token = os.getenv("BUTLER_AWARENESS_API_TOKEN", "").strip()
+        self.main_url = os.getenv(
+            "BUTLER_TEXT_AGENT_URL", "http://127.0.0.1:8420"
+        ).rstrip("/")
+        self.main_token = os.getenv(
+            "BUTLER_TEXT_AGENT_TOKEN", os.getenv("TEXT_AGENT_API_TOKEN", "")
+        ).strip()
 
     def snapshot(
         self,
@@ -618,8 +811,22 @@ class DebugSnapshotService:
         telemetry = read_pipeline_events(self.log_root, limit=event_limit)
         benchmarks = read_voice_benchmarks(self.log_root, limit=interaction_limit)
         messages = read_conversation_messages(self.memory_db, limit=interaction_limit * 2)
+        jobs = read_jobs(self.job_db, limit=interaction_limit)
         host = self._host_snapshot()
+        self._record_host_history(host)
         services = self._service_health()
+        awareness_metrics = read_json_endpoint(
+            f"{self.awareness_url}/metrics", token=self.awareness_token
+        )
+        awareness_actions = read_json_endpoint(
+            f"{self.awareness_url}/actions?limit={min(200, interaction_limit)}",
+            token=self.awareness_token,
+        )
+        main_runtime = read_json_endpoint(
+            f"{self.main_url}/health", token=self.main_token
+        )
+        events = telemetry.get("events", [])
+        request_traces = build_request_traces(events, limit=interaction_limit)
         services.append(
             {
                 "name": "remote system metrics",
@@ -629,7 +836,7 @@ class DebugSnapshotService:
             }
         )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": _iso_now(),
             "refresh_hint_ms": 1000,
             "interaction_io": {
@@ -651,10 +858,38 @@ class DebugSnapshotService:
             "system_health": {
                 "services": services,
                 "host": host,
+                "history": list(self._host_history),
             },
             "live_audio": build_audio_snapshot(telemetry, benchmarks),
+            "operations": {
+                "request_traces": request_traces,
+                "latency_summary": build_latency_summary(request_traces),
+                "tool_reliability": build_tool_reliability(events),
+                "jobs": jobs,
+                "awareness_metrics": awareness_metrics,
+                "actions": awareness_actions,
+                "main_runtime": main_runtime,
+            },
             "extensions": [],
         }
+
+    def _record_host_history(self, host: dict[str, Any]) -> None:
+        point: dict[str, Any] = {
+            "timestamp": host.get("sampled_at") or _iso_now(),
+            "cpu_percent": (host.get("cpu") or {}).get("utilization_percent"),
+            "memory_percent": (host.get("memory") or {}).get("used_percent"),
+            "disk_percent": (host.get("disk") or {}).get("used_percent"),
+            "gpus": [
+                {
+                    "index": gpu.get("index"),
+                    "utilization_percent": gpu.get("utilization_percent"),
+                    "memory_used_mib": gpu.get("memory_used_mib"),
+                }
+                for gpu in (host.get("gpu") or {}).get("gpus", [])
+            ],
+        }
+        if not self._host_history or self._host_history[-1] != point:
+            self._host_history.append(point)
 
     def _host_snapshot(self) -> dict[str, Any]:
         if self.sampler is not None:

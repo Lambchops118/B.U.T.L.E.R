@@ -17,7 +17,8 @@ from butler.agent import runtime as agent_runtime
 from butler.config import env_bool, load_environment
 from butler.jobs import get_default_job_store
 from butler.messages import AnnouncementPayload, EventPayload, Message, TextPayload
-from butler.services import awareness_client, sleep_mode
+from butler.mcp_client import peek_local_mcp_status
+from butler.services import awareness_client, awareness_signals, sleep_mode
 from butler.telemetry import emit_pipeline_event
 
 
@@ -123,7 +124,24 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             self._write_html(HTTPStatus.OK, self._chat_page())
             return
         if path == "/health":
-            self._write_json(HTTPStatus.OK, {"ok": True, "status": "healthy"})
+            display_snapshot = (
+                self.server.display_state.snapshot()
+                if self.server.display_state is not None
+                else {}
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "status": "healthy",
+                    "queues": {
+                        "central_depth": self.server.central_queue.qsize(),
+                        "awareness_signals": awareness_signals.stats(),
+                    },
+                    "display_clients": display_snapshot.get("clients", {}),
+                    "mcp": peek_local_mcp_status(),
+                },
+            )
             return
         if path == "/display/state":
             if not self._authorize_request(require_token=True):
@@ -176,6 +194,9 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/interrupt":
             self._handle_interrupt()
+            return
+        if self.path == "/display/heartbeat":
+            self._handle_display_heartbeat()
             return
         if self.path == "/prewarm":
             self._handle_prewarm()
@@ -312,6 +333,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             request_id=request_id or session_id,
             component="text_server",
             event="turn_interrupted",
+            session_id=session_id,
             stream_cancelled=cancelled,
             memory_amended=recorded,
             spoken_chars=len(spoken_text),
@@ -320,6 +342,23 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {"ok": True, "cancelled": cancelled, "recorded": recorded},
         )
+
+    def _handle_display_heartbeat(self) -> None:
+        if self.server.display_state is None:
+            self._write_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "display state unavailable"})
+            return
+        try:
+            body = self._read_json_body()
+            self.server.display_state.record_client_heartbeat(
+                str(body.get("client_id") or ""),
+                sequence=body.get("sequence"),
+                status=str(body.get("status") or "rendered"),
+                error=str(body.get("error") or "") or None,
+            )
+        except (TypeError, ValueError) as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        self._write_json(HTTPStatus.OK, {"ok": True})
 
     def _handle_prewarm(self) -> None:
         """A turn is about to arrive; get the GPU off its idle clocks now.
@@ -512,6 +551,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             emit_pipeline_event(
                 request_id=request_id,
                 component="text_server",
+                session_id=session_id,
                 **snapshot_event,
             )
             send_telemetry(snapshot_event)
@@ -540,6 +580,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             emit_pipeline_event(
                 request_id=request_id,
                 component="text_server",
+                session_id=session_id,
                 **completed_event,
             )
             send_telemetry(completed_event)
@@ -552,6 +593,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 request_id=request_id,
                 component="text_server",
                 event="text_stream_failed",
+                session_id=session_id,
                 text_stream_total_ms=round(
                     (time.perf_counter() - request_started) * 1000.0, 1
                 ),

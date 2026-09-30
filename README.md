@@ -301,6 +301,12 @@ Butler includes a separate, read-only web debug console for interaction I/O,
 pipeline timings, component/host health, CPU/GPU usage, and available audio
 metrics. It reads the existing conversation database, voice benchmark CSVs, and
 privacy-safe pipeline telemetry without joining the agent or audio hot paths.
+Its Operations tab correlates request stages by trace ID, reports p50/p95
+latency, aggregates per-tool reliability, and shows durable jobs, physical
+action state, awareness queues/workers, MCP lifecycle, and remote display
+heartbeats. Pipeline events include a process boot ID, build/runtime identity,
+and a non-secret configuration fingerprint so regressions can be separated
+from deployment drift.
 
 Start it with the main Python environment:
 
@@ -310,7 +316,8 @@ Start it with the main Python environment:
 
 Then open `http://127.0.0.1:8787`. The page polls once per second by default,
 can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
-GPU, memory, disk, RMS, and audio-measurement graphs in the browser. Expanded
+GPU, memory, and disk history in the dashboard process so browser reloads do not
+erase it. RMS and audio-measurement history comes from bounded telemetry. Expanded
 JSON/detail rows remain open while polling. New dashboard topics can be added
 through the versioned snapshot's `extensions` list without changing the
 existing tabs.
@@ -326,7 +333,7 @@ metrics exporter remains a separate task.
 The dashboard defaults to loopback because it displays private transcripts and
 has no authentication. A non-loopback `--host` is refused unless the operator
 also passes `--allow-remote`; use that only on a trusted network. Exact prompt
-text, tool names/arguments, raw PCM, and continuously sampled idle-room RMS are
+text, tool arguments, raw PCM, and continuously sampled idle-room RMS are
 not currently persisted by the runtime, so the page labels those feeds as
 unavailable instead of inventing data. Adding them requires a separate,
 explicitly bounded and privacy-reviewed runtime instrumentation task.

@@ -511,6 +511,10 @@ class LocalMcpClient:
         self.start()
         return [self._status[config.name].as_dict() for config in self._configs]
 
+    def peek_server_status(self) -> list[dict[str, Any]]:
+        """Return lifecycle state without starting or reconnecting providers."""
+        return [self._status[config.name].as_dict() for config in self._configs]
+
     def list_tool_inventory(self, refresh: bool = False) -> dict[str, Any]:
         tools = self.list_tools(refresh=refresh)
         compact_tools: list[dict[str, Any]] = []
@@ -1973,6 +1977,14 @@ def get_local_mcp_client() -> LocalMcpClient:
         if _shared_client is None:
             _shared_client = LocalMcpClient(_load_mcp_server_configs())
         return _shared_client
+
+
+def peek_local_mcp_status() -> dict[str, Any]:
+    """Health-safe snapshot; unlike list_server_status this has no side effects."""
+    with _shared_lock:
+        if _shared_client is None:
+            return {"initialized": False, "servers": []}
+        return {"initialized": True, "servers": _shared_client.peek_server_status()}
 
 
 def shutdown_local_mcp_client() -> None:

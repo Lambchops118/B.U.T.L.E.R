@@ -41,6 +41,7 @@
     <button role="tab" id="tab-interactions" aria-controls="panel-interactions" aria-selected="true" data-tab="interactions">Interaction I/O</button>
     <button role="tab" id="tab-health" aria-controls="panel-health" aria-selected="false" data-tab="health">System Health</button>
     <button role="tab" id="tab-audio" aria-controls="panel-audio" aria-selected="false" data-tab="audio">Live Audio</button>
+    <button role="tab" id="tab-operations" aria-controls="panel-operations" aria-selected="false" data-tab="operations">Operations</button>
     <button role="tab" id="tab-raw" aria-controls="panel-raw" aria-selected="false" data-tab="raw">Raw Events</button>
   </nav>
 
@@ -106,6 +107,34 @@
         <section class="window">
           <h2>LATEST AUDIO MEASUREMENTS</h2>
           <div class="window-body table-scroll"><table id="audio-measurement-table"></table></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="panel-operations" class="tab-panel" role="tabpanel" aria-labelledby="tab-operations" hidden>
+      <div id="operations-summary" class="status-strip">Waiting for operational data...</div>
+      <section class="window">
+        <h2>REQUEST TRACES / STAGE WATERFALL DATA</h2>
+        <div class="window-body table-scroll tall"><table id="trace-table"></table></div>
+      </section>
+      <div class="split-grid">
+        <section class="window">
+          <h2>TOOL RELIABILITY</h2>
+          <div class="window-body table-scroll"><table id="tool-reliability-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>BACKGROUND JOBS</h2>
+          <div class="window-body table-scroll"><table id="jobs-table"></table></div>
+        </section>
+      </div>
+      <div class="split-grid">
+        <section class="window">
+          <h2>PHYSICAL ACTION LIFECYCLE</h2>
+          <div class="window-body table-scroll"><table id="actions-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>QUEUES / WORKERS / DISPLAY CLIENTS</h2>
+          <div id="runtime-inspector" class="window-body"></div>
         </section>
       </div>
     </section>
