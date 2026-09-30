@@ -1,0 +1,98 @@
+{
+  "title": "Carnitas",
+  "link_status": "LINK NOMINAL",
+  "source": "TALOS",
+  "servings": "Serves 6 to 8",
+  "status": "Awaiting recipe uplink.",
+  "subtitle": "Slow-cooked pork for tacos, burritos, or bowls",
+  "updated_at": "2026-06-08T17:41:29Z",
+  "ingredients": [
+    {
+      "text": "3 to 4 lb pork shoulder, cut into large chunks",
+      "checked": false
+    },
+    {
+      "text": "1 tablespoon salt",
+      "checked": false
+    },
+    {
+      "text": "1 teaspoon black pepper",
+      "checked": false
+    },
+    {
+      "text": "1 tablespoon ground cumin",
+      "checked": false
+    },
+    {
+      "text": "1 tablespoon dried oregano",
+      "checked": false
+    },
+    {
+      "text": "1 onion, quartered",
+      "checked": false
+    },
+    {
+      "text": "4 cloves garlic, smashed",
+      "checked": false
+    },
+    {
+      "text": "1 orange, juiced, with peel reserved",
+      "checked": false
+    },
+    {
+      "text": "1 lime, juiced",
+      "checked": false
+    },
+    {
+      "text": "1 cup chicken broth",
+      "checked": false
+    },
+    {
+      "text": "2 bay leaves",
+      "checked": false
+    },
+    {
+      "text": "2 tablespoons oil, for crisping",
+      "checked": false
+    }
+  ],
+  "steps": [
+    {
+      "text": "Season the pork with salt, pepper, cumin, and oregano.",
+      "done": false
+    },
+    {
+      "text": "Place the pork in a Dutch oven or slow cooker with the onion, garlic, orange juice, orange peel, lime juice, chicken broth, and bay leaves.",
+      "done": false
+    },
+    {
+      "text": "Cook low and slow until the pork is very tender, about 3 to 4 hours on the stovetop or 8 hours on low in a slow cooker.",
+      "done": false
+    },
+    {
+      "text": "Remove the pork and shred it with forks.",
+      "done": false
+    },
+    {
+      "text": "Heat oil in a skillet and crisp the shredded pork in batches until browned at the edges.",
+      "done": false
+    },
+    {
+      "text": "Serve with tortillas and your preferred toppings.",
+      "done": false
+    }
+  ],
+  "notes": [
+    "For extra flavor, save some of the cooking liquid and spoon it over the finished pork.",
+    "Classic toppings include onion, cilantro, salsa, and lime.",
+    "The crisping step is not optional if you want carnitas and not just polite shredded pork."
+  ],
+  "timer": {
+    "label": "Recipe timer",
+    "duration_seconds": 1800,
+    "remaining_seconds": 1766,
+    "running": false,
+    "finished": false,
+    "updated_at": "2026-06-08T17:24:32Z"
+  }
+}
