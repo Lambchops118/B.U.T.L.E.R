@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--api-models",
         action="store_true",
-        help="Use hosted OpenAI API models instead of local Ollama/STT (needs OPENAI_API_KEY).",
+        help="Use hosted OpenAI API models instead of local Ollama; STT stays local (needs OPENAI_API_KEY).",
     )
     parser.add_argument(
         "--disable-mcp",

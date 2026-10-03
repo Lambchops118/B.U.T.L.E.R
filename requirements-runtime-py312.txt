@@ -6,7 +6,7 @@ APScheduler==3.11.1
 boto3==1.40.65
 faster-whisper
 httpx==0.28.1
-mcp[cli]
+mcp[cli]>=1.28,<2  # Butler MCP servers use the v1 FastMCP API (removed in mcp 2.x)
 numpy==2.3.4
 openai==2.7.0
 openai-whisper

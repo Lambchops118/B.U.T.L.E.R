@@ -245,8 +245,9 @@ selection.
 
 **Local vs. hosted API models.** By default Butler runs fully local (Ollama LLM on
 the 5080, faster-whisper STT on the 2060). Tick **Use hosted API models (OpenAI)
-instead of local** (or pass `--api-models` headless) to run the LLM and STT
-against OpenAI instead (`gpt-4o-mini` by default, plus `whisper-1` for speech).
+instead of local** (or pass `--api-models` headless) to run the LLM against
+OpenAI instead (`gpt-4o-mini` by default). Speech-to-text always stays on local
+faster-whisper.
 This requires `OPENAI_API_KEY` in `.env`. The switch is applied as per-run
 environment overrides injected into the main agent and voice worker — it does
 **not** edit `settings.env`, so unticking it returns to your local config

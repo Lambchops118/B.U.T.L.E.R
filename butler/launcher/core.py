@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import config
-from .config import LauncherConfig, Ports, REPO_ROOT, venv_python
+from .config import LauncherConfig, Ports, REPO_ROOT, venv_python, venv_setup_hint
 from butler.voice.microphone_profiles import (
     get_microphone_profile,
     normalize_microphone_profile,
@@ -122,7 +122,8 @@ def _api_model_env(base: dict[str, str], api_model: str) -> dict[str, str]:
 
     Injected only into the main agent and voice worker for the current run;
     ``settings.env`` is never modified, so unchecking the option next run simply
-    falls back to the local Ollama/faster-whisper values there. Real env vars win
+    falls back to the local Ollama values there. Speech-to-text is not touched:
+    it always stays on local faster-whisper. Real env vars win
     over ``settings.env`` (``load_environment`` never overrides them), which is
     exactly how these overrides take effect in the children.
 
@@ -134,9 +135,9 @@ def _api_model_env(base: dict[str, str], api_model: str) -> dict[str, str]:
     env["BUTLER_LLM_BACKEND"] = "openai_chat"
     env["BUTLER_LLM_BASE_URL"] = "https://api.openai.com/v1"
     env["BUTLER_LLM_MODEL"] = api_model
-    # Route STT to hosted whisper-1 instead of the local faster-whisper pass.
-    env["BUTLER_LOCAL_STT"] = "0"
-    env["BUTLER_REMOTE_STT_FALLBACK"] = "1"
+    # STT deliberately stays local (faster-whisper, settings.env): the hosted
+    # path gates every clip on a CPU openai-whisper "base" wake check before
+    # whisper-1, which missed the wake word far more often than local STT.
     env["BUTLER_REMOTE_LLM_FALLBACK"] = "1"
     # Hosted OpenAI uses max_completion_tokens (the factory also infers this from
     # the openai.com base URL, but set it explicitly to be safe).
@@ -219,7 +220,9 @@ class Supervisor:
         args: list[str],
         env: dict[str, str],
         cwd: Optional[Path] = None,
-    ) -> ManagedProcess:
+    ) -> Optional[ManagedProcess]:
+        """Start a child process, or log why it could not start and return None."""
+
         self._say(f"starting {name}: {' '.join(str(a) for a in args)}")
         env = dict(env)
         env["BUTLER_PROCESS_NAME"] = name
@@ -229,17 +232,26 @@ class Supervisor:
             # New process group so we can send CTRL_BREAK to the group without
             # killing the launcher itself.
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-        popen = subprocess.Popen(
-            args,
-            cwd=str(cwd or REPO_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-            creationflags=creationflags,
-        )
+        try:
+            popen = subprocess.Popen(
+                args,
+                cwd=str(cwd or REPO_ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags,
+            )
+        except FileNotFoundError:
+            hint = venv_setup_hint(name)
+            self._say(
+                f"ERROR: cannot start {name}: {args[0]} not found"
+                + (f"; {hint}" if hint else "")
+                + f". Skipping {name}."
+            )
+            return None
         reader = threading.Thread(
             target=self._pump_output, args=(name, popen), daemon=True
         )
@@ -259,11 +271,31 @@ class Supervisor:
 
     # -- readiness ---------------------------------------------------------
 
-    def _wait_port(self, name: str, host: str, port: int, timeout: float) -> bool:
+    def _wait_port(
+        self,
+        name: str,
+        host: str,
+        port: int,
+        timeout: float,
+        managed: Optional[ManagedProcess] = None,
+    ) -> bool:
+        """Wait for ``port`` to accept connections.
+
+        When ``managed`` is given, stop waiting as soon as that process exits:
+        a child that crashed on startup will never open its port, and waiting
+        out the full timeout only looks like a hung launcher.
+        """
+
         self._say(f"waiting for {name} on {host}:{port} (up to {int(timeout)}s)...")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._stopping.is_set():
+                return False
+            if managed is not None and managed.popen.poll() is not None:
+                self._say(
+                    f"ERROR: {name} exited with code {managed.popen.returncode} "
+                    "before becoming ready (see its log above)."
+                )
                 return False
             if _port_open(host, port):
                 self._say(f"{name} is ready on {host}:{port}")
@@ -310,8 +342,10 @@ class Supervisor:
         env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
         env.setdefault("OLLAMA_CONTEXT_LENGTH", "16384")
         env.setdefault("OLLAMA_VULKAN", "0")
-        self._spawn("ollama", ["ollama", "serve"], env)
-        self._wait_port("ollama", "127.0.0.1", self._ports.ollama, timeout=60)
+        managed = self._spawn("ollama", ["ollama", "serve"], env)
+        if managed is None:
+            return
+        self._wait_port("ollama", "127.0.0.1", self._ports.ollama, timeout=60, managed=managed)
 
     def _start_awareness_db(self) -> None:
         if not self._cfg.manage_docker:
@@ -342,12 +376,15 @@ class Supervisor:
     def _start_awareness(self, base: dict[str, str]) -> None:
         py = venv_python("awareness")
         env = _venv_env(base, py)
-        self._spawn("awareness", [str(py), "-m", "butler.awareness", "serve"], env)
+        managed = self._spawn("awareness", [str(py), "-m", "butler.awareness", "serve"], env)
+        if managed is None:
+            return
         self._wait_port(
             "awareness",
             self._ports.awareness_host,
             self._ports.awareness,
             timeout=45,
+            managed=managed,
         )
 
     def _start_main(self, base: dict[str, str]) -> None:
@@ -366,20 +403,22 @@ class Supervisor:
         disabled = [*self._cfg.disabled_mcp_servers, *self._cfg.disabled_mcp_providers]
         if disabled:
             self._say("MCP disabled for this run: " + ", ".join(disabled))
-        self._spawn("main", [str(py), "-m", "butler"], env)
+        managed = self._spawn("main", [str(py), "-m", "butler"], env)
+        if managed is None:
+            return
         self._wait_port(
             "main",
             self._ports.text_agent_host,
             self._ports.text_agent,
             timeout=45,
+            managed=managed,
         )
 
     def _start_voice(self, base: dict[str, str]) -> None:
         py = venv_python("voice")
         # Speech-to-text (faster-whisper) is pinned to the 2060.
         env = _venv_env(_gpu_env(base, self._cfg.stt_gpu_index), py)
-        # In API mode STT is hosted (whisper-1); the local GPU pin is then unused
-        # but harmless, and these overrides route the LLM + STT to OpenAI.
+        # In API mode only the LLM is hosted; STT stays local on the pinned GPU.
         if self._cfg.use_api_models:
             env = _api_model_env(env, self._cfg.api_llm_model)
         env = _microphone_env(env, self._cfg)
@@ -541,8 +580,8 @@ class Supervisor:
 
         if self._cfg.use_api_models:
             self._say(
-                f"API mode ON: using hosted OpenAI models (LLM={self._cfg.api_llm_model}, "
-                "STT=whisper-1). Local Ollama will not be started."
+                f"API mode ON: using hosted OpenAI LLM ({self._cfg.api_llm_model}); "
+                "STT stays local. Local Ollama will not be started."
             )
             if not config.has_secret("OPENAI_API_KEY"):
                 self._say(

@@ -1377,3 +1377,66 @@ Pipeline JSONL and voice benchmark CSVs rotate non-destructively at configurable
 the current file. Automatic deletion was not added because no retention window
 was authorized. Updated focused coverage is 111 passing tests; JS syntax and
 patch whitespace checks also pass.
+
+## 2026-10-02 — Launcher hang with missing split-runtime venvs
+
+**Symptom:** First GUI launch on this branch sat on "starting..." while main,
+display, and voice never came up.
+
+**Cause:** ADR-055 moved main/voice to `.venv-runtime` and display to
+`.venv-display`, but neither existed on the host. `venv_python()` silently fell
+back to the legacy `.venv` (the launcher's own Python 3.14 environment), so all
+three children crashed on import (`openai`, `pygame`, and `audioop` missing).
+`_wait_port` did not watch the child, so the launcher waited out the full 45 s
+main timeout before continuing, which looked like a hang.
+
+**Change:** Components with a dedicated venv no longer fall back to `.venv`.
+A missing interpreter is logged with the exact create/install command
+(`venv_setup_hint`) and that component is skipped instead of spawned.
+`_wait_port` now returns as soon as the watched child exits and logs its exit
+code. Separate runtime/display environments are kept as designed (owner
+decision); splitting the display into its own repo was discussed and deferred.
+Created `.venv-runtime` and `.venv-display` on this host from their py312
+requirements files.
+
+A fresh `.venv-runtime` resolved the unpinned `mcp[cli]` to 2.3.0, which
+removed `mcp.server.fastmcp`; main still started but the local MCP server died
+and the agent warmed with 3 tools instead of 27. Pinned `mcp[cli]>=1.28,<2` in
+`requirements-runtime-py312.txt` (resolved 1.30.0). SpeechRecognition 3.14.3
+installs a top-level `tests` package into site-packages that shadows this
+repo's `tests/` for `python -m unittest tests.<module>`; run suites from that
+venv with `python -m unittest discover -s tests -t tests -p <pattern>`.
+
+**Validation:** New `tests/test_launcher_venvs.py` (5) plus existing launcher,
+display-boundary, maintenance, and microphone-profile suites: 32 tests passed
+under both `.venv-main` and `.venv-runtime`. Smoke run of `python -m butler`
+from `.venv-runtime` bound 8420 and warmed 27 tools; component modules import
+in their target venvs. No live GUI launch, voice session, or display window
+was run by the agent.
+
+## 2026-10-02 — Barge-in silently disabled by stale endpoint pins
+
+**Symptom:** Barge-in never fired. In the 2026-10-03T02:45 run, a 14 s spoken
+reply was recorded by ordinary capture (Butler's own speech plus the owner's
+"that's enough") and rejected as `wake_word_missing_in_transcript`. Every
+`barge_in_metrics_snapshot` back to 2026-09-22 shows zero candidates.
+
+**Cause:** Windows re-enumerated both test-rig endpoints (same ReSpeaker
+XVF3800 and BenQ GL2460 display audio, new MMDevice IDs). The pinned
+`...5dda5d51...` capture and `...2b69dbdf...` render IDs no longer exist, so
+`_start_aec_duplex` raised on the default-pair check and the worker fell back
+to the plain profile microphone. That fallback is only a console `print`; no
+telemetry records it.
+
+**Change:** Re-pinned `BUTLER_RESPEAKER_CAPTURE_ENDPOINT_ID`,
+`BUTLER_AUDIO_CAPTURE_ENDPOINT_ID` (`...de76a30a...`) and
+`BUTLER_AUDIO_RENDER_ENDPOINT_ID` (`...d43b40c9...`) in `settings.env`. Same
+physical devices that previously passed the AEC contract, so the probe was not
+re-run.
+
+**Validation:** In `.venv-runtime`, the pins now equal the current default
+pair and `SileroProbabilityVAD()` constructs in the worker import order. Not
+run live: no voice session or barge-in attempt was made by the agent.
+Observed but not fixed: in a bare process, querying the winrt endpoints before
+the first faster-whisper/onnxruntime import segfaults in onnxruntime 1.30
+(access violation); importing `butler.voice.agent` first avoids it.

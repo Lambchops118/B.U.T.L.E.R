@@ -18,6 +18,7 @@ the heavier Butler runtime.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -45,35 +46,69 @@ VENV_DIRS = {
     "awareness": ".venv-awareness",
 }
 
-# Fallback ("legacy") venv used if a per-component one is missing.
+# Requirements manifest each dedicated venv is built from (for setup hints).
+VENV_REQUIREMENTS = {
+    ".venv-runtime": "requirements-runtime-py312.txt",
+    ".venv-display": "requirements-display-py312.txt",
+    ".venv-awareness": "requirements-awareness-py312.txt",
+}
+
+# Fallback ("legacy") venv used only for components without a dedicated venv.
 FALLBACK_VENV = ".venv"
 
 DOCKER_COMPOSE_FILE = "docker-compose.awareness.yml"
 
 
-def venv_python(component: str) -> Path:
-    """Return the interpreter path for a component, falling back sensibly.
+def _venv_interpreter(rel: str) -> Path | None:
+    win = REPO_ROOT / rel / "Scripts" / "python.exe"
+    if win.exists():
+        return win
+    posix = REPO_ROOT / rel / "bin" / "python"
+    if posix.exists():
+        return posix
+    return None
 
-    Prefers the dedicated per-component venv, then the legacy ``.venv``, then a
-    bare ``python`` on PATH. Never raises here so the GUI can show a clear
-    "interpreter missing" message instead of crashing.
+
+def venv_python(component: str) -> Path:
+    """Return the interpreter path for a component.
+
+    A component with a dedicated venv (``VENV_DIRS``) always gets that venv's
+    interpreter, even when it does not exist yet: falling back to the legacy
+    ``.venv`` (the launcher's own environment, without the component's
+    dependencies) only produced a child that crashed on import. The returned
+    path is then missing, so spawning fails fast and the launcher reports it
+    with ``venv_setup_hint``. Other components fall back to ``.venv`` and then
+    a bare ``python`` on PATH. Never raises.
     """
 
-    candidates = []
-    if component in VENV_DIRS:
-        candidates.append(VENV_DIRS[component])
-    candidates.append(FALLBACK_VENV)
+    rel = VENV_DIRS.get(component)
+    if rel is not None:
+        found = _venv_interpreter(rel)
+        if found is not None:
+            return found
+        if os.name == "nt":
+            return REPO_ROOT / rel / "Scripts" / "python.exe"
+        return REPO_ROOT / rel / "bin" / "python"
 
-    for rel in candidates:
-        win = REPO_ROOT / rel / "Scripts" / "python.exe"
-        if win.exists():
-            return win
-        posix = REPO_ROOT / rel / "bin" / "python"
-        if posix.exists():
-            return posix
-
+    found = _venv_interpreter(FALLBACK_VENV)
+    if found is not None:
+        return found
     # Last resort: whatever "python" resolves to on PATH.
     return Path(shutil.which("python") or "python")
+
+
+def venv_setup_hint(component: str) -> str:
+    """Return the command that creates a component's dedicated venv, or ''."""
+
+    rel = VENV_DIRS.get(component)
+    if rel is None:
+        return ""
+    python = f"{rel}\\Scripts\\python.exe" if os.name == "nt" else f"{rel}/bin/python"
+    creator = "py -3.12" if os.name == "nt" else "python3.12"
+    return (
+        f"create it with: {creator} -m venv {rel} && "
+        f"{python} -m pip install -r {VENV_REQUIREMENTS.get(rel, 'requirements.txt')}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +502,7 @@ class LauncherConfig:
     llm_gpu_index: int = 0
     stt_gpu_index: int = 1
 
-    # Use hosted OpenAI API models instead of the local Ollama LLM + local STT.
+    # Use a hosted OpenAI LLM instead of the local Ollama LLM (STT stays local).
     # When on, the launcher injects the hosted-model settings into the main agent
     # and voice worker for that run (settings.env is left untouched) and skips
     # the local Ollama server. Requires OPENAI_API_KEY in .env.
