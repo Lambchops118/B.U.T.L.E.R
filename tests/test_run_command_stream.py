@@ -239,6 +239,8 @@ class RunCommandStreamTests(unittest.TestCase):
         by_event = {item["event"]: item for item in telemetry}
         self.assertGreater(by_event["prompt_ready"]["prompt_tokens_estimated"], 0)
         self.assertIn("tool_build_ms", by_event["prompt_ready"])
+        self.assertIsInstance(by_event["prompt_ready"]["memory_block_chars"], int)
+        self.assertIsInstance(by_event["prompt_ready"]["history_message_count"], int)
         self.assertEqual(by_event["llm_round_started"]["round"], 1)
         self.assertEqual(by_event["llm_round_completed"]["round"], 1)
         self.assertIn("agent_stream_total_ms", by_event["agent_stream_completed"])

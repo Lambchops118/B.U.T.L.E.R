@@ -119,6 +119,45 @@ async def _extra_components(request: Request) -> list[ComponentStatus]:
     )
 
 
+async def _memory_counts(request: Request) -> dict:
+    """Long-term memory row counts for operators.
+
+    Counts only -- never statements -- so the read-only debug console can show
+    whether memory is being written at all without exposing its content. A
+    database failure is reported as an error rather than as zero rows.
+    """
+    import sqlalchemy as sa
+
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:
+        return {"error": "database engine unavailable"}
+    try:
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    sa.text(
+                        "SELECT status, memory_type, count(*) AS n, max(created_at) AS newest "
+                        "FROM memories GROUP BY status, memory_type"
+                    )
+                )
+            ).all()
+            provenance = (
+                await connection.execute(sa.text("SELECT count(*) FROM memory_provenance"))
+            ).scalar_one()
+    except Exception as exc:  # noqa: BLE001 - reported, not hidden
+        return {"error": str(exc)[:200]}
+    newest = max((row.newest for row in rows if row.newest is not None), default=None)
+    return {
+        "total": sum(int(row.n) for row in rows),
+        "by_status": [
+            {"status": row.status, "memory_type": row.memory_type, "count": int(row.n)}
+            for row in rows
+        ],
+        "provenance_rows": int(provenance),
+        "newest_created_at": newest.isoformat(timespec="seconds") if newest else None,
+    }
+
+
 @router.get("/metrics")
 async def metrics(request: Request) -> dict:
     """Minimal internal metrics endpoint (FAIL-008): ingestion counters,
@@ -157,6 +196,8 @@ async def metrics(request: Request) -> dict:
         }
     except OSError:
         data["disk"] = {"error": "unavailable"}
+
+    data["memory"] = await _memory_counts(request)
 
     dump = latest_backup(settings)
     data["last_backup"] = (

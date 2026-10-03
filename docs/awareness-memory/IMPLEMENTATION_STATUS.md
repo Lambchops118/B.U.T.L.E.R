@@ -2,6 +2,18 @@
 
 This file reports implementation state, not documentation availability.
 
+## Current observability addition — Model & Memory dashboard tab (2026-10-03)
+
+The debug console has a new Model & Memory tab: first-vs-follow-up LLM latency
+per model, Ollama VRAM placement, recent turns, newest-turn prompt composition,
+tool schema size against call counts, and memory store row counts with prompt
+injection. Runtime `prompt_ready` telemetry adds `memory_block_chars` and
+`history_message_count`; awareness `/metrics` adds memory counts (no content).
+No migration, physical action, or memory-system behavior change. Restart the
+main agent and awareness backend to emit the new fields. Memory design gaps it
+exposes (empty stores, Postgres memories never injected) remain open owner
+decisions. See `SESSION_LOG.md` (2026-10-03).
+
 ## Current bounded repair — stale barge-in endpoint pins (2026-10-02)
 
 Barge-in was silently off: Windows re-enumerated the test rig's ReSpeaker and

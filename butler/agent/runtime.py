@@ -2591,6 +2591,10 @@ def run_command_stream(
             model=str(getattr(backend, "model", "unknown")),
             tool_count=len(tool_defs),
             message_count=len(messages),
+            # Sizes only, never content: lets the debug console show whether
+            # durable memory and replayed history actually reached the prompt.
+            memory_block_chars=len(memory_block or ""),
+            history_message_count=len(conversation_history),
             prompt_tokens_estimated=prompt_tokens_estimated,
             prompt_bytes=prompt_bytes,
             tool_build_ms=tool_build_ms,

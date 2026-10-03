@@ -161,8 +161,12 @@ class DebugDashboardDataTests(unittest.TestCase):
                 snapshot = service.snapshot(event_limit=5, interaction_limit=5)
 
         self.assertEqual(snapshot["schema_version"], 2)
-        self.assertEqual(snapshot["interaction_io"]["prompt_capture"]["status"], "not_available")
+        self.assertEqual(snapshot["interaction_io"]["prompt_capture"]["status"], "structure_only")
         self.assertEqual(snapshot["extensions"], [])
+        model_memory = snapshot["model_memory"]
+        self.assertEqual(model_memory["prompt_composition"]["status"], "not_available")
+        self.assertEqual(model_memory["memory_store"]["status"], "not_available")
+        self.assertEqual(model_memory["llm_rounds"]["latency_by_model"], [])
         self.assertIn("request_traces", snapshot["operations"])
         self.assertEqual(len(snapshot["system_health"]["history"]), 1)
 
@@ -304,6 +308,123 @@ class DebugDashboardDataTests(unittest.TestCase):
         self.assertEqual(result["jobs"][0]["status"], "failed")
         self.assertNotIn("request_text", result["jobs"][0])
         self.assertNotIn("error_message", result["jobs"][0])
+
+
+def _event(name: str, request_id: str, stamp: str, **fields) -> str:
+    return json.dumps({"timestamp": stamp, "request_id": request_id, "event": name, **fields})
+
+
+class ModelMemoryInsightTests(unittest.TestCase):
+    def test_round_stats_split_first_and_follow_up_rounds_and_count_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pipeline_telemetry_a.jsonl").write_text(
+                "\n".join([
+                    _event("prompt_ready", "r1", "2026-10-03T00:00:00Z", tool_count=27,
+                           memory_block_chars=0, history_message_count=4),
+                    _event("llm_round_completed", "r1", "2026-10-03T00:00:01Z", round=1,
+                           model="m", llm_ttft_ms=1600.0, provider_prompt_tokens=6500,
+                           provider_completion_tokens=20),
+                    _event("tool_call_completed", "r1", "2026-10-03T00:00:02Z",
+                           tool_name="set_smart_plug", tool_ms=300.0, failed=False),
+                    _event("llm_round_completed", "r1", "2026-10-03T00:00:03Z", round=2,
+                           model="m", llm_ttft_ms=250.0, provider_prompt_tokens=6560,
+                           provider_completion_tokens=3),
+                    _event("prompt_ready", "r2", "2026-10-03T00:01:00Z", tool_count=27,
+                           memory_block_chars=120),
+                    "not-json",
+                ]),
+                encoding="utf-8",
+            )
+            from butler.debug_dashboard.insights import read_llm_round_stats
+
+            stats = read_llm_round_stats(root)
+
+        rows = {row["round_kind"]: row for row in stats["latency_by_model"]}
+        self.assertEqual(rows["first round"]["ttft_p50_ms"], 1600.0)
+        self.assertEqual(rows["follow-up round"]["ttft_p50_ms"], 250.0)
+        self.assertEqual(stats["tool_calls"]["set_smart_plug"]["calls"], 1)
+        turn = stats["recent_turns"][0]
+        self.assertEqual((turn["first_ttft_ms"], turn["followup_ttft_ms"]), (1600.0, 250.0))
+        self.assertEqual(turn["completion_tokens"], 23)
+        self.assertEqual(stats["memory_injection"]["prompts_reporting"], 2)
+        self.assertEqual(stats["memory_injection"]["prompts_with_memory"], 1)
+
+    def test_prompt_composition_reports_sizes_without_text(self) -> None:
+        secret = "PRIVATE-USER-TEXT"
+        tools = [
+            {"type": "function", "function": {"name": "big_tool", "description": "x" * 400}},
+            {"type": "function", "function": {"name": "small_tool", "description": "y"}},
+        ]
+        request = {
+            "model": "m",
+            "tools": tools,
+            "messages": [
+                {"role": "system", "content": "## Base Soul Document\n" + "s" * 300},
+                {"role": "system", "content": "## Memory Context (Runtime Injected)\nfact"},
+                {"role": "user", "content": "earlier " + secret},
+                {"role": "assistant", "content": "reply"},
+                {"role": "user", "content": secret},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "llm_io_a.jsonl").write_text(
+                "\n".join([
+                    json.dumps({"direction": "sent", "operation": "warmup", "payload": request}),
+                    json.dumps({"direction": "sent", "operation": "stream", "timestamp": "t", "payload": request}),
+                    json.dumps({"direction": "received", "operation": "stream",
+                                "payload": {"usage": {"prompt_tokens": 321}}}),
+                ]),
+                encoding="utf-8",
+            )
+            from butler.debug_dashboard.insights import read_prompt_composition
+
+            result = read_prompt_composition(root)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["requests_scanned"], 1)
+        self.assertEqual(result["requests_with_memory_block"], 1)
+        self.assertEqual(result["provider_prompt_tokens"], 321)
+        self.assertEqual([tool["name"] for tool in result["tools"]], ["big_tool", "small_tool"])
+        sections = {section["section"] for section in result["sections"]}
+        self.assertTrue({"system prompt", "memory block", "conversation history", "user turn", "tool schemas"} <= sections)
+        self.assertNotIn(secret, json.dumps(result))
+
+    def test_ollama_placement_computes_gpu_share(self) -> None:
+        payload = {"models": [{"name": "m:latest", "size": 1000, "size_vram": 750, "context_length": 16384}]}
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        with mock.patch("butler.debug_dashboard.insights.urllib.request.urlopen", return_value=response) as opened:
+            from butler.debug_dashboard.insights import read_ollama_placement
+
+            result = read_ollama_placement("http://127.0.0.1:11434/v1")
+
+        self.assertEqual(opened.call_args[0][0].full_url, "http://127.0.0.1:11434/api/ps")
+        self.assertEqual(result["models"][0]["gpu_percent"], 75.0)
+
+    def test_memory_store_stats_count_rows_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "memory.sqlite3"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                """
+                CREATE TABLE sessions (session_id TEXT);
+                CREATE TABLE messages (id INTEGER, created_at TEXT);
+                CREATE TABLE facts (scope TEXT, key TEXT, value TEXT, updated_at TEXT);
+                CREATE TABLE summaries (scope TEXT);
+                INSERT INTO facts VALUES ('user', 'units', 'PRIVATE-FACT', '2026-10-03');
+                """
+            )
+            connection.commit()
+            connection.close()
+            from butler.debug_dashboard.insights import read_memory_store_stats
+
+            result = read_memory_store_stats(db_path)
+
+        self.assertEqual(result["counts"]["facts"], 1)
+        self.assertEqual(result["facts_by_scope"], {"user": 1})
+        self.assertNotIn("PRIVATE-FACT", json.dumps(result))
 
 
 if __name__ == "__main__":

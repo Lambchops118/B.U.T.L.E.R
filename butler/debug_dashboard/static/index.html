@@ -42,6 +42,7 @@
     <button role="tab" id="tab-health" aria-controls="panel-health" aria-selected="false" data-tab="health">System Health</button>
     <button role="tab" id="tab-audio" aria-controls="panel-audio" aria-selected="false" data-tab="audio">Live Audio</button>
     <button role="tab" id="tab-operations" aria-controls="panel-operations" aria-selected="false" data-tab="operations">Operations</button>
+    <button role="tab" id="tab-model" aria-controls="panel-model" aria-selected="false" data-tab="model">Model &amp; Memory</button>
     <button role="tab" id="tab-raw" aria-controls="panel-raw" aria-selected="false" data-tab="raw">Raw Events</button>
   </nav>
 
@@ -137,6 +138,39 @@
           <div id="runtime-inspector" class="window-body"></div>
         </section>
       </div>
+    </section>
+
+    <section id="panel-model" class="tab-panel" role="tabpanel" aria-labelledby="tab-model" hidden>
+      <div id="model-summary" class="status-strip">Waiting for model and memory data...</div>
+      <div id="model-kpis" class="kpi-grid"></div>
+      <div class="split-grid">
+        <section class="window">
+          <h2>LLM LATENCY SPLIT (FIRST VS FOLLOW-UP ROUND)</h2>
+          <div class="window-body table-scroll"><table id="latency-split-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>OLLAMA MODEL PLACEMENT</h2>
+          <div class="window-body table-scroll"><table id="ollama-table"></table></div>
+        </section>
+      </div>
+      <section class="window">
+        <h2>RECENT TURNS</h2>
+        <div class="window-body table-scroll"><table id="recent-turns-table"></table></div>
+      </section>
+      <div class="split-grid">
+        <section class="window">
+          <h2>PROMPT COMPOSITION (NEWEST TURN)</h2>
+          <div class="window-body table-scroll"><table id="composition-table"></table></div>
+        </section>
+        <section class="window">
+          <h2>TOOL SCHEMAS: SIZE VS USE</h2>
+          <div class="window-body table-scroll tall"><table id="tool-schema-table"></table></div>
+        </section>
+      </div>
+      <section class="window">
+        <h2>MEMORY STORES</h2>
+        <div class="window-body table-scroll"><table id="memory-table"></table></div>
+      </section>
     </section>
 
     <section id="panel-raw" class="tab-panel" role="tabpanel" aria-labelledby="tab-raw" hidden>

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "debug-dashboard",
+      "runtimeExecutable": ".venv-runtime/Scripts/python.exe",
+      "runtimeArgs": ["-m", "butler.debug_dashboard"],
+      "port": 8787
+    }
+  ]
+}

@@ -315,7 +315,10 @@ Start it with the main Python environment:
 .venv-runtime\Scripts\python.exe -m butler.debug_dashboard
 ```
 
-Then open `http://127.0.0.1:8787`. The page polls once per second by default,
+Then open `http://127.0.0.1:8787`, or click **Open debug console** in the
+launcher: it reuses a console that is already running, otherwise starts one on
+loopback, opens it in the default browser, and stops it when the launcher
+closes. It works whether or not Butler itself is running. The page polls once per second by default,
 can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
 GPU, memory, and disk history in the dashboard process so browser reloads do not
 erase it; at most 300 downsampled points are transported per snapshot. Source
@@ -335,11 +338,32 @@ metrics exporter remains a separate task.
 
 The dashboard defaults to loopback because it displays private transcripts and
 has no authentication. A non-loopback `--host` is refused unless the operator
-also passes `--allow-remote`; use that only on a trusted network. Exact prompt
-text, tool arguments, raw PCM, and continuously sampled idle-room RMS are
-not currently persisted by the runtime, so the page labels those feeds as
-unavailable instead of inventing data. Adding them requires a separate,
-explicitly bounded and privacy-reviewed runtime instrumentation task.
+also passes `--allow-remote`; use that only on a trusted network. Pipeline
+telemetry does not persist prompt text, tool arguments, raw PCM, or
+continuously sampled idle-room RMS. Launcher-managed runs do write exact
+prompts to `butler/logs/llm_io_*.jsonl` (ADR-043); the console reads those for
+structure only and never displays their text.
+
+The **Model & Memory** tab answers "where does the time and the prompt go?":
+
+- **LLM latency split** — time to first token per model, split into the first
+  round of a turn and follow-up rounds after a tool call. A large gap between
+  them means the model server re-reads most of the prompt each turn (for
+  example, Ministral's template places tool schemas after the history).
+- **Ollama model placement** — from `/api/ps`: loaded model, size, how much of
+  it is in VRAM, and context length. Anything under 100% GPU is flagged.
+- **Recent turns** — per request: first and follow-up time to first token,
+  prompt/output tokens, tool count, replayed history messages, and whether a
+  memory block was injected (`unreported` for turns before that field existed).
+- **Prompt composition** — the newest real turn from the LLM I/O transcript,
+  broken into tool schemas, system prompt, situation snapshot, memory block,
+  history, and so on, with estimated tokens and share.
+- **Tool schemas: size vs use** — every advertised tool's schema size beside
+  its call count across the last 40 telemetry files; `NEVER_CALLED` marks
+  tools that cost prompt tokens without being used.
+- **Memory stores** — row counts (never content) for the SQLite fact store and
+  the awareness Postgres memories, plus how many recent prompts actually
+  carried a memory block.
 
 Stored conversation and voice-benchmark text is redacted in dashboard responses
 by default. Set `BUTLER_DEBUG_INCLUDE_CONTENT=1` only for a private debugging

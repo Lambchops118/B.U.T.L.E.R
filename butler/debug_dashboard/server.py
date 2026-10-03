@@ -31,6 +31,12 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from butler.config import load_environment
+from butler.debug_dashboard.insights import (
+    read_llm_round_stats,
+    read_memory_store_stats,
+    read_ollama_placement,
+    read_prompt_composition,
+)
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -811,6 +817,9 @@ class DebugSnapshotService:
         self.main_token = os.getenv(
             "BUTLER_TEXT_AGENT_TOKEN", os.getenv("TEXT_AGENT_API_TOKEN", "")
         ).strip()
+        self.ollama_url = os.getenv(
+            "BUTLER_LLM_BASE_URL", "http://127.0.0.1:11434/v1"
+        ).strip()
 
     def snapshot(
         self,
@@ -837,7 +846,7 @@ class DebugSnapshotService:
         host = self._cached("host", 1.0, self._host_snapshot)
         self._record_host_history(host)
         services = list(self._cached("services", 2.0, self._service_health))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             metrics_future = executor.submit(
                 self._cached,
                 "awareness_metrics",
@@ -863,9 +872,26 @@ class DebugSnapshotService:
                     f"{self.main_url}/health", token=self.main_token
                 ),
             )
+            ollama_future = executor.submit(
+                self._cached,
+                "ollama_placement",
+                3.0,
+                lambda: read_ollama_placement(self.ollama_url),
+            )
             awareness_metrics = metrics_future.result()
             awareness_actions = actions_future.result()
             main_runtime = main_future.result()
+            ollama_placement = ollama_future.result()
+        # Wider scans than the live window; refreshed less often.
+        round_stats = self._cached(
+            "llm_round_stats", 10.0, lambda: read_llm_round_stats(self.log_root)
+        )
+        composition = self._cached(
+            "prompt_composition", 10.0, lambda: read_prompt_composition(self.log_root)
+        )
+        memory_store = self._cached(
+            "memory_store_stats", 5.0, lambda: read_memory_store_stats(self.memory_db)
+        )
         visible_benchmarks = self._visible_benchmarks(benchmarks)
         visible_messages = self._visible_messages(messages)
         events = telemetry.get("events", [])
@@ -895,14 +921,14 @@ class DebugSnapshotService:
                     ),
                 },
                 "prompt_capture": {
-                    "status": "not_available",
+                    "status": "structure_only",
                     "reason": (
-                        "The runtime persists prompt sizes and token counts, but intentionally does not "
-                        "persist exact prompt text or tool arguments."
+                        "Pipeline telemetry persists prompt sizes and token counts only. Launcher-managed "
+                        "runs also write exact prompts to butler/logs/llm_io_*.jsonl (ADR-043)."
                     ),
                     "integration_note": (
-                        "Exact prompt inspection needs a future opt-in, bounded runtime debug hook. "
-                        "No production prompt capture was added by this dashboard."
+                        "This console reads those transcripts for structure only -- section sizes and "
+                        "tool schema sizes on the Model & Memory tab -- and never displays their text."
                     ),
                 },
             },
@@ -921,6 +947,17 @@ class DebugSnapshotService:
                 "awareness_metrics": awareness_metrics,
                 "actions": awareness_actions,
                 "main_runtime": main_runtime,
+            },
+            "model_memory": {
+                "llm_rounds": round_stats,
+                "prompt_composition": composition,
+                "ollama": ollama_placement,
+                "memory_store": memory_store,
+                "awareness_memory": {
+                    "status": awareness_metrics.get("status"),
+                    "reason": awareness_metrics.get("reason"),
+                    "data": (awareness_metrics.get("data") or {}).get("memory"),
+                },
             },
             "extensions": [],
         }

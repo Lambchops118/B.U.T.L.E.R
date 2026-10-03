@@ -328,6 +328,104 @@ function renderOperations(snapshot) {
   runtime.appendChild(pre);
 }
 
+function shareCell(percent) {
+  const td = document.createElement("td");
+  td.className = "waterfall";
+  const row = document.createElement("div"); row.className = "waterfall-row";
+  const label = document.createElement("span"); label.textContent = `${number(percent)}%`;
+  const track = document.createElement("span"); track.className = "waterfall-track";
+  const bar = document.createElement("span"); bar.className = "waterfall-bar"; bar.style.width = `${Math.max(1, Number(percent) || 0)}%`;
+  track.appendChild(bar); row.append(label, track); td.appendChild(row);
+  return td;
+}
+
+function dateTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString([], { hour12: false });
+}
+
+function ms(value) { return value === null || value === undefined ? "--" : `${number(value, 0)} ms`; }
+
+function renderModelMemory(snapshot) {
+  const data = snapshot.model_memory || {};
+  const rounds = data.llm_rounds || { latency_by_model: [], recent_turns: [], tool_calls: {}, window: {}, memory_injection: {} };
+  const composition = data.prompt_composition || { status: "not_available" };
+  const ollama = data.ollama || { status: "unavailable", models: [] };
+  const store = data.memory_store || { status: "not_available" };
+  const awareness = data.awareness_memory || { status: "unavailable" };
+  const window = rounds.window || {};
+
+  // Headline numbers come from the model that answered most recently.
+  const currentModel = rounds.recent_turns?.[0]?.model;
+  const latencyFor = (kind) => (rounds.latency_by_model || []).find((row) => row.model === currentModel && row.round_kind === kind) || {};
+  const first = latencyFor("first round"); const follow = latencyFor("follow-up round");
+  const toolSection = (composition.sections || []).find((section) => section.section === "tool schemas");
+  const loaded = (ollama.models || [])[0];
+  const injection = rounds.memory_injection || {};
+  const awarenessTotal = awareness.data?.total;
+
+  const summary = byId("model-summary");
+  summary.textContent = `telemetry window: ${window.files_scanned || 0} file(s), ${window.turns || 0} turn(s), ${dateTime(window.oldest)} .. ${dateTime(window.newest)} | prompt source: ${text(composition.source, composition.status)} | ollama: ${ollama.status} | awareness memory: ${awareness.status}`;
+  const degraded = ollama.status !== "available" || (loaded && loaded.gpu_percent !== null && loaded.gpu_percent < 100);
+  summary.className = `status-strip ${degraded ? "degraded" : ""}`;
+
+  const kpis = byId("model-kpis"); clear(kpis);
+  kpis.append(
+    kpi("LOADED MODEL", loaded ? text(loaded.name) : "NONE", loaded ? `${number(loaded.gpu_percent)}% in VRAM / ctx ${text(loaded.context_length)}` : text(ollama.reason, "no model resident")),
+    kpi("FIRST-ROUND TTFT P50", ms(first.ttft_p50_ms), `${text(currentModel)} / n=${first.count || 0} / p95 ${ms(first.ttft_p95_ms)}`),
+    kpi("FOLLOW-UP TTFT P50", ms(follow.ttft_p50_ms), `after a tool call / n=${follow.count || 0}`),
+    kpi("PROMPT SIZE", composition.status === "available" ? `~${number(composition.est_tokens, 0)} tok` : "--", composition.provider_prompt_tokens ? `${composition.provider_prompt_tokens} provider tokens` : "estimate (chars / 3.5)"),
+    kpi("TOOL SCHEMA SHARE", toolSection ? `${number(toolSection.share_percent)}%` : "--", `${(composition.tools || []).length} tools / ~${number(toolSection?.est_tokens, 0)} tok`),
+    kpi("MEMORY FACTS", store.counts ? String(store.counts.facts) : "--", `SQLite store; awareness: ${awarenessTotal === undefined || awarenessTotal === null ? "unavailable" : awarenessTotal}`),
+    kpi("MEMORY INJECTED", injection.prompts_reporting ? `${injection.prompts_with_memory}/${injection.prompts_reporting}` : "--", "turns whose prompt carried a memory block"),
+  );
+
+  const latencyRows = (rounds.latency_by_model || []).map((row) => [
+    cell(row.model), cell(row.round_kind), cell(row.count), cell(ms(row.ttft_p50_ms), "nowrap"), cell(ms(row.ttft_p95_ms), "nowrap"), cell(ms(row.request_p50_ms), "nowrap"), cell(number(row.prompt_tokens_p50, 0)),
+  ]);
+  renderTable(byId("latency-split-table"), ["MODEL", "ROUND", "N", "TTFT P50", "TTFT P95", "REQUEST P50", "PROMPT TOK P50"], latencyRows, "No llm_round_completed telemetry in the scanned window.");
+
+  const ollamaRows = (ollama.models || []).map((model) => [
+    cell(model.name), cell(`${text(model.parameter_size)} ${text(model.quantization, "")}`), cell(bytes(model.size_bytes)), cell(bytes(model.vram_bytes)),
+    badge(model.gpu_percent === null ? "unknown" : model.gpu_percent >= 100 ? "healthy" : "degraded"), cell(`${number(model.gpu_percent)}% GPU`), cell(model.context_length), cell(shortTime(model.expires_at)),
+  ]);
+  renderTable(byId("ollama-table"), ["MODEL", "PARAMS / QUANT", "SIZE", "IN VRAM", "PLACEMENT", "SPLIT", "CONTEXT", "EXPIRES"], ollamaRows, ollama.status === "available" ? "Ollama is running but no model is loaded." : `Ollama unavailable: ${text(ollama.reason)}`);
+
+  const turnRows = (rounds.recent_turns || []).filter((turn) => matchesFilter(turn.request_id, turn.model)).map((turn) => [
+    cell(shortTime(turn.timestamp), "nowrap"), cell(turn.request_id, "nowrap"), cell(turn.model), cell(turn.rounds),
+    cell(ms(turn.first_ttft_ms), "nowrap"), cell(ms(turn.followup_ttft_ms), "nowrap"), cell(turn.prompt_tokens), cell(turn.completion_tokens),
+    cell(turn.tool_count), cell(turn.history_message_count), cell(turn.memory_block_chars === null || turn.memory_block_chars === undefined ? "unreported" : turn.memory_block_chars ? `${turn.memory_block_chars} chars` : "none"),
+  ]);
+  renderTable(byId("recent-turns-table"), ["TIME", "REQUEST", "MODEL", "ROUNDS", "1ST TTFT", "FOLLOW-UP TTFT", "PROMPT TOK", "OUT TOK", "TOOLS", "HISTORY MSGS", "MEMORY BLOCK"], turnRows, "No recent LLM turns.");
+
+  const sectionRows = (composition.sections || []).map((section) => [
+    cell(section.section), cell(section.chars), cell(`~${number(section.est_tokens, 0)}`), shareCell(section.share_percent),
+  ]);
+  renderTable(byId("composition-table"), ["SECTION", "CHARS", "EST TOKENS", "SHARE"], sectionRows, text(composition.reason, "No prompt transcript available."));
+
+  const calls = rounds.tool_calls || {};
+  const toolRows = (composition.tools || []).filter((tool) => matchesFilter(tool.name)).map((tool) => {
+    const usage = calls[tool.name] || { calls: 0, failures: 0, last_called: "" };
+    return [
+      cell(tool.name), cell(tool.chars), cell(`~${tool.est_tokens}`), cell(usage.calls), cell(usage.failures),
+      cell(usage.last_called ? dateTime(usage.last_called) : "--", "nowrap"), badge(usage.calls ? "used" : "never_called"),
+    ];
+  });
+  renderTable(byId("tool-schema-table"), ["TOOL", "CHARS", "EST TOKENS", "CALLS", "FAIL", "LAST CALLED", "USE"], toolRows, "No tool schemas in the newest prompt transcript.");
+
+  const awarenessData = awareness.data || {};
+  const memoryRows = [
+    [cell("conversation store"), cell("facts"), cell(store.counts?.facts), cell(Object.entries(store.facts_by_scope || {}).map(([scope, count]) => `${scope}: ${count}`).join(", ") || "--", "wrap")],
+    [cell("conversation store"), cell("summaries"), cell(store.counts?.summaries), cell("rolling session summaries")],
+    [cell("conversation store"), cell("messages / sessions"), cell(store.counts ? `${store.counts.messages} / ${store.counts.sessions}` : "--"), cell(`oldest message ${dateTime(store.oldest_message_at)}; file created ${dateTime(store.file_created_at)}`, "wrap")],
+    [cell("awareness Postgres"), cell("memories"), cell(awarenessData.error ? "error" : text(awarenessData.total, "unavailable")), cell(awarenessData.error || (awarenessData.by_status || []).map((row) => `${row.status}/${row.memory_type}: ${row.count}`).join(", ") || text(awareness.reason, "--"), "wrap")],
+    [cell("awareness Postgres"), cell("provenance rows"), cell(text(awarenessData.provenance_rows, "--")), cell(`newest memory ${text(awarenessData.newest_created_at)}`)],
+    [cell("prompt injection"), cell("turns with memory block"), cell(injection.prompts_reporting ? `${injection.prompts_with_memory} / ${injection.prompts_reporting}` : "--"), cell(`${text(injection.note)} Transcript scan: ${text(composition.requests_with_memory_block, "--")} of ${text(composition.requests_scanned, "--")} requests.`, "wrap")],
+  ];
+  renderTable(byId("memory-table"), ["STORE", "ITEM", "VALUE", "DETAIL"], memoryRows);
+}
+
 function prettyMetric(name) { return String(name).replaceAll("_", " ").toUpperCase(); }
 
 function latestPoint(values) { return values && values.length ? values[values.length - 1] : null; }
@@ -411,7 +509,7 @@ function render(snapshot) {
   byId("schema-version").textContent = text(snapshot.schema_version);
   byId("snapshot-time").textContent = new Date(snapshot.generated_at).toLocaleString();
   byId("footer-source").textContent = `pipeline files: ${snapshot.interaction_io.pipeline.files_scanned}; benchmark files: ${snapshot.interaction_io.voice_benchmarks.files_scanned}; generated ${snapshot.generated_at}`;
-  renderInteractions(snapshot); renderHealth(snapshot); renderAudio(snapshot); renderOperations(snapshot); renderRaw(snapshot); renderExtensions(snapshot);
+  renderInteractions(snapshot); renderHealth(snapshot); renderAudio(snapshot); renderOperations(snapshot); renderModelMemory(snapshot); renderRaw(snapshot); renderExtensions(snapshot);
 }
 
 async function fetchSnapshot() {
@@ -449,7 +547,7 @@ document.querySelectorAll('[role="tab"]').forEach(bindTab);
 byId("refresh-now").addEventListener("click", () => { state.paused = false; byId("pause-toggle").textContent = "Pause"; fetchSnapshot(); });
 byId("pause-toggle").addEventListener("click", () => { state.paused = !state.paused; byId("pause-toggle").textContent = state.paused ? "Resume" : "Pause"; byId("connection-text").textContent = state.paused ? "PAUSED" : "LIVE / POLLING"; if (state.paused) clearTimeout(state.timer); else fetchSnapshot(); });
 byId("refresh-rate").addEventListener("change", schedule);
-filterInput.addEventListener("input", () => { if (state.snapshot) { renderInteractions(state.snapshot); renderOperations(state.snapshot); renderRaw(state.snapshot); } });
+filterInput.addEventListener("input", () => { if (state.snapshot) { renderInteractions(state.snapshot); renderOperations(state.snapshot); renderModelMemory(state.snapshot); renderRaw(state.snapshot); } });
 setInterval(() => { byId("snapshot-age").textContent = state.receivedAt ? `${((Date.now() - state.receivedAt) / 1000).toFixed(1)} s` : "--"; }, 250);
 
 const requestedTab = location.hash.slice(1);

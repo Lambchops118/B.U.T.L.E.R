@@ -20,6 +20,7 @@ from tkinter import messagebox, ttk
 from . import config
 from .config import LauncherConfig
 from .core import Supervisor
+from .dashboard import DashboardProcess
 from butler.llm_debug import LLM_DEBUG_PREFIX
 from butler.voice.microphone_profiles import MICROPHONE_PROFILES
 
@@ -67,6 +68,7 @@ class LauncherGUI:
         self.gpus = config.detect_gpus()
         self.supervisor: Supervisor | None = None
         self._log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.dashboard = DashboardProcess(log=self._enqueue_log)
         self._llm_queue: "queue.Queue[dict[str, object]]" = queue.Queue()
 
         root.title("Butler Launcher")
@@ -238,6 +240,10 @@ class LauncherGUI:
             buttons, text="Clear chat history…", command=self._on_clear_chat_history
         )
         self.btn_clear_chat.pack(side="left")
+        self.btn_dashboard = ttk.Button(
+            buttons, text="Open debug console", command=self._on_open_dashboard
+        )
+        self.btn_dashboard.pack(side="left", padx=6)
         self.status = ttk.Label(buttons, text="idle")
         self.status.pack(side="right")
 
@@ -710,11 +716,37 @@ class LauncherGUI:
         self.btn_start.config(state="normal")
         self.btn_stop.config(state="disabled")
 
+    def _on_open_dashboard(self) -> None:
+        # Works whether or not Butler is running: the console only reads logs
+        # and databases. Starting it can take a few seconds, so stay off the
+        # Tk thread and only touch widgets back on it.
+        self.btn_dashboard.config(state="disabled")
+        threading.Thread(target=self._open_dashboard_worker, daemon=True).start()
+
+    def _open_dashboard_worker(self) -> None:
+        import webbrowser
+
+        try:
+            url = self.dashboard.ensure_running()
+            webbrowser.open(url)
+            self.root.after(0, lambda: self._on_dashboard_opened(url, None))
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+            self.root.after(0, lambda: self._on_dashboard_opened(None, exc))
+
+    def _on_dashboard_opened(self, url: str | None, error: Exception | None) -> None:
+        self.btn_dashboard.config(state="normal")
+        if error is not None:
+            self._append_log("dashboard", f"open failed: {error}")
+            messagebox.showerror("Debug console", str(error))
+        else:
+            self._append_log("dashboard", f"opened {url}")
+
     def _on_close(self) -> None:
         if self.supervisor and self.supervisor.is_running():
             if not messagebox.askyesno("Quit", "Stop all Butler processes and quit?"):
                 return
             self.supervisor.stop()
+        self.dashboard.stop()
         self.root.destroy()
 
     # -- logging -----------------------------------------------------------

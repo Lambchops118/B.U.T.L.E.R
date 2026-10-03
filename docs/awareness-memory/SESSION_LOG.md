@@ -1440,3 +1440,58 @@ run live: no voice session or barge-in attempt was made by the agent.
 Observed but not fixed: in a bare process, querying the winrt endpoints before
 the first faster-whisper/onnxruntime import segfaults in onnxruntime 1.30
 (access violation); importing `butler.voice.agent` first avoids it.
+
+## 2026-10-03 — Debug console Model & Memory tab
+
+**Request:** Owner asked for the dashboard to surface four findings from a
+latency/memory investigation: first-vs-follow-up LLM latency (prompt-cache
+misses on Ministral), Ollama GPU placement, per-turn prompt composition and
+unused tool schemas, and whether memory is stored and injected at all.
+
+**Findings that motivated it (not fixed):** Ministral 3's chat template places
+`[AVAILABLE_TOOLS]` before the last user message, so each turn re-reads ~6.5k
+prompt tokens (first-round TTFT ~1.6 s vs ~0.25 s after a tool call). 14 of 27
+tool schemas (~2.7k tokens) were never called in 263 logged turns. Both memory
+stores were empty (SQLite facts 0, recreated 2026-10-02 22:45; awareness
+`memories` 0 with 74k events since 2026-07-26). Memory proposed into Postgres
+is never auto-injected into prompts; only SQLite facts are.
+
+**Change:** New `butler/debug_dashboard/insights.py` (bounded, read-only
+readers: telemetry round stats over the newest 40 files, LLM I/O transcript
+structure only, Ollama `/api/ps`, SQLite row counts) and a **Model & Memory**
+tab. `prompt_ready` telemetry now carries `memory_block_chars` and
+`history_message_count` (sizes only). Awareness `/metrics` gains a `memory`
+section with counts by status/type, provenance rows, and newest timestamp —
+never statements; a database error is reported as an error, not zero. The
+stale "prompts are not persisted" dashboard notice now cites ADR-043.
+
+**Validation:** `tests/test_debug_dashboard.py` 17 passed (4 new; one status
+assertion updated from `not_available` to `structure_only` because prompts are
+persisted by the launcher); new `tests/test_awareness_metrics_memory.py` 3
+passed in `.venv-awareness`; `tests/test_run_command_stream.py` 16 passed with
+two new field assertions; changed Python files compile; `node --check app.js`
+passes. Dashboard rendered live in the browser against real logs. Not run: the
+awareness `/metrics` route against a live backend (the API was not running);
+the main agent was not restarted, so live turns do not yet report the new
+fields.
+
+**Observed, not fixed:** `tests/test_run_command_stream.py` writes telemetry
+into the real `butler/logs/` directory; three such files from this session
+were identified by `process: test_run_command_stream` and removed.
+
+## 2026-10-03 — Launcher "Open debug console" button
+
+**Change:** New `butler/launcher/dashboard.py` (`DashboardProcess`) and an
+**Open debug console** button in the launcher GUI. It reuses a console already
+listening on 127.0.0.1:8787, otherwise starts `python -m butler.debug_dashboard`
+from `.venv-runtime` bound to loopback, waits up to 15 s for the port (failing
+fast if the child exits), opens the default browser, and stops only a console
+it started when the launcher window closes. Independent of the Supervisor, so
+it works with Butler stopped. Remote binding is unchanged (still requires the
+explicit `--allow-remote` flag).
+
+**Validation:** New `tests/test_launcher_dashboard.py` 3 passed; all launcher
+suites via `unittest discover -s tests -t tests -p "test_launcher*.py"` in
+`.venv-runtime`: 28 passed. Live helper check: started the console in 1.2 s,
+`/api/health` returned 200, and the port closed after `stop()`. The Tk button
+itself was not clicked in a live launcher window.
