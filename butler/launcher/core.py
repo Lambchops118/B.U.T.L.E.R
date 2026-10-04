@@ -495,6 +495,10 @@ class Supervisor:
         if self._cfg.start_main:
             local_url = f"http://127.0.0.1:{self._ports.text_agent}"
             discord_env["BUTLER_TEXT_AGENT_URL"] = local_url
+            # The frontend reads TALOS_TEXT_AGENT_URL first, so pin it too: a
+            # stale user-level value (e.g. a remote Tailscale address) would
+            # otherwise win and every reply would time out.
+            discord_env["TALOS_TEXT_AGENT_URL"] = local_url
             self._say(f"pointing discord frontend at local main agent: {local_url}")
 
         # 1) Python service — uses the Discord repo's own venv (faster-whisper,

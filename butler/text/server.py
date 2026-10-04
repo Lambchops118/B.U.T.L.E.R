@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from butler.agent import runtime as agent_runtime
+from butler.agent import tool_access
 from butler.config import env_bool, load_environment
 from butler.jobs import get_default_job_store
 from butler.messages import AnnouncementPayload, EventPayload, Message, TextPayload
@@ -456,9 +457,10 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         session_id = str(body.get("session_id") or f"text:{self.client_address[0]}").strip()
         source = str(body.get("source") or "http").strip()
         requested_mode = _requested_mode_from_body(body)
+        access = self._request_tool_access(body, source)
 
         # Applies the state change now; the model still phrases the reply.
-        sleep_note = self._sleep_phrase_note(command, source)
+        sleep_note = self._sleep_phrase_note(command, source, access)
         if sleep_note is not None:
             # Acknowledging a good night is a one-line conversational reply, not
             # a task. Pin it to the foreground so the classifier cannot hand it
@@ -476,6 +478,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                     reply_queue=reply_queue,
                     requested_mode=requested_mode,
                     extra_context=sleep_note,
+                    tool_access=access,
                 ),
             )
         )
@@ -523,10 +526,11 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
 
         session_id = str(body.get("session_id") or "voice").strip() or "voice"
         source = str(body.get("source") or "voice").strip()
+        access = self._request_tool_access(body, source)
 
         # Applies the state change now, before the model runs, so the panel
         # dims without waiting on generation; the model still says the words.
-        sleep_note = self._sleep_phrase_note(command, source)
+        sleep_note = self._sleep_phrase_note(command, source, access)
 
         snapshot_started = time.perf_counter()
         snapshot = _stream_state_snapshot(body)
@@ -579,6 +583,7 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
                 request_id=request_id,
                 telemetry_callback=send_telemetry,
                 cancel=cancel_token,
+                tool_access=access,
             ):
                 if not delta:
                     continue
@@ -623,7 +628,20 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
             # still show whatever was said and heard.
             self._publish_turn_banner(command, "".join(full_parts).strip())
 
-    def _sleep_phrase_note(self, command: str, source: str) -> str | None:
+    def _request_tool_access(self, body: dict[str, Any], source: str) -> str:
+        """Tool access for this request; see :mod:`butler.agent.tool_access`."""
+        access = tool_access.resolve_request_access(
+            source,
+            body.get("tool_access"),
+            self.headers.get(tool_access.PRIVILEGE_HEADER),
+        )
+        if access != tool_access.FULL:
+            print(f"[text-agent] restricted tool access for source={source!r}")
+        return access
+
+    def _sleep_phrase_note(
+        self, command: str, source: str, access: str = tool_access.FULL
+    ) -> str | None:
         """Apply "butler, good night" / "butler, wake up" before the model runs.
 
         Recognising the phrase and flipping the flag is deterministic and
@@ -633,7 +651,12 @@ class TextAgentRequestHandler(BaseHTTPRequestHandler):
         wording: this returns a note describing what just happened, which the
         caller passes to the agent as extra context. ``None`` means this was an
         ordinary command and the turn is untouched.
+
+        Restricted callers cannot change house state, so for them this is a
+        no-op and the phrase is just ordinary conversation.
         """
+        if access != tool_access.FULL:
+            return None
         try:
             note = sleep_mode.apply_phrase(command, source=source)
         except RuntimeError as exc:

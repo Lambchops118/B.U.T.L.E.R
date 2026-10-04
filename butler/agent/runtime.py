@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterator
 
 import openai
 
+from butler.agent import tool_access as _tool_access
 from butler.agent.prompting import (
     DEFAULT_DOMAIN_OVERLAYS,
     PromptContext,
@@ -594,7 +595,8 @@ def _order_tools_by_volatility(
 
 
 def _build_tool_definitions(
-    mcp_client: Any
+    mcp_client: Any,
+    tool_access: str = _tool_access.FULL,
 ) -> list[dict[str, Any]]:
     if TOOLS_DISABLED:
         # Debug switch for timing the model alone. The OpenAI-compatible backend
@@ -609,6 +611,10 @@ def _build_tool_definitions(
         tool_defs = _reduce_tool_surface(tool_defs)
 
     tool_defs = _order_tools_by_volatility(tool_defs)
+    if _tool_access.normalize(tool_access) != _tool_access.FULL:
+        offered = len(tool_defs)
+        tool_defs = _tool_access.filter_tool_definitions(tool_defs, tool_access)
+        print(f"Restricted caller: offering {len(tool_defs)} of {offered} tools")
 
     try:
         tool_bytes = len(json.dumps(tool_defs).encode("utf-8"))
@@ -1892,6 +1898,7 @@ def _collect_tool_outputs(
     request_id: str | None = None,
     telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
     round_number: int = 0,
+    tool_access: str = _tool_access.FULL,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     tool_outputs = []
     tool_events: list[dict[str, Any]] = []
@@ -1902,7 +1909,12 @@ def _collect_tool_outputs(
         print(f"FUNCTION CALL DETECTED: {item.name} with args {item.arguments}")
         started = time.perf_counter()
         try:
-            if item.name in HOST_TOOL_NAMES:
+            if not _tool_access.is_tool_permitted(item.name, tool_access):
+                # Second line of defense: restricted callers are never offered
+                # these tools, but a pre-routed or hallucinated call must not run.
+                print(f"Refusing tool '{item.name}' for restricted caller")
+                result = _tool_access.refusal(item.name)
+            elif item.name in HOST_TOOL_NAMES:
                 result = _invoke_host_tool(
                     mcp_client,
                     item.name,
@@ -1958,12 +1970,13 @@ def run_command(
     runtime_lane: str = "foreground",
     extra_context: str | None = None,
     benchmark: Any = None,
+    tool_access: str = _tool_access.FULL,
 ) -> str:
     if benchmark:
         benchmark.set_command(command)
 
     mcp_client = get_local_mcp_client()
-    tool_defs = _build_tool_definitions(mcp_client)
+    tool_defs = _build_tool_definitions(mcp_client, tool_access)
     mode = _normalize_interaction_mode(interaction_mode or _infer_interaction_mode(session_id))
     memory_store = _get_memory_store()
     if memory_store is not None:
@@ -2028,6 +2041,7 @@ def run_command(
                     session_id=session_id,
                     runtime_lane=runtime_lane,
                     round_number=rounds,
+                    tool_access=tool_access,
                 )
                 if recent_events:
                     tool_events.extend(recent_events)
@@ -2418,6 +2432,7 @@ def _execute_chat_tool_calls(
     request_id: str | None = None,
     telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
     round_number: int = 0,
+    tool_access: str = _tool_access.FULL,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Execute streamed tool calls and return (tool result messages, events).
 
@@ -2430,7 +2445,12 @@ def _execute_chat_tool_calls(
         print(f"FUNCTION CALL DETECTED (stream): {call.name} with args {call.arguments}")
         started = time.perf_counter()
         try:
-            if call.name in HOST_TOOL_NAMES:
+            if not _tool_access.is_tool_permitted(call.name, tool_access):
+                # Second line of defense: restricted callers are never offered
+                # these tools, but a pre-routed or hallucinated call must not run.
+                print(f"Refusing tool '{call.name}' for restricted caller")
+                result = _tool_access.refusal(call.name)
+            elif call.name in HOST_TOOL_NAMES:
                 result = _invoke_host_tool(
                     mcp_client,
                     call.name,
@@ -2480,6 +2500,7 @@ def run_command_stream(
     request_id: str | None = None,
     telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
     cancel: threading.Event | None = None,
+    tool_access: str = _tool_access.FULL,
 ):
     """Streaming variant of :func:`run_command`.
 
@@ -2530,7 +2551,7 @@ def run_command_stream(
         memory_context_ms = round((time.perf_counter() - memory_started) * 1000.0, 1)
         tool_build_started = time.perf_counter()
         mcp_client = get_local_mcp_client()
-        tool_defs = _build_tool_definitions(mcp_client)
+        tool_defs = _build_tool_definitions(mcp_client, tool_access)
         tool_build_ms = round((time.perf_counter() - tool_build_started) * 1000.0, 1)
         prompt_assembly_started = time.perf_counter()
         prompt_sections = _build_prompt_sections(
@@ -2628,6 +2649,7 @@ def run_command_stream(
                 request_id=telemetry_id,
                 telemetry_callback=telemetry_callback,
                 round_number=0,
+                tool_access=tool_access,
             )
             tool_execution_ms = round(
                 (time.perf_counter() - tool_execution_started) * 1000.0, 1
@@ -2846,6 +2868,7 @@ def run_command_stream(
                     request_id=telemetry_id,
                     telemetry_callback=telemetry_callback,
                     round_number=round_number,
+                    tool_access=tool_access,
                 )
                 action_results = [
                     event

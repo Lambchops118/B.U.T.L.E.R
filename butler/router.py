@@ -95,6 +95,7 @@ def _run_agent_command(
     interaction_mode: str = "text",
     runtime_lane: str = "foreground",
     extra_context: str | None = None,
+    tool_access: str = "full",
 ) -> str:
     response_text = agent_runtime.run_command(
         command,
@@ -103,6 +104,7 @@ def _run_agent_command(
         interaction_mode=interaction_mode,
         runtime_lane=runtime_lane,
         extra_context=extra_context,
+        tool_access=tool_access,
     )
     display_sink.put(("VOICE_CMD", command, response_text))
     return response_text
@@ -378,6 +380,7 @@ def router_loop(central_queue: queue.Queue, display_sink, stop_signal: Optional[
                     allow_model_route=VOICE_MODEL_ROUTING_ENABLED or interaction_mode != "voice",
                 )
                 decision = _enforce_foreground_for_sensitive_actions(tp.command, decision)
+                restricted = tp.tool_access != "full"
                 # A typed command is presence evidence too, just a weaker one:
                 # it proves someone is at a keyboard, not that they are in the
                 # room, so it is reported with its own modality.
@@ -401,6 +404,7 @@ def router_loop(central_queue: queue.Queue, display_sink, stop_signal: Optional[
                             session_id=tp.session_id,
                             interaction_mode=interaction_mode,
                             extra_context=runtime_context,
+                            tool_access=tp.tool_access,
                         )
                         if tp.reply_queue is not None:
                             tp.reply_queue.put(
@@ -414,7 +418,9 @@ def router_loop(central_queue: queue.Queue, display_sink, stop_signal: Optional[
                             )
                         continue
 
-                    if decision.mode == "background":
+                    # Background jobs run with full tool access, so a
+                    # restricted caller's turn always stays in the foreground.
+                    if decision.mode == "background" and not restricted:
                         job = job_manager.submit(
                             session_id=tp.session_id,
                             source=tp.source,
@@ -440,6 +446,7 @@ def router_loop(central_queue: queue.Queue, display_sink, stop_signal: Optional[
                         session_id=tp.session_id,
                         interaction_mode=interaction_mode,
                         extra_context=runtime_context,
+                        tool_access=tp.tool_access,
                     )
                     if tp.reply_queue is not None:
                         tp.reply_queue.put(
