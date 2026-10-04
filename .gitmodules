@@ -1,3 +1,6 @@
 [submodule "Peripherals/Pump-Power-Controller"]
 	path = Peripherals/Pump-Power-Controller
 	url = https://github.com/Lambchops118/Pump-Power-Controller.git
+[submodule "Peripherals/kitchen_recipe_screen"]
+	path = Peripherals/kitchen_recipe_screen
+	url = https://github.com/Lambchops118/Kitchen-Recipe-Screen.git
