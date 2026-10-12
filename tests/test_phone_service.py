@@ -29,13 +29,32 @@ from butler.phone.service import _build_call_transcript_digest
 from butler.phone.store import PhoneCallRecord
 
 
+# Phone tests must never write call summaries into the real memory database.
+_memory_patch = None
+
+
+def setUpModule() -> None:
+    global _memory_patch
+    from butler.memory import MemoryStore
+
+    _memory_patch = mock.patch(
+        "butler.phone.service.get_default_memory_store", return_value=MemoryStore(db_path=":memory:")
+    )
+    _memory_patch.start()
+
+
+def tearDownModule() -> None:
+    if _memory_patch is not None:
+        _memory_patch.stop()
+
+
 class _FakeProvider(PhoneProvider):
     def __init__(self) -> None:
         self.requests: list[OutboundCallRequest] = []
 
     def start_outbound_call(self, request: OutboundCallRequest):
         self.requests.append(request)
-        with tempfile.TemporaryDirectory():
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True):
             raise AssertionError("This fake should be patched at the service layer.")
 
     def get_call(self, call_id: str):
@@ -71,7 +90,7 @@ class PhoneServiceTests(unittest.TestCase):
         reset_default_phone_store()
 
     def test_place_phone_call_rejects_background_lane(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_ENABLED": "1",
@@ -86,7 +105,7 @@ class PhoneServiceTests(unittest.TestCase):
                 place_phone_call("mom", session_id="main-pc", runtime_lane="background")
 
     def test_place_phone_call_rejects_non_allowlisted_number(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_ENABLED": "1",
@@ -100,7 +119,7 @@ class PhoneServiceTests(unittest.TestCase):
                 place_phone_call("+15555550999", session_id="main-pc")
 
     def test_place_phone_call_uses_configured_contact_and_returns_call(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_ENABLED": "1",
@@ -154,7 +173,7 @@ class PhoneServiceTests(unittest.TestCase):
         self.assertIn("Exact message to deliver", outbound_request.brief_context)
 
     def test_phone_call_status_refreshes_from_bridge_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
@@ -213,7 +232,7 @@ class PhoneServiceTests(unittest.TestCase):
         self.assertIn("Caller said", result["call"]["summary"])
 
     def test_phone_call_status_refreshes_directly_from_provider_when_no_bridge(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",
@@ -256,7 +275,7 @@ class PhoneServiceTests(unittest.TestCase):
         refresh_mock.assert_called_once_with("conv_789")
 
     def test_summarize_phone_call_uses_bridge_ingested_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir, mock.patch.dict(
             os.environ,
             {
                 "BUTLER_PHONE_PROVIDER": "elevenlabs_twilio",

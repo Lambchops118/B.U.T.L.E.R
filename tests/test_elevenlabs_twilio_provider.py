@@ -17,7 +17,7 @@ from butler.phone.store import PhoneCallStore
 
 class ElevenLabsTwilioProviderTests(unittest.TestCase):
     def test_outbound_call_uses_documented_personalization_shape(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
             provider = ElevenLabsTwilioProvider(
                 PhoneConfig(
@@ -109,7 +109,7 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
         self.assertIn("Intended recipient name: Thomas", prompt_override["prompt"])
 
     def test_outbound_call_first_message_falls_back_to_purpose(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
             provider = ElevenLabsTwilioProvider(
                 PhoneConfig(
@@ -151,7 +151,7 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
         )
 
     def test_fetch_call_details_refreshes_from_elevenlabs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
             provider = ElevenLabsTwilioProvider(
                 PhoneConfig(
@@ -218,6 +218,45 @@ class ElevenLabsTwilioProviderTests(unittest.TestCase):
         self.assertEqual(record.status, "completed")
         self.assertEqual(record.outcome, "caller_hung_up")
         self.assertEqual(record.transcript, [{"role": "assistant", "message": "It is 76 degrees."}])
+
+    def test_inbound_transcription_uses_caller_and_assigned_session(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            store = PhoneCallStore(Path(tmpdir) / "phone.sqlite3")
+            provider = ElevenLabsTwilioProvider(
+                PhoneConfig(
+                    enabled=True,
+                    provider_name="elevenlabs_twilio",
+                    api_key="",
+                    agent_id="agent_123",
+                    phone_number_id="",
+                    allowed_outbound=False,
+                    bridge_url="",
+                    bridge_token="",
+                    contacts={},
+                    allowlist=(),
+                    bridge_sync_limit=25,
+                ),
+                store=store,
+            )
+            record = provider.ingest_call_event(
+                {
+                    "type": "post_call_transcription",
+                    "data": {
+                        "conversation_id": "conv_in",
+                        "agent_id": "agent_123",
+                        "transcript": [{"role": "user", "message": "Are the lights off?"}],
+                        "metadata": {"phone_call": {"direction": "inbound", "external_number": "+15555550123"}},
+                        "conversation_initiation_client_data": {
+                            "dynamic_variables": {"talos_session_id": "phone:+15555550123"}
+                        },
+                    },
+                }
+            )
+            store.close()
+
+        self.assertEqual(record.direction, "inbound")
+        self.assertEqual(record.remote_number, "+15555550123")
+        self.assertEqual(record.session_id, "phone:+15555550123")
 
 
 if __name__ == "__main__":

@@ -45,7 +45,18 @@ Implemented `butler/sms/` (signed, sender-allowlisted Twilio webhook feeding
 the existing `text_cmd` path; replies via Twilio REST), wired into
 `butler/main.py`, disabled by default. 16 focused tests passed; no live
 Twilio/Funnel test. Owner setup and A2P registration pending; see README
-"SMS Control" and the session log. Inbound phone calls are not built.
+"SMS Control" and the session log.
+
+## Current bounded task — inbound ElevenLabs phone calls (2026-10-04)
+
+Owner requested inbound calling where the ElevenLabs agent runs the
+conversation but shares knowledge with Talos. Implemented
+`butler/phone/inbound_server.py`: a Twilio voice webhook that admits only
+allowlisted callers with SHAKEN/STIR A attestation and hands them to the agent
+via ElevenLabs register-call with a briefing; three mid-call server tools; and
+post-call ingest. Wired into `butler/main.py`, disabled by default. Tests pass;
+no live call yet. Owner setup pending; see
+[`docs/phone-inbound/SETUP.md`](../phone-inbound/SETUP.md) and the session log.
 
 ## Current bounded repair — tool history and architecture work collection (2026-09-21)
 

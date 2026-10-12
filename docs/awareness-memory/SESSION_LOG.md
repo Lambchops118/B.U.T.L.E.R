@@ -1495,3 +1495,58 @@ suites via `unittest discover -s tests -t tests -p "test_launcher*.py"` in
 `.venv-runtime`: 28 passed. Live helper check: started the console in 1.2 s,
 `/api/health` returned 200, and the port closed after `stop()`. The Tk button
 itself was not clicked in a live launcher window.
+
+## 2026-10-04 — Inbound ElevenLabs phone calls
+
+**Change:** New `butler/phone/inbound_server.py`, a local listener (default
+`127.0.0.1:8431`, disabled unless `BUTLER_PHONE_INBOUND_ENABLED=1`) published
+via Tailscale Funnel at `/phone`. It serves ElevenLabs' conversation-initiation
+webhook (dynamic-variable briefing from memory and the awareness situation),
+five mid-call server tools (`recall`, `house_status`, `verify_pin`,
+`ask_talos` with restricted tool access, `do_action` with full access after a
+per-call PIN), and the post-call webhook (stored, summarized, written to memory,
+and announced as `phone_call_completed`). Bearer token or ElevenLabs HMAC
+signature required; callers outside `BUTLER_PHONE_INBOUND_ALLOWED_CALLERS` get
+nothing. Inbound transcripts now record caller number, direction, and session
+`phone:<number>`. `PhoneConfig.main_notify_*` got defaults, which fixed three
+stale tests; four others now tolerate Windows' sqlite temp-dir cleanup lock.
+Setup guide: `docs/phone-inbound/SETUP.md`.
+
+**Validation:** Phone and SMS suites: 51 passed (15 new inbound-server tests,
+1 new provider test). Full `unittest discover` in `.venv-main`: 3 failures and
+37 errors, versus 3 failures and 47 errors before the change. The remaining
+failures are pre-existing (awareness, audio, MCP, and prompting tests). Not
+done: no live call, Funnel path, or ElevenLabs dashboard configuration was tested.
+
+**Revision (same day):** Owner chose carrier attestation over a spoken PIN.
+The ElevenLabs initiation webhook does not expose `StirVerstat`, so Talos now
+owns the Twilio voice webhook (`/phone/twilio/voice`, Twilio-signature
+verified). It rejects any call that is not from an allowlisted number with
+`TN-Validation-Passed-A` (configurable), and registers admitted calls through
+ElevenLabs `POST /v1/convai/twilio/register-call` with a briefing and a
+per-call token. Tools (`recall`, `house_status`, `ask_talos` with full access)
+require that token. The PIN, `verify_pin`, `do_action`, and the initiation
+endpoint were removed. Phone and SMS suites: 54 passed. Not done: no live call,
+and no check of which `StirVerstat` value the owner's carrier actually sends.
+
+## 2026-10-05 — Inbound calling live; hallucinated presence source; test memory leak
+
+**Live setup (owner-approved):** the Twilio number's voice webhook now points to
+`/phone/twilio/voice`. The ElevenLabs agent has webhook tools `recall`,
+`house_status`, and `ask_talos`, a tools section appended to its existing
+personality prompt, and placeholder values for the `talos_*` variables. Owner
+confirmed that lights off and on worked over a call through `ask_talos`.
+
+**Hallucination:** asked how it knew the owner was home, the agent said "phone
+signal". The briefing actually said `present via text` (a typed message 18
+minutes earlier); Talos has no phone or location tracking. Fix: the briefing
+now carries a plain-language presence note, and the agent prompt now says to
+cite only the briefing or tool results and never invent data sources.
+
+**Test leak:** `tests/test_phone_service.py` and
+`tests/test_text_server_phone_events.py` wrote phone-call summaries into the
+real `db/talos_memory.sqlite3` (fixture calls conv_123/456/789/evt). Both now
+patch `get_default_memory_store` with an in-memory store at module level, and a
+re-run added no rows. Removed 4 fixture facts and 40 fixture messages, and
+cleared the test-only `main-pc` and `phone:inbound` session summaries. The
+database was backed up first.

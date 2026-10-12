@@ -797,6 +797,19 @@ Notes:
 - The bridge is the only component that should be internet-facing; keep the main Butler runtime private.
 - When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `BUTLER_PHONE_MAIN_NOTIFY_URL` + `BUTLER_PHONE_PUSH_TOKEN`, matching `BUTLER_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `BUTLER_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `BUTLER_PHONE_BRIDGE_URL`).
 
+#### Inbound calls
+
+The Twilio number's voice webhook points at Talos, which admits only allowlisted
+callers whose carrier attests the number (SHAKEN/STIR `TN-Validation-Passed-A`)
+and rejects everything else. Admitted calls go to the ElevenLabs agent through
+its register-call API, with a briefing from Talos memory. During the call, the
+agent uses server tools (`recall`, `house_status`, `ask_talos`), and the
+transcript goes back into Talos memory afterwards. The local listener
+(`butler/phone/inbound_server.py`, default `127.0.0.1:8431`) is published with
+Tailscale Funnel at `/phone` and is disabled by default. Setup, agent prompt,
+and tool definitions:
+[`docs/phone-inbound/SETUP.md`](docs/phone-inbound/SETUP.md).
+
 ### SMS Control
 
 Text the Twilio number to run commands ("water the plants", "turn off the desk

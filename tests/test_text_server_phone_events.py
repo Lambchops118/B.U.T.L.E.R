@@ -34,6 +34,25 @@ def _make_config(*, phone_push_token: str) -> TextServerConfig:
     )
 
 
+# Phone tests must never write call summaries into the real memory database.
+_memory_patch = None
+
+
+def setUpModule() -> None:
+    global _memory_patch
+    from butler.memory import MemoryStore
+
+    _memory_patch = mock.patch(
+        "butler.phone.service.get_default_memory_store", return_value=MemoryStore(db_path=":memory:")
+    )
+    _memory_patch.start()
+
+
+def tearDownModule() -> None:
+    if _memory_patch is not None:
+        _memory_patch.stop()
+
+
 class _RunningServer:
     def __init__(self, config: TextServerConfig) -> None:
         self.central_queue: queue.Queue = queue.Queue()

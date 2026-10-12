@@ -81,6 +81,46 @@ class ElevenLabsTwilioProvider(PhoneProvider):
         )
         return record
 
+    def register_inbound_call(
+        self,
+        *,
+        from_number: str,
+        to_number: str,
+        dynamic_variables: dict[str, str],
+    ) -> str:
+        """Hand an inbound call Talos accepted to the agent; returns TwiML for Twilio."""
+        if not self.config.api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY is not configured.")
+        if not self.config.agent_id:
+            raise RuntimeError("BUTLER_PHONE_AGENT_ID is not configured.")
+        payload = {
+            "agent_id": self.config.agent_id,
+            "from_number": from_number,
+            "to_number": to_number,
+            "direction": "inbound",
+            "conversation_initiation_client_data": {"dynamic_variables": dynamic_variables},
+        }
+        request = urllib.request.Request(
+            "https://api.elevenlabs.io/v1/convai/twilio/register-call",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "xi-api-key": self.config.api_key},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                raw = response.read().decode("utf-8").strip()
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"ElevenLabs HTTP {exc.code}: {body_text or exc}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"ElevenLabs connection error: {exc.reason}") from exc
+        # Documented as a TwiML string; tolerate it arriving JSON-encoded.
+        if raw.startswith('"'):
+            raw = str(json.loads(raw))
+        if "<Response" not in raw:
+            raise RuntimeError("ElevenLabs register-call did not return TwiML.")
+        return raw
+
     def get_call(self, call_id: str) -> PhoneCallRecord | None:
         return self.store.get_call(call_id)
 
@@ -134,14 +174,20 @@ class ElevenLabsTwilioProvider(PhoneProvider):
 
         transcript = data.get("transcript") if isinstance(data.get("transcript"), list) else []
         record = self.store.get_call(call_id)
+        phone_call = dict(dict(data.get("metadata") or {}).get("phone_call") or {})
+        external_number = str(phone_call.get("external_number") or "").strip()
         snapshot = {
             "call_id": call_id,
             "provider": "elevenlabs_twilio",
             "conversation_id": call_id,
             "agent_id": data.get("agent_id"),
             "session_id": _extract_session_id(record, transcript, payload),
-            "direction": record.direction if record else _infer_direction(transcript),
-            "remote_number": record.remote_number if record else "unknown",
+            "direction": (
+                record.direction
+                if record
+                else str(phone_call.get("direction") or "").strip() or _infer_direction(transcript)
+            ),
+            "remote_number": record.remote_number if record else (external_number or "unknown"),
             "contact_name": record.contact_name if record else None,
             "purpose": record.purpose if record else None,
             "brief_context": record.brief_context if record else None,
@@ -304,6 +350,11 @@ def _extract_session_id(
         return record.session_id
     data = dict(payload.get("data") or {})
     candidate = str(data.get("session_id") or "").strip()
+    if candidate:
+        return candidate
+    # Inbound calls carry the session the initiation webhook assigned.
+    initiation = dict(data.get("conversation_initiation_client_data") or {})
+    candidate = str(dict(initiation.get("dynamic_variables") or {}).get("talos_session_id") or "").strip()
     if candidate:
         return candidate
     if transcript:

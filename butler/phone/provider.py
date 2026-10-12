@@ -39,8 +39,8 @@ class PhoneConfig:
     contacts: dict[str, str]
     allowlist: tuple[str, ...]
     bridge_sync_limit: int
-    main_notify_url: str
-    main_notify_token: str
+    main_notify_url: str = ""
+    main_notify_token: str = ""
     db_path: str | None = None
 
     @classmethod

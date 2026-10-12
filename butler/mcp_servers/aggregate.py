@@ -7,6 +7,7 @@ from typing import Iterable
 from .base import create_server, register_all
 from .providers import (
     register_awareness_tools,
+    register_discord_message_tools,
     register_home_automation_tools,
     register_sleep_mode_tools,
     register_smart_plug_tools,
@@ -20,6 +21,7 @@ PROVIDERS: tuple[tuple[str, object], ...] = (
     ("awareness", register_awareness_tools),
     ("sleep_mode", register_sleep_mode_tools),
     ("smart_plugs", register_smart_plug_tools),
+    ("discord_messages", register_discord_message_tools),
 )
 
 

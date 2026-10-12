@@ -142,6 +142,17 @@ def ingest_phone_bridge_snapshot(snapshot: dict[str, Any]) -> PhoneCallRecord:
     return refreshed
 
 
+def ingest_phone_webhook_event(payload: dict[str, Any]) -> PhoneCallRecord:
+    """Ingest an ElevenLabs webhook delivered straight to this process.
+
+    Same end state as the bridge path: the call is stored, summarized, and its
+    transcript written to memory.
+    """
+    provider = get_phone_provider()
+    record = provider.ingest_call_event(payload)
+    return _finalize_call_record(record)
+
+
 def _build_provider(
     *,
     config: PhoneConfig | None,

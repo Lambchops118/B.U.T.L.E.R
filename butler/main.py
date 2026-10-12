@@ -7,6 +7,7 @@ import time
 from butler import router
 from butler.config import load_environment
 from butler.display import DisplayState
+from butler.phone import inbound_server as phone_inbound_server
 from butler.scheduler import tasks
 from butler.sms import server as sms_server
 from butler.text import server as text_agent_server
@@ -43,6 +44,7 @@ def main() -> int:
         display_state=display_state,
     )
     sms = sms_server.start_sms_server(central_queue)
+    phone_inbound = phone_inbound_server.start_phone_inbound_server(central_queue)
     scheduler = tasks.start_scheduler(display_state, central_queue)
     _start_agent_warmup()
 
@@ -63,6 +65,7 @@ def main() -> int:
 
         text_agent_server.shutdown_text_agent_server(text_server)
         sms_server.shutdown_sms_server(sms)
+        phone_inbound_server.shutdown_phone_inbound_server(phone_inbound)
         print("Exiting cleanly.")
     return 0
 

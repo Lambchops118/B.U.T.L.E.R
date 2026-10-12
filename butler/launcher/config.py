@@ -398,6 +398,12 @@ def mcp_catalog() -> list[McpEntry]:
             detail="presence, state, long-term memory",
         ),
         McpEntry(
+            key="discord_messages",
+            label="Discord messaging tools",
+            kind="provider",
+            detail="DM or @mention people via the Discord frontend",
+        ),
+        McpEntry(
             key=_server_name("BUTLER_FILESYSTEM_SERVER_NAME"),
             label="Filesystem",
             kind="server",
