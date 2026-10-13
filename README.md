@@ -8,14 +8,15 @@
 [![Status](https://img.shields.io/badge/status-active%20development-orange)](#project-status)
 
 B.U.T.L.E.R. is a local-first, voice-first AI assistant for conversation, home
-automation, and engineering work. It combines a locally hosted language model,
+automation, and engineering work. It combines local language-model inference,
 speech recognition and synthesis, durable memory, environmental awareness, and
-an extensible tool system in one multi-process runtime.
+an extensible tool system. The launcher supervises the cooperating services
+that make up a full deployment.
 
 
 ## What it can do
 
-- Hold voice or text conversations through locally hosted, fine tuned Butler model. Model is based off Qwen-14B
+- Hold voice or text conversations through an OpenAI-compatible local model
 - Remember conversations and retrieve evidence-backed long-term context
 - Track household presence, state, alerts, and proactive briefings
 - Control registered MQTT devices and other home-automation integrations
@@ -28,19 +29,29 @@ an extensible tool system in one multi-process runtime.
 
 ## Architecture
 
-Butler is split into independently deployable processes:
+The current implementation uses several independently deployable processes:
 
 | Process | Responsibility |
 | --- | --- |
-| Main agent | Routing, scheduling, memory, tools, text API, and display state |
-| Voice worker | Wake word, microphone capture, local STT, and speech playback |
-| Awareness service | PostgreSQL-backed presence, state, history, alerts, and memory |
-| InfoPanel | Remote pygame display client |
-| Phone bridge | Optional public webhook boundary for phone integrations |
+| Main service (`python -m butler`) | Router, scheduler, agent runtime, memory, MCP client, text/SMS servers, and display-state projection |
+| Room voice worker (`python -m butler.voice.worker`) | Wake word, microphone capture, local STT, TTS playback, and proactive-speech endpoint |
+| Awareness API (`python -m butler.awareness serve`) | Presence, state, history, alerts, actions, briefings, and evidence-backed memory |
+| Awareness database | TimescaleDB/PostgreSQL with pgvector, managed through Docker Compose |
+| InfoPanel (`python -m butler.display.worker`) | Independently deployable pygame display client |
+| Ollama | Local model server used by the main service |
+
+The main service and room voice worker share `.venv-runtime`, but they are still
+separate operating-system processes. The voice worker sends recognized commands
+to the main service's HTTP API; the InfoPanel polls that API for display state.
+The launcher starts and supervises both processes independently. A separate
+public phone bridge is used only when phone calling is configured, and the
+optional Discord voice frontend lives in its own repository.
 
 The default inference path is local: Ollama provides an OpenAI-compatible LLM
-endpoint and `faster-whisper` handles speech-to-text. Hosted services are
-optional and require explicit configuration.
+endpoint and `faster-whisper` handles speech-to-text. The tracked default model
+name is `mb-core-v1:latest`; this repository also includes a Ministral 3 14B
+profile. Hosted LLM fallback requires an OpenAI API key, and hosted STT fallback
+can be disabled when audio must remain local.
 
 For a deeper technical assessment, see
 [Architecture Review](docs/ARCHITECTURE_REVIEW.md). Awareness design and status
@@ -48,20 +59,29 @@ live in [Awareness and Memory](docs/awareness-memory/README.md).
 
 ## Requirements
 
+For the core text agent:
+
 - Python 3.12
 - [Ollama](https://ollama.com/) with a configured chat model
-- PortAudio-compatible audio devices and libraries for voice features
-- An MQTT broker for device integrations
-- Docker with Compose for the awareness database
-- Windows for the full launcher and validated room-audio path
+- The packages in `requirements-runtime-py312.txt`
 
-Linux and macOS can run many individual services, but the complete deployment
-is currently optimized for Windows with NVIDIA GPUs. Optional integrations may
-also require Node.js, Tailscale, Twilio, ElevenLabs, AWS, or OpenWeather.
+Additional features require additional infrastructure:
+
+- Room voice: PortAudio-compatible audio hardware and libraries
+- Awareness: Docker with Compose and `requirements-awareness-py312.txt`
+- InfoPanel: `requirements-display-py312.txt`
+- Home automation and awareness ingestion: a reachable MQTT broker
+- Validated room-audio and GPU-pinning deployment: Windows with NVIDIA GPUs
+
+Linux and macOS can run individual services, but the complete deployed stack is
+currently optimized for Windows. Optional integrations may also require Node.js,
+Tailscale, Twilio, ElevenLabs, AWS, or OpenWeather.
 
 ## Quick start
 
-### 1. Create the runtime environment
+### 1. Create the environments
+
+The main service and room voice worker share the runtime environment:
 
 ```bash
 python3.12 -m venv .venv-runtime
@@ -70,10 +90,21 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-runtime-py312.txt
 ```
 
-On Windows PowerShell, activate it with:
+The separately deployable display and awareness API use focused environments:
+
+```bash
+python3.12 -m venv .venv-display
+.venv-display/bin/python -m pip install -r requirements-display-py312.txt
+
+python3.12 -m venv .venv-awareness
+.venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
+```
+
+On Windows, use the interpreters under `Scripts` instead of `bin`; for example:
 
 ```powershell
-.venv-runtime\Scripts\Activate.ps1
+py -3.12 -m venv .venv-runtime
+.venv-runtime\Scripts\python.exe -m pip install -r requirements-runtime-py312.txt
 ```
 
 ### 2. Configure secrets
@@ -95,38 +126,34 @@ BUTLER_LOCAL_STT=1
 BUTLER_VOICE_STREAMING=1
 ```
 
-Local LLM and STT operation do not require an OpenAI key. Copy and customize
-`mb-core-v1.Modelfile` if you want to build the repository's model profile.
+Local LLM and STT operation do not require an OpenAI key. The committed
+`mb-core-v1.Modelfile` references an owner-machine Ollama blob, so it is not a
+portable recipe from a public base model. `ministral-butler.Modelfile` is the
+reproducible profile included in the repository.
 
-### 3. Start Butler
+### 3. Start the stack
 
-Run the main agent directly:
-
-```bash
-.venv-runtime/bin/python -m butler
-```
-
-Or launch the supervised Windows control panel:
+Launch the supervised Windows control panel:
 
 ```powershell
 .\Start-Butler.ps1
 ```
 
-The launcher can manage Ollama, the main agent, voice worker, display,
-awareness database, component selection, GPU assignment, and logs. For a
-console-only launch:
+The launcher can manage Ollama, the main service, room voice worker, display,
+awareness database/API, migrations, component selection, GPU assignment, and
+logs. For a console-only launch with the last saved component selection:
 
 ```powershell
 .\Start-Butler.ps1 --no-gui
 ```
 
-## Running services separately
+## Running components separately
 
 ```bash
-# Main agent and local text API
+# Main service: agent runtime, scheduler, text/SMS APIs, and display state
 .venv-runtime/bin/python -m butler
 
-# Voice worker
+# Room voice worker; connects to the main service over HTTP
 .venv-runtime/bin/python -m butler.voice.worker
 
 # Display client (after installing display requirements)
@@ -136,21 +163,10 @@ console-only launch:
 .venv-runtime/bin/python -m butler.debug_dashboard
 ```
 
-The display uses its own environment:
-
-```bash
-python3.12 -m venv .venv-display
-source .venv-display/bin/activate
-python -m pip install -r requirements-display-py312.txt
-```
-
 Start the awareness service and database with:
 
 ```bash
 docker compose -f docker-compose.awareness.yml up -d --wait
-python3.12 -m venv .venv-awareness
-source .venv-awareness/bin/activate
-python -m pip install -r requirements-awareness-py312.txt
 .venv-awareness/bin/python -m butler.awareness migrate
 .venv-awareness/bin/python -m butler.awareness serve
 ```
@@ -162,7 +178,7 @@ migrations, health checks, and operations.
 
 ### Text chat
 
-The main agent exposes a small HTTP API and browser UI, intended for localhost
+The main service exposes a small HTTP API and browser UI, intended for localhost
 or a private Tailscale network. Set `TEXT_AGENT_API_TOKEN` in `.env` before
 exposing it beyond loopback.
 
@@ -186,10 +202,11 @@ loopback by default because it can expose private data.
 ### Phone and SMS
 
 Phone calls use ElevenLabs for the conversational voice agent and Twilio for
-PSTN transport. SMS commands enter the same agent path as local text chat. Both
-features are optional, disabled until configured, and constrained by explicit
-contact or sender allowlists. The public phone bridge and SMS webhook should be
-the only internet-facing components; keep the main Butler runtime private.
+PSTN transport. SMS commands enter the same agent path as local text chat. The
+tracked settings enable both integrations, but they become operational only
+when their required credentials, identifiers, URLs, and allowlists are present.
+The public phone bridge and SMS webhook should be the only internet-facing
+components; keep the main Butler runtime private.
 
 Relevant variables are documented in `.env.example` and `settings.env`.
 
