@@ -72,6 +72,7 @@ def _draw_lens_terminal(
     loop_duration: float | None = None,
     loop_rows: int | None = None,
     loop_phase: float = 0.0,
+    stepped: bool = False,
 ) -> None:
     """Draw an independently scrolling terminal clipped to a circular lens."""
     cx, cy = center
@@ -99,6 +100,10 @@ def _draw_lens_terminal(
             variation=variation,
             frequency=frequency,
         )
+    if stepped:
+        # Terminal-style updates: hold every row still between write events,
+        # then advance the entire viewport by one complete row at once.
+        travel = math.floor(travel + 1e-9)
     newest_line = math.floor(travel)
     visible_rows = math.ceil((terminal_half_height * 2) / row_spacing) + 1
 
@@ -253,6 +258,7 @@ def draw_monkey_butler_head(
         loop_duration=loop_duration,
         loop_rows=5 if loop_duration is not None else None,
         loop_phase=1.7,
+        stepped=True,
     )
 
     pygame.draw.circle(screen, c, t(430, 335), 36*scale_x, width=1)
