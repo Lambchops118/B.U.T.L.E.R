@@ -73,13 +73,13 @@ For the core text agent:
 
 - Python 3.12
 - [Ollama](https://ollama.com/) with a configured chat model
-- The packages in `requirements-runtime-py312.txt`
+- The packages in `requirements/runtime-py312.txt`
 
 Additional features require additional infrastructure:
 
 - Room voice: PortAudio-compatible audio hardware and libraries
-- Awareness: Docker with Compose and `requirements-awareness-py312.txt`
-- InfoPanel: `requirements-display-py312.txt`
+- Awareness: Docker with Compose and `requirements/awareness-py312.txt`
+- InfoPanel: `requirements/display-py312.txt`
 - Home automation and awareness ingestion: a reachable MQTT broker
 - Validated room-audio and GPU-pinning deployment: Windows with NVIDIA GPUs
 
@@ -97,24 +97,24 @@ The main service and room voice worker share the runtime environment:
 python3.12 -m venv .venv-runtime
 source .venv-runtime/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-runtime-py312.txt
+python -m pip install -r requirements/runtime-py312.txt
 ```
 
 The separately deployable display and awareness API use focused environments:
 
 ```bash
 python3.12 -m venv .venv-display
-.venv-display/bin/python -m pip install -r requirements-display-py312.txt
+.venv-display/bin/python -m pip install -r requirements/display-py312.txt
 
 python3.12 -m venv .venv-awareness
-.venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
+.venv-awareness/bin/python -m pip install -r requirements/awareness-py312.txt
 ```
 
 On Windows, use the interpreters under `Scripts` instead of `bin`; for example:
 
 ```powershell
 py -3.12 -m venv .venv-runtime
-.venv-runtime\Scripts\python.exe -m pip install -r requirements-runtime-py312.txt
+.venv-runtime\Scripts\python.exe -m pip install -r requirements/runtime-py312.txt
 ```
 
 ### 2. Configure secrets
@@ -137,9 +137,10 @@ BUTLER_VOICE_STREAMING=1
 ```
 
 Local LLM and STT operation do not require an OpenAI key. The committed
-`mb-core-v1.Modelfile` references an owner-machine Ollama blob, so it is not a
-portable recipe from a public base model. `ministral-butler.Modelfile` is the
-reproducible profile included in the repository.
+`models/mb-core-v1.Modelfile` references an owner-machine Ollama blob, so it is
+not a portable recipe from a public base model.
+`models/ministral-butler.Modelfile` is the reproducible profile included in the
+repository.
 
 ### 3. Start the stack
 
@@ -199,7 +200,8 @@ python -m butler.text.client \
   --session-id "main-pc"
 ```
 
-Windows users can run the same client through `butler-chat.cmd`.
+Windows users can run the same client through
+`scripts\clients\butler-chat.cmd`.
 
 ### Debug dashboard
 
@@ -257,9 +259,14 @@ butler/                     Main application and service packages
 butler/awareness/           Awareness and long-term memory backend
 InfoPanel/                  Pygame display modules and visual assets
 Peripherals/                MicroPython firmware and MQTT helpers
+docker/                     Container and test-broker configuration
 docs/                       Architecture, operations, and subsystem guides
-experiments/                Non-production visual and hardware experiments
-tests/                      Unit, integration, and legacy prototype tests
+models/                     Ollama model definitions
+prototypes/                 Legacy and experimental UI/visualization work
+requirements/               Dependency manifests for each runtime
+scripts/                    Secondary command-line wrappers
+tests/                      Unit and integration tests
+tools/                      Maintenance, diagnostics, and asset exporters
 ```
 
 Some persistent identifiers still use `talos` because they are external or

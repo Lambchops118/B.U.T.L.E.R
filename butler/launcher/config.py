@@ -48,9 +48,9 @@ VENV_DIRS = {
 
 # Requirements manifest each dedicated venv is built from (for setup hints).
 VENV_REQUIREMENTS = {
-    ".venv-runtime": "requirements-runtime-py312.txt",
-    ".venv-display": "requirements-display-py312.txt",
-    ".venv-awareness": "requirements-awareness-py312.txt",
+    ".venv-runtime": "requirements/runtime-py312.txt",
+    ".venv-display": "requirements/display-py312.txt",
+    ".venv-awareness": "requirements/awareness-py312.txt",
 }
 
 # Fallback ("legacy") venv used only for components without a dedicated venv.

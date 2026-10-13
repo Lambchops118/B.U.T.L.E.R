@@ -36,8 +36,8 @@ class VenvResolutionTests(unittest.TestCase):
 
     def test_setup_hint_names_the_matching_requirements_file(self) -> None:
         self.assertIn(".venv-runtime", venv_setup_hint("voice"))
-        self.assertIn("requirements-runtime-py312.txt", venv_setup_hint("voice"))
-        self.assertIn("requirements-display-py312.txt", venv_setup_hint("display"))
+        self.assertIn("requirements/runtime-py312.txt", venv_setup_hint("voice"))
+        self.assertIn("requirements/display-py312.txt", venv_setup_hint("display"))
         self.assertEqual(venv_setup_hint("discord-svc"), "")
 
 
@@ -58,7 +58,7 @@ class SupervisorStartupFailureTests(unittest.TestCase):
         wait_port.assert_not_called()
         self.assertFalse(self.supervisor.is_running())
         error = next(m for m in self.messages if m.startswith("ERROR: cannot start main"))
-        self.assertIn("requirements-runtime-py312.txt", error)
+        self.assertIn("requirements/runtime-py312.txt", error)
 
     def test_wait_port_returns_as_soon_as_the_process_exits(self) -> None:
         popen = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])

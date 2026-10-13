@@ -6,7 +6,7 @@ This repo implements the Butler locally-run voice/text agent plus a pygame displ
 - Core agent: `butler/` contains the main process, router, agent runtime, text server/client, voice worker, scheduler, services, MCP client, and MCP servers.
 - Display artifact: `InfoPanel/` contains pygame display modules and visual assets. It should stay UI-focused.
 - Peripherals: `Peripherals/` contains MicroPython and MQTT helper scripts for hardware devices.
-- Archive and experiments: `archive/` and `experiments/` are not part of the main runtime.
+- Prototypes: `prototypes/` contains legacy and experimental work that is not part of the main runtime.
 
 2. Runtime Flow
 - `.venv-runtime/bin/python -m butler` starts the main process in `butler/main.py`.

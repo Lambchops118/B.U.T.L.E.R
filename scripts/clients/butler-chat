@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
+
+if [[ -x "$REPO_ROOT/.venv-runtime/bin/python" ]]; then
+  exec "$REPO_ROOT/.venv-runtime/bin/python" -m butler.text.client "$@"
+fi
+
+if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+  exec "$REPO_ROOT/.venv/bin/python" -m butler.text.client "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 -m butler.text.client "$@"
+fi
+
+echo "Error: python3 was not found and $REPO_ROOT/.venv/bin/python does not exist." >&2
+exit 1

@@ -1,6 +1,6 @@
 # Session Handoff — Experimental TUI Wireframe Tab
 
-Session goal: Add a tab named Wireframe to `experiments/TUI/yeebs2.py` and render a complex object with the thinnest practical early-vector-display lines.
+Session goal: Add a tab named Wireframe to `prototypes/tui/yeebs2.py` and render a complex object with the thinnest practical early-vector-display lines.
 
 Current phase: Post-Phase-8 bounded experimental graphics task; awareness-memory phases 0-8 remain complete.
 
@@ -8,13 +8,13 @@ Bounded task completed: Added tab 5, Wireframe, containing a rotating Apollo-era
 
 Files added: This handoff.
 
-Files modified: `experiments/TUI/yeebs2.py` and `docs/awareness-memory/IMPLEMENTATION_STATUS.md`.
+Files modified: `prototypes/tui/yeebs2.py` and `docs/awareness-memory/IMPLEMENTATION_STATUS.md`.
 
 Migrations added: None.
 
 Decisions made: None. The change is confined to an existing experimental dashboard.
 
-Assumptions confirmed or changed: The requested target is `experiments/TUI/yeebs2.py`, not the standalone web debug dashboard. The earlier web implementation remains in the worktree at owner direction and is not intended for push.
+Assumptions confirmed or changed: The requested target is `prototypes/tui/yeebs2.py`, not the standalone web debug dashboard. The earlier web implementation remains in the worktree at owner direction and is not intended for push.
 
 Tests run: Python compilation; direct mesh index/count validation; Textual `run_test` at 120×40 with tab activation and Braille-output assertions; a bounded 92×34 plain terminal render for silhouette inspection.
 
@@ -32,10 +32,10 @@ Deployment implications: None; the file remains under the experimental TUI direc
 
 Unresolved questions: None for this bounded task.
 
-Current repository state: Correct experimental TUI implementation validated; no commit created. `experiments/TUI/` was already untracked and remains so.
+Current repository state: Correct experimental TUI implementation validated; no commit created. The content now lives under `prototypes/tui/` after repository consolidation.
 
 Next permitted task: Owner visual review in the intended terminal.
 
-Required reading for next session: This handoff and `experiments/TUI/yeebs2.py`.
+Required reading for next session: This handoff and `prototypes/tui/yeebs2.py`.
 
 Explicit stop point: Do not modify further tabs or production runtime behavior without owner authorization.

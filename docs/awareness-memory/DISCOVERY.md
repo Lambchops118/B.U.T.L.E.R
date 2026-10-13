@@ -27,9 +27,9 @@
 | `tests/` | `test_*.py` unittest-style tests (run directly or via unittest/pytest) mixed with older prototype scripts |
 | `db/` | SQLite databases (gitignored): `butler_memory`, `butler_jobs`, `butler_phone` |
 | `docs/` | Design/setup docs (async background execution plan, filesystem MCP, Minecraft diagnostics) |
-| `archive/`, `experiments/` | Not part of the runtime |
+| `prototypes/` | Legacy and experimental work; not part of the runtime |
 
-**Language & tooling:** Python only. No `pyproject.toml`/packaging — run in place. Two venvs by convention: `.venv-main` (Python 3.10, `requirements-main-py310.txt`) and `.venv-voice` (Python 3.12, `requirements-voice-py312.txt`). No formatter, linter, or type checker is configured. CI (`.github/workflows/ci.yml`) only runs `python -m compileall InfoPanel Peripherals tests` on 3.12 — note it does **not** even compile `butler/`. Tests are stdlib `unittest` style (documented command: `python -m unittest tests/<file>.py`; also runnable as `python3 tests/<file>.py`); a `.pytest_cache` shows pytest is used locally too.
+**Language & tooling:** Python only. No `pyproject.toml`/packaging — run in place. The main service and room voice worker share `.venv-runtime`; the display and awareness API use `.venv-display` and `.venv-awareness`. Their dependency manifests live under `requirements/`. No formatter, linter, or type checker is configured. CI (`.github/workflows/ci.yml`) runs `python -m compileall butler InfoPanel Peripherals tests` on Python 3.12. Tests are primarily stdlib `unittest` style (documented command: `python -m unittest tests/<file>.py`); pytest is also used locally.
 
 **Key dependencies (main venv):** `openai 2.7.0`, `mcp[cli]`, `paho-mqtt 2.1.0`, `APScheduler`, `boto3` (Polly), `requests`, `pyowm`, `pygame`, `moderngl`, `starlette`, `httpx`, `python-dotenv`. Voice venv adds `faster-whisper`, `openai-whisper`, `openwakeword`, `PyAudio`, `SpeechRecognition`.
 
@@ -219,7 +219,7 @@ No PostgreSQL, no ORM, no migrations framework, no backups, no time-series stora
 
 ## 10. Recommended Component → Repository Mapping
 
-New code lives in a new package **`butler/awareness/`** (modular monolith, own process: `python -m butler.awareness`), with its own venv (`.venv-awareness`, Python 3.12, `requirements-awareness-py312.txt`) — mirroring the established main/voice split-process pattern. The 3.10 main agent consumes it over HTTP via a thin client + MCP tool provider.
+New code lives in a new package **`butler/awareness/`** (modular monolith, own process: `python -m butler.awareness`), with its own venv (`.venv-awareness`, Python 3.12, `requirements/awareness-py312.txt`) — mirroring the established main/voice split-process pattern. The 3.10 main agent consumes it over HTTP via a thin client + MCP tool provider.
 
 | Prompt component | Location | Integration notes |
 |---|---|---|

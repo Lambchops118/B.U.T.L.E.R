@@ -151,7 +151,7 @@ Run from the repository root:
 docker compose -f docker-compose.awareness.yml up -d --wait
 
 python3.12 -m venv .venv-awareness
-.venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
+.venv-awareness/bin/python -m pip install -r requirements/awareness-py312.txt
 
 .venv-awareness/bin/python -m butler.awareness migrate
 .venv-awareness/bin/python -m butler.awareness check

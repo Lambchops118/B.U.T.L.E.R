@@ -32,7 +32,7 @@ docker compose -f docker-compose.awareness.yml up -d --wait
 
 # 2. Python environment (separate from the shared main/voice runtime).
 python3.12 -m venv .venv-awareness
-.venv-awareness/bin/python -m pip install -r requirements-awareness-py312.txt
+.venv-awareness/bin/python -m pip install -r requirements/awareness-py312.txt
 
 # 3. Configuration: set BUTLER_AWARENESS_DB_PASSWORD in .env. To enable
 #    physical action mutations, also set a shared BUTLER_AWARENESS_API_TOKEN

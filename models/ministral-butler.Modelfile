@@ -11,7 +11,7 @@
 # what the agent sees on live turns.
 #
 # Rebuild after editing:
-#   ollama create ministral-butler -f ministral-butler.Modelfile
+#   ollama create ministral-butler -f models/ministral-butler.Modelfile
 
 FROM ministral-3:14b
 SYSTEM """

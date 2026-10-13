@@ -32,7 +32,7 @@ Deployment implications: The server now serves one additional static JavaScript 
 
 Unresolved questions: None for this bounded visual task. Existing OQ-K/OQ-L and voice corpus questions remain unchanged.
 
-Current repository state: Wireframe-tab implementation and focused validation complete; no commit created. Pre-existing untracked `experiments/TUI/` content was not touched.
+Current repository state: Wireframe-tab implementation and focused validation complete; no commit created. The related prototype content now lives under `prototypes/tui/` after repository consolidation.
 
 Next permitted task: Owner visual review of the Wireframe tab.
 
