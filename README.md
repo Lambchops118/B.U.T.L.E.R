@@ -12,15 +12,10 @@ automation, and engineering work. It combines a locally hosted language model,
 speech recognition and synthesis, durable memory, environmental awareness, and
 an extensible tool system in one multi-process runtime.
 
-> [!IMPORTANT]
-> This is an actively developed personal system, not a turnkey consumer
-> product. Several integrations depend on the owner's hardware, network, and
-> credentials. Physical actions remain bounded by explicit authorization and
-> safety checks.
 
 ## What it can do
 
-- Hold voice or text conversations backed by a local Ollama model
+- Hold voice or text conversations through locally hosted, fine tuned Butler model. Model is based off Qwen-14B
 - Remember conversations and retrieve evidence-backed long-term context
 - Track household presence, state, alerts, and proactive briefings
 - Control registered MQTT devices and other home-automation integrations
