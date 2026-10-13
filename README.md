@@ -5,6 +5,10 @@
 <p><strong>Better Understanding Text-to-Speech Large Language Encoder Routine</strong></p>
 
 <p>
+  <img src="docs/assets/butler-portrait.gif" alt="Animated Butler portrait" width="420">
+</p>
+
+<p>
   <a href="https://github.com/Lambchops118/Talos/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lambchops118/Talos/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white"></a>
   <a href="#requirements"><img alt="Platform: Windows, Linux, and macOS" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey"></a>
