@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>B.U.T.L.E.R.</h1>
+<h1>Monkey Butler</h1>
 
 <p><strong>Better Understanding Text-to-Speech Large Language Encoder Routine</strong></p>
 
