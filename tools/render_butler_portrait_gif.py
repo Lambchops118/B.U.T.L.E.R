@@ -85,6 +85,8 @@ def render() -> Path:
             scale_x=1.2,
             scale_y=1.2,
             color=GREEN,
+            animation_time=index / FPS,
+            loop_duration=DURATION_SECONDS,
         )
 
         _add_bloom(surface, glow)

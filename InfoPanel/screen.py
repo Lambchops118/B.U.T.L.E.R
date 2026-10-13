@@ -48,8 +48,18 @@ def parse_base_resolution():
         print(f"Unknown resolution '{arg}'. Falling back to QHD.")
         return RESOLUTIONS["QHD"]
 
-def draw_monkey_butler_head(screen, base_x, base_y, scale_x, scale_y, color_):
-    MBVectorArt.draw_monkey_butler_head(screen, base_x, base_y, scale_x, scale_y, color_)
+def draw_monkey_butler_head(
+    screen, base_x, base_y, scale_x, scale_y, color_, animation_time=0.0
+):
+    MBVectorArt.draw_monkey_butler_head(
+        screen,
+        base_x,
+        base_y,
+        scale_x,
+        scale_y,
+        color_,
+        animation_time=animation_time,
+    )
 
 _font_cache = {}
 
@@ -138,6 +148,7 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
     last_command  = "\"butler, water the monstera\""
     last_response = "of course, sir. i have activated the pump for the pot with the monstera."
     remote_sleep_state = {"asleep": False, "display_level": 1.0}
+    portrait_started_at = time.monotonic()
 
 
     #========================================================================================
@@ -325,9 +336,25 @@ def run_info_panel_gui(cmd_queue, scale): #The main Pygame loop. Polls 'cmd_queu
 
         debug = False
         if debug:
-            draw_monkey_butler_head(framebuffer, mb_base_x+200, mb_base_y+150, scale_x, scale_y, color)
+            draw_monkey_butler_head(
+                framebuffer,
+                mb_base_x + 200,
+                mb_base_y + 150,
+                scale_x,
+                scale_y,
+                color,
+                time.monotonic() - portrait_started_at,
+            )
         else:
-            draw_monkey_butler_head(framebuffer, mb_base_x, mb_base_y, scale_x, scale_y, color)
+            draw_monkey_butler_head(
+                framebuffer,
+                mb_base_x,
+                mb_base_y,
+                scale_x,
+                scale_y,
+                color,
+                time.monotonic() - portrait_started_at,
+            )
 
         #draw_text_topleft(f"Last command:  {last_command}",  75, 740, color, 36, target=framebuffer)
         #draw_text_topleft(f"Last response: {last_response}", 75, 900, color, 36, target=framebuffer)
