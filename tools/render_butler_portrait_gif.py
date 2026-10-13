@@ -32,7 +32,7 @@ from InfoPanel.butler_vector_art import draw_monkey_butler_head
 
 WIDTH = 600
 HEIGHT = 450
-FPS = 12
+FPS = 60
 DURATION_SECONDS = 3
 BACKGROUND = (0, 1, 0)
 GREEN = (0, 255, 100)
@@ -58,6 +58,15 @@ def _add_crt_mask(surface: pygame.Surface, phase: int) -> None:
 def _to_pillow(surface: pygame.Surface) -> Image.Image:
     pixels = pygame.image.tostring(surface, "RGB")
     return Image.frombytes("RGB", surface.get_size(), pixels)
+
+
+def _gif_frame_durations(frame_count: int) -> list[int]:
+    """Distribute GIF centiseconds to average the requested frame rate exactly."""
+    boundaries = [round(index * 100 / FPS) for index in range(frame_count + 1)]
+    return [
+        (boundaries[index + 1] - boundaries[index]) * 10
+        for index in range(frame_count)
+    ]
 
 
 def render() -> Path:
@@ -100,7 +109,7 @@ def render() -> Path:
         OUTPUT,
         save_all=True,
         append_images=frames[1:],
-        duration=round(1000 / FPS),
+        duration=_gif_frame_durations(frame_count),
         loop=0,
         optimize=True,
         disposal=2,
