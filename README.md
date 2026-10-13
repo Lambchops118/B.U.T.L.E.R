@@ -1,11 +1,17 @@
-# B.U.T.L.E.R.
+<div align="center">
 
-### Better Understanding Text-to-Speech Large Language Encoder Routine
+<h1>B.U.T.L.E.R.</h1>
 
-[![CI](https://github.com/Lambchops118/Talos/actions/workflows/ci.yml/badge.svg)](https://github.com/Lambchops118/Talos/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3120/)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#requirements)
-[![Status](https://img.shields.io/badge/status-active%20development-orange)](#project-status)
+<p><strong>Better Understanding Text-to-Speech Large Language Encoder Routine</strong></p>
+
+<p>
+  <a href="https://github.com/Lambchops118/Talos/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lambchops118/Talos/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white"></a>
+  <a href="#requirements"><img alt="Platform: Windows, Linux, and macOS" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey"></a>
+  <a href="#project-status"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-orange"></a>
+</p>
+
+</div>
 
 B.U.T.L.E.R. is a local-first, voice-first AI assistant for conversation, home
 automation, and engineering work. It combines local language-model inference,
