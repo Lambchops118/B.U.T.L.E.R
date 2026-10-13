@@ -1,70 +1,72 @@
-# B.U.T.L.E.R
-## Better Understanding Text-to-Speech Large Language Encoder Routine
+# B.U.T.L.E.R.
+
+### Better Understanding Text-to-Speech Large Language Encoder Routine
 
 [![CI](https://github.com/Lambchops118/Talos/actions/workflows/ci.yml/badge.svg)](https://github.com/Lambchops118/Talos/actions/workflows/ci.yml)
-[![Latest Release](https://img.shields.io/github/v/release/Lambchops118/Talos)](https://github.com/Lambchops118/Talos/releases)
-[![Last Commit](https://img.shields.io/github/last-commit/Lambchops118/Talos)](https://github.com/Lambchops118/Talos/commits/main)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3120/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#requirements)
+[![Status](https://img.shields.io/badge/status-active%20development-orange)](#project-status)
 
-Monkey Butler is an artificial butler built around a locally hosted agent structure with access to peripherals and built in speech interface.
+B.U.T.L.E.R. is a local-first, voice-first AI assistant for conversation, home
+automation, and engineering work. It combines a locally hosted language model,
+speech recognition and synthesis, durable memory, environmental awareness, and
+an extensible tool system in one multi-process runtime.
 
-Butler is a voice-first, home-bound assistant intended to feel present across
-household tasks, conversation, and engineering projects. The product reference
-is Jarvis: continuity, timely observations, and competent action. Home automation
-and engineering tools are capabilities within that experience.
+> [!IMPORTANT]
+> This is an actively developed personal system, not a turnkey consumer
+> product. Several integrations depend on the owner's hardware, network, and
+> credentials. Physical actions remain bounded by explicit authorization and
+> safety checks.
 
-For the current architectural assessment and proposed evolution, see the
-[architecture review](docs/ARCHITECTURE_REVIEW.md). Its recommendations are
-proposals; runtime changes require a separately assigned scope.
+## What it can do
 
-## A note on names
+- Hold voice or text conversations backed by a local Ollama model
+- Remember conversations and retrieve evidence-backed long-term context
+- Track household presence, state, alerts, and proactive briefings
+- Control registered MQTT devices and other home-automation integrations
+- Use MCP tools for local services, files, KiCad, and Minecraft diagnostics
+- Run durable background jobs without blocking the foreground conversation
+- Accept text commands over a private Tailscale connection
+- Place allowlisted phone calls and receive allowlisted SMS commands
+- Drive a remote pygame information display
+- Expose a read-only debug dashboard for health, latency, and tool telemetry
 
-The project is Butler. Some identifiers deliberately still read `talos`, because
-they are contracts with something outside this source tree and renaming them
-would break a running system rather than tidy it:
+## Architecture
 
-| Name | Why it stays |
+Butler is split into independently deployable processes:
+
+| Process | Responsibility |
 | --- | --- |
-| Postgres database `talos_awareness`, role `talos`, container `talos-awareness-db`, `talos-test-mosquitto` | Live database objects. Renaming them orphans the existing data volume. |
-| `db/talos_memory.sqlite3`, `talos_jobs.sqlite3`, `talos_phone.sqlite3`, `talos_sleep_state.json` | Files already on disk holding real conversation, job, call, and sleep state. |
-| Awareness `entity_id` `talos`, `source_id` `talos_agent`, topics `home/agent/talos/*` | Stored primary keys and the MQTT topics bound to them. |
-| MQTT client-ID prefix `talos-quad-pump-` and `FIRMWARE_VERSION` `quad_pump-2.0.0` | Defined in firmware already flashed to the Pico W. |
-| Plant-waterer topics `quad_pump/{pin}` and `home/irrigation/quad_pump/*`, and the `quad_pump.command_ack` event type | The same deployed firmware listens and replies on these. |
-| `talos_session_id` | A dynamic variable ElevenLabs echoes back on phone calls. |
-| The GitHub remote `Lambchops118/Talos` | The repository has not been renamed on GitHub. |
+| Main agent | Routing, scheduling, memory, tools, text API, and display state |
+| Voice worker | Wake word, microphone capture, local STT, and speech playback |
+| Awareness service | PostgreSQL-backed presence, state, history, alerts, and memory |
+| InfoPanel | Remote pygame display client |
+| Phone bridge | Optional public webhook boundary for phone integrations |
 
-Everything else — the `butler/` package, the `BUTLER_*` environment variables,
-prose, and display names — uses the new name. Display names that live in the
-database are moved by the conditional migrations in
-`butler/awareness/registry/bootstrap.py`.
+The default inference path is local: Ollama provides an OpenAI-compatible LLM
+endpoint and `faster-whisper` handles speech-to-text. Hosted services are
+optional and require explicit configuration.
 
-## Project Layout
+For a deeper technical assessment, see
+[Architecture Review](docs/ARCHITECTURE_REVIEW.md). Awareness design and status
+live in [Awareness and Memory](docs/awareness-memory/README.md).
 
-- `butler/`: main locally-run agent, voice/text workers, scheduler, services, and MCP runtime
-- `butler/awareness/`: deterministic presence/state/history/alerts/memory backend (separate process, PostgreSQL-backed) — see [butler/awareness/README.md](butler/awareness/README.md)
-- `InfoPanel/`: pygame display modules and visual assets used by the GUI
-- `Peripherals/fan/`: Raspberry Pi Pico W script for MQTT-controlled fan switching
-- `Peripherals/Pump-Power-Controller/`: submodule holding the plant waterer's controller board and its Raspberry Pi Pico W firmware
-- `Peripherals/mqtt_server/control_display.py`: MQTT listener that sends TV power/input commands
-- `archive/`: older InfoPanel prototypes kept for reference
-- `experiments/`: visual and hardware experiments that are not part of the main runtime
-- `tests/`: unit tests plus older local prototype scripts
+## Requirements
 
-## Build
+- Python 3.12
+- [Ollama](https://ollama.com/) with a configured chat model
+- PortAudio-compatible audio devices and libraries for voice features
+- An MQTT broker for device integrations
+- Docker with Compose for the awareness database
+- Windows for the full launcher and validated room-audio path
 
-This repository does not currently produce packaged installers or binary artifacts. The main build target is the Python host application in `butler/`, with peripheral scripts deployed manually to MicroPython devices.
+Linux and macOS can run many individual services, but the complete deployment
+is currently optimized for Windows with NVIDIA GPUs. Optional integrations may
+also require Node.js, Tailscale, Twilio, ElevenLabs, AWS, or OpenWeather.
 
-### Host Application
+## Quick start
 
-Recommended prerequisites for the split-process setup:
-
-- Python 3.12 for the main agent and voice worker runtime
-- Python 3.12 on the InfoPanel host when the display is enabled
-- PortAudio development/runtime libraries for `PyAudio`
-- A reachable MQTT broker
-- A local Ollama installation with the configured chat model
-- API credentials only for optional hosted integrations you choose to enable
-
-Setup the shared main-agent/voice runtime environment:
+### 1. Create the runtime environment
 
 ```bash
 python3.12 -m venv .venv-runtime
@@ -73,882 +75,200 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-runtime-py312.txt
 ```
 
-Setup the independently deployable display environment:
-
-```bash
-python3.12 -m venv .venv-display
-source .venv-display/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-display-py312.txt
-```
-
-On Windows PowerShell, activate the environment with:
+On Windows PowerShell, activate it with:
 
 ```powershell
 .venv-runtime\Scripts\Activate.ps1
 ```
 
-Configuration is split into two files:
+### 2. Configure secrets
 
-- **`settings.env`** — all non-secret settings (hosts, ports, model names,
-  feature flags, timeouts). It is committed with working defaults and fully
-  populated with commented options, so a fresh clone runs without editing it.
-- **`.env`** — secrets only (API keys, auth tokens, passwords). It is
-  git-ignored; copy `.env.example` to `.env` and fill in the values you need.
+```bash
+cp .env.example .env
+```
 
-A real shell environment variable overrides either file. Restart Butler after
-editing.
+`settings.env` contains committed, non-secret defaults. Put API keys, tokens,
+and passwords only in `.env`. Real environment variables override both files.
 
-Local inference uses the existing OpenAI-compatible backend seam pointed at
-Ollama; the OpenAI SDK is only the protocol client and requests stay on
-loopback. The installed custom model ships as the default in `settings.env`:
+The default local LLM settings point to Ollama:
 
 ```env
 BUTLER_LLM_BACKEND=ollama
 BUTLER_LLM_BASE_URL=http://127.0.0.1:11434/v1
 BUTLER_LLM_MODEL=mb-core-v1:latest
-BUTLER_LLM_MAX_TOKENS_PARAM=max_tokens
-BUTLER_VOICE_STREAMING=1
-BUTLER_REMOTE_LLM_FALLBACK=0
 BUTLER_LOCAL_STT=1
-BUTLER_REMOTE_STT_FALLBACK=0
+BUTLER_VOICE_STREAMING=1
 ```
 
-`OPENAI_API_KEY` is not required for the streaming Ollama lane or local STT.
-The application also references these credentials (in `.env`) for optional
-hosted services:
+Local LLM and STT operation do not require an OpenAI key. Copy and customize
+`mb-core-v1.Modelfile` if you want to build the repository's model profile.
 
-- `OPENAI_API_KEY`
-- `AWS_ACCESS_KEY`
-- `AWS_SECRET_KEY`
-- `OPEN_WEATHER_API_KEY`
+### 3. Start Butler
 
-Optional voice settings:
-
-- `WAKE_WORD`
-- `WAKE_WORD_MODE`
-- `WAKE_WORD_MODEL`
-- `OPENAI_VOICE_MODEL`
-- `BUTLER_TIMEZONE`
-- `BUTLER_WEATHER_LOCATION`
-- `BUTLER_WEATHER_UNITS`
-- `BUTLER_MCP_SERVERS`
-
-Optional phone settings:
-
-- `BUTLER_PHONE_ENABLED`
-- `BUTLER_PHONE_PROVIDER`
-- `ELEVENLABS_API_KEY`
-- `BUTLER_PHONE_AGENT_ID`
-- `BUTLER_PHONE_NUMBER_ID`
-- `BUTLER_PHONE_ALLOWED_OUTBOUND`
-- `BUTLER_PHONE_BRIDGE_URL`
-- `BUTLER_PHONE_BRIDGE_TOKEN`
-- `BUTLER_PHONE_CONTACTS`
-- `BUTLER_PHONE_ALLOWLIST`
-
-Optional text-agent settings:
-
-- `TEXT_AGENT_ENABLED`
-- `TEXT_AGENT_HOST`
-- `TEXT_AGENT_PORT`
-- `TEXT_AGENT_API_TOKEN`
-- `TEXT_AGENT_TIMEOUT`
-- `TEXT_AGENT_ALLOWED_NETWORKS`
-- `BUTLER_DISPLAY_AGENT_URL`
-- `BUTLER_DISPLAY_POLL_SECONDS`
-- `BUTLER_DISPLAY_AGENT_TOKEN` (secret; falls back to the text-agent token)
-
-Run the host app:
+Run the main agent directly:
 
 ```bash
 .venv-runtime/bin/python -m butler
 ```
 
-Voice benchmark summaries print in the voice-worker output. Each worker run also
-creates a timestamped CSV in `logs/`, for example
-`voice_benchmarks_20260511_124500_123456.csv`.
-
-### One-Command Startup
-
-Butler normally runs as several processes: main and voice share one runtime
-environment, while display and awareness use focused environments. The stack
-also uses a Postgres container and a local Ollama server. The launcher starts
-and supervises all of them from one place, and pins each GPU-bound process to
-the right card:
-
-- the language model (Ollama) runs on the **RTX 5080** and may use all of it
-- speech-to-text (faster-whisper, in the voice worker) runs on the **RTX 2060**
-
-GPU pinning is done with `CUDA_DEVICE_ORDER=PCI_BUS_ID` plus a per-process
-`CUDA_VISIBLE_DEVICES`, so the indices line up with `nvidia-smi`. The cards are
-auto-detected by name on first run (5080 → LLM, 2060 → STT) and can be
-overridden in the GUI.
-
-Launch the GUI control panel (Windows):
+Or launch the supervised Windows control panel:
 
 ```powershell
 .\Start-Butler.ps1
 ```
 
-or from `cmd`:
-
-```bat
-butler.cmd
-```
-
-The GUI lets you choose which components to start, the room microphone, the
-language model, whether the awareness system starts with MQTT enabled (and the
-broker host/port), and the GPU assignment. Component/GPU/microphone choices persist to a git-ignored
-`launcher.config.json`; the model and MQTT settings are written back into
-`settings.env` in place. The window has separate **Launcher**, **Logs**, and
-**LLM I/O** tabs, and closing it (or **Stop**) shuts every process down.
-
-The **LLM I/O** tab shows the full structured payload sent at each model-call
-boundary and the full response exposed by the provider SDK. For streaming chat
-calls this includes the raw chunks plus the assembled assistant text and tool
-calls; warmups and Responses API calls are labeled separately. Sent records are
-blue/cyan and received records are green so the request and response cannot be
-mistaken for one another. The feed is
-enabled only for a launcher-managed main agent and travels over the existing
-local child-process stdout pipe. The same records are permanently appended to a
-per-run `butler/logs/llm_io_<UTC timestamp>_<pid>.jsonl` file; these files have no
-automatic retention or pruning and are git-ignored. The GUI retains at most the
-latest 5,000,000 displayed characters. Both forms can contain private
-conversation history, remembered facts, awareness context, tool schemas,
-arguments, and results; treat anything visible there as sensitive.
-
-**Prompt context — what the model receives.** The right-hand column of the GUI
-collects everything that is injected in front of the model each turn, as opposed
-to which processes run:
-
-- **Tool surface.** *Send tools to the model* is the master switch; unticking it
-  sets `BUTLER_DISABLE_ALL_TOOLS=1`, which starts no MCP server and sends no tool
-  schema at all (the OpenAI-compatible backend omits the `tools` key entirely),
-  leaving a bare prompt — useful for timing the model on its own. Below it, the
-  reduced KiCad surface can be turned off to expose that group in full.
-- **MCP servers & tools.** One box per MCP server — the built-in `butler-local`,
-  the optional filesystem, KiCad, and Minecraft helpers, and anything listed in
-  `BUTLER_MCP_SERVERS` — with the `butler-local` provider groups (home automation,
-  awareness) indented beneath it. Unticked entries never
-  start, so their tools are absent for the whole run. Helpers that are not
-  configured in `settings.env` appear greyed out with the variable they need.
-- **Injected context.** Remembered facts (the memory block), the authoritative
-  current date/time, and the awareness situation snapshot.
-
-The MCP selection persists to `launcher.config.json` and is applied as per-run
-environment overrides (`BUTLER_MCP_DISABLED_SERVERS` /
-`BUTLER_MCP_DISABLED_PROVIDERS`); the other boxes write their `settings.env` keys
-in place, since the agent reads those at startup. Headless, add
-`--disable-mcp kicad,home_automation` (repeatable) on top of the saved
-selection.
-
-**Local vs. hosted API models.** By default Butler runs fully local (Ollama LLM on
-the 5080, faster-whisper STT on the 2060). Tick **Use hosted API models (OpenAI)
-instead of local** (or pass `--api-models` headless) to run the LLM against
-OpenAI instead (`gpt-4o-mini` by default). Speech-to-text always stays on local
-faster-whisper.
-This requires `OPENAI_API_KEY` in `.env`. The switch is applied as per-run
-environment overrides injected into the main agent and voice worker — it does
-**not** edit `settings.env`, so unticking it returns to your local config
-untouched. In API mode the launcher skips the local Ollama server (it would only
-waste VRAM).
-
-**Thinking (instant vs. reasoning).** The **Thinking** dropdown sets
-`BUTLER_LLM_THINK_MODE`: `Always` forces a reasoning pass every turn, `Never` gives
-instant replies, `Auto` reasons only on complex requests, and `Off` injects
-nothing. This only affects Qwen-family local models (e.g. `mb-core-v1`) that
-understand the `/think` and `/no_think` soft switches — leave it `Off` for
-Hermes/Llama models. It writes back to `settings.env` in place. Hosted API mode
-ignores this and is forced `Off` (OpenAI models don't use the switches). Headless:
-`--think-mode {auto,always,never,off}` overrides it for one run.
-
-**Clear memory.** The **Clear memory…** button (headless: `--clear-memory`)
-permanently deletes the awareness system's long-term memory (the `memories*`
-tables) and the persistent conversation store (`db/talos_memory.sqlite3` — facts,
-summaries, and history). Presence, state, history, and alerts are left intact.
-It asks for confirmation first and requires Butler to be stopped (the running main
-agent holds the conversation database open). Headless, add `--yes` to skip the
-prompt, or use `--clear-awareness-memory` / `--clear-conversation-memory` to clear
-just one. **This is irreversible.**
-
-Prefer no GUI? Start everything headless in the current console with the
-last-saved configuration:
+The launcher can manage Ollama, the main agent, voice worker, display,
+awareness database, component selection, GPU assignment, and logs. For a
+console-only launch:
 
 ```powershell
 .\Start-Butler.ps1 --no-gui
 ```
 
-`--no-gui` also accepts `--no-ollama`, `--no-awareness`, `--no-main`,
-`--no-voice`, `--no-display`, `--microphone {respeaker,yeti}`, and `--api-models`
-to adjust a single run. The launcher brings up
-the awareness Postgres container, runs migrations, waits for each service's port,
-then starts the main agent, display client, and voice worker; Ctrl+C stops them
-all. It skips
-Ollama if a server is already listening on `127.0.0.1:11434` (in which case that
-server keeps whatever GPU it was started with — quit a tray Ollama first if you
-want the launcher to pin it to the 5080).
-
-The launcher can also be invoked directly with any project interpreter:
+## Running services separately
 
 ```bash
-.venv-runtime/Scripts/python.exe -m butler.launcher            # GUI
-.venv-runtime/Scripts/python.exe -m butler.launcher --no-gui   # headless
-```
-
-### Local Debug Dashboard
-
-Butler includes a separate, read-only web debug console for interaction I/O,
-pipeline timings, component/host health, CPU/GPU usage, and available audio
-metrics. It reads the existing conversation database, voice benchmark CSVs, and
-privacy-safe pipeline telemetry without joining the agent or audio hot paths.
-Its Operations tab correlates request stages by trace ID, reports p50/p95
-latency, aggregates per-tool reliability, and shows durable jobs, physical
-action state, awareness queues/workers, MCP lifecycle, and remote display
-heartbeats. Pipeline events include a process boot ID, build/runtime identity,
-and a non-secret configuration fingerprint so regressions can be separated
-from deployment drift.
-
-Start it with the main Python environment:
-
-```powershell
-.venv-runtime\Scripts\python.exe -m butler.debug_dashboard
-```
-
-Then open `http://127.0.0.1:8787`, or click **Open debug console** in the
-launcher: it reuses a console that is already running, otherwise starts one on
-loopback, opens it in the default browser, and stops it when the launcher
-closes. It works whether or not Butler itself is running. The page polls once per second by default,
-can be paused or adjusted from 250 ms to 15 seconds, and keeps short remote CPU,
-GPU, memory, and disk history in the dashboard process so browser reloads do not
-erase it; at most 300 downsampled points are transported per snapshot. Source
-files and remote feeds are cached at separate bounded intervals, and cold remote
-reads run concurrently. RMS and audio-measurement history comes from bounded telemetry. Expanded
-JSON/detail rows remain open while polling. New dashboard topics can be added
-through the versioned snapshot's `extensions` list without changing the
-existing tabs.
-
-The console host is not assumed to be the Butler system host, so it never reports
-its own CPU, GPU, memory, or disk as Butler metrics. Set
-`BUTLER_DEBUG_SYSTEM_METRICS_URL` to a JSON metrics or compatible debug-snapshot
-endpoint on the Butler host; until then, the hardware cards truthfully show
-`NOT_CONFIGURED`. If that endpoint requires a bearer token, set
-`BUTLER_DEBUG_SYSTEM_METRICS_TOKEN`. Selecting and deploying the system-host
-metrics exporter remains a separate task.
-
-The dashboard defaults to loopback because it displays private transcripts and
-has no authentication. A non-loopback `--host` is refused unless the operator
-also passes `--allow-remote`; use that only on a trusted network. Pipeline
-telemetry does not persist prompt text, tool arguments, raw PCM, or
-continuously sampled idle-room RMS. Launcher-managed runs do write exact
-prompts to `butler/logs/llm_io_*.jsonl` (ADR-043); the console reads those for
-structure only and never displays their text.
-
-The **Model & Memory** tab answers "where does the time and the prompt go?":
-
-- **LLM latency split** — time to first token per model, split into the first
-  round of a turn and follow-up rounds after a tool call. A large gap between
-  them means the model server re-reads most of the prompt each turn (for
-  example, Ministral's template places tool schemas after the history).
-- **Ollama model placement** — from `/api/ps`: loaded model, size, how much of
-  it is in VRAM, and context length. Anything under 100% GPU is flagged.
-- **Recent turns** — per request: first and follow-up time to first token,
-  prompt/output tokens, tool count, replayed history messages, and whether a
-  memory block was injected (`unreported` for turns before that field existed).
-- **Prompt composition** — the newest real turn from the LLM I/O transcript,
-  broken into tool schemas, system prompt, situation snapshot, memory block,
-  history, and so on, with estimated tokens and share.
-- **Tool schemas: size vs use** — every advertised tool's schema size beside
-  its call count across the last 40 telemetry files; `NEVER_CALLED` marks
-  tools that cost prompt tokens without being used.
-- **Memory stores** — row counts (never content) for the SQLite fact store and
-  the awareness Postgres memories, plus how many recent prompts actually
-  carried a memory block.
-
-Stored conversation and voice-benchmark text is redacted in dashboard responses
-by default. Set `BUTLER_DEBUG_INCLUDE_CONTENT=1` only for a private debugging
-session that genuinely needs exact text.
-
-Pipeline JSONL and voice benchmark CSV files rotate at 32 MiB by default
-(`BUTLER_PIPELINE_TELEMETRY_MAX_BYTES` and
-`BUTLER_VOICE_BENCHMARK_MAX_BYTES`). Rotation preserves old files; automatic
-deletion is intentionally not enabled without an operator-approved retention
-window.
-
-#### Note: `BUTLER_TEXT_AGENT_URL` and local voice
-
-The voice worker reaches the main agent over `BUTLER_TEXT_AGENT_URL`. A real
-environment variable always overrides `settings.env` (`load_environment()` never
-overwrites a variable already present in the process environment). So if a
-persistent machine-level `BUTLER_TEXT_AGENT_URL` points at a remote/Tailscale
-address (e.g. `http://100.x.y.z:8420`), a locally started voice worker inherits
-it and times out — the main agent binds to `localhost`, so nothing answers on
-the remote interface (this shows up as `WinError 10060`, a connection *timeout*,
-not "connection refused").
-
-When the launcher starts the main agent locally it works around this by pinning
-the voice worker's `BUTLER_TEXT_AGENT_URL` to `http://127.0.0.1:<TEXT_AGENT_PORT>`
-for that child only. If you start the voice worker by hand, or point the
-launcher at a remote agent (uncheck **Main agent**), the inherited value applies
-instead. A machine-level `BUTLER_TEXT_AGENT_URL` that names *this* host's remote
-address is usually a mistake — that variable belongs on the *client* device that
-connects in, not on the host running the agent.
-
-### MCP Tools And Resources
-
-Butler can expose tools from one or more MCP servers. By default, if `BUTLER_MCP_SERVERS` is unset, it uses the built-in local aggregate server in `butler/mcp_server.py`. If `BUTLER_MCP_SERVERS` is set, `butler/mcp_client/client.py` treats it as the full MCP server list and manages all configured connections.
-
-The current flow is:
-
-1. `butler/mcp_client/client.py` starts one or more MCP connections.
-2. Each configured server is queried with `tools/list`.
-3. The returned tools are merged into one tool surface for `butler/agent/runtime.py`.
-4. The runtime also exposes host-level helper tools for MCP resources: `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`.
-5. If the model chooses a tool, Butler routes that call back to the MCP server that owns it.
-
-The runtime also exposes phone orchestration host tools directly from `butler/agent/runtime.py`: `place_phone_call`, `phone_call_status`, `recent_phone_calls`, and `summarize_phone_call`. These are session-aware host tools rather than MCP tools so Butler can enforce the v1 outbound-call safety policy.
-
-Supported transports in the current client:
-
-- local `stdio` servers
-- remote `streamable_http` servers
-
-If two servers expose the same tool name, you must set a `tool_prefix` on at least one of them so the merged tool list stays unique.
-
-Tool implementations are registered in provider modules under `butler/mcp_servers/providers/`. The existing home automation tools are defined in `butler/mcp_servers/providers/home_automation.py` with `@server.tool()` decorators, and their actual device logic lives in `butler/services/home_automation.py`.
-
-The home automation provider also exposes:
-
-- `get_current_datetime`, which gives the agent the current local date, time, weekday, year, and timezone. Set `BUTLER_TIMEZONE` in `settings.env` to force an IANA timezone such as `America/New_York`; otherwise Butler falls back to the host machine's local timezone.
-- `get_current_weather`, which gives the agent the current weather, temperature, humidity, UV index, wind, and today's temperature range. By default it uses `BUTLER_WEATHER_LOCATION` and `BUTLER_WEATHER_UNITS` from `settings.env`, but the tool can also take a one-off location override. UV comes from OpenWeather One Call, while the initial location lookup uses the standard current-weather endpoint.
-
-Server assembly is separate from tool definition:
-
-- `butler/mcp_servers/aggregate.py` defines the tool surface used by the local agent runtime.
-- `butler/mcp_servers/home_automation_server.py` and `butler/mcp_servers/tv_control_server.py` expose standalone servers for specific domains.
-- `butler/mcp_http_app.py` mounts those domain servers over HTTP.
-
-Example `BUTLER_MCP_SERVERS` value:
-
-```json
-[
-  {
-    "name": "butler-local",
-    "transport": "stdio",
-    "command": "python",
-    "args": ["-m", "butler.mcp_server"]
-  },
-  {
-    "name": "github",
-    "transport": "streamable_http",
-    "url": "https://example.com/mcp",
-    "auth_token_env": "GITHUB_MCP_TOKEN",
-    "tool_prefix": "github_"
-  }
-]
-```
-
-Notes:
-
-- Once `BUTLER_MCP_SERVERS` is set, it replaces the default built-in MCP list. Include your local Butler server explicitly if you still want local home-automation tools.
-- `auth_token_env` tells Butler which environment variable contains a bearer token for that remote MCP server.
-- `headers` can also be provided directly in the JSON config if a server needs custom headers.
-- Remote MCP entries may also set `tls_verify: false` to disable certificate verification for that one server, or `tls_ca_bundle` to point at a custom CA bundle when Python cannot validate the server certificate chain on the current machine.
-- Use `tool_prefix` when a remote server might expose names that collide with local tools.
-- Butler now supports multi-step tool execution loops. Set `BUTLER_MAX_TOOL_CALL_ROUNDS` in `settings.env` if you need to raise or lower the default limit of `8`.
-- Set `BUTLER_AGENT_MAX_OUTPUT_TOKENS` in `settings.env` if tool-calling requests need more room to emit long structured arguments, such as full recipe step lists. The default is `400`.
-- Resource reads are text-first. Binary resources are surfaced with MIME metadata and a base64 preview so the model can reason about what is available without flooding context.
-
-KiCad helper integration:
-
-- Set `KICAD_MCP_SERVER_PATH` to a local checkout of `mixelpixx/KiCAD-MCP-Server` and Butler will append it automatically as a `stdio` MCP server.
-- The helper accepts either the repo root or a direct path to `dist/index.js`.
-- Use `KICAD_PYTHONPATH`, `KICAD_PYTHON`, `KICAD_AUTO_LAUNCH`, `KICAD_MCP_LOG_LEVEL`, and `KICAD_MCP_DEV` to mirror the upstream KiCad MCP server environment.
-
-Example KiCad setup:
-
-```env
-KICAD_MCP_SERVER_PATH=/Users/you/MCP/KiCAD-MCP-Server
-KICAD_MCP_COMMAND=node
-KICAD_MCP_TOOL_PREFIX=kicad_
-KICAD_AUTO_LAUNCH=false
-KICAD_PYTHONPATH=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/lib/python3.10/site-packages
-```
-
-General filesystem MCP support:
-
-- Set `BUTLER_FILESYSTEM_ROOTS` and Butler will append two general-purpose filesystem helpers automatically:
-  - the official `@modelcontextprotocol/server-filesystem` server
-  - a Butler-owned diagnostics server that adds tools like `fs_summarize_directory`, `fs_find_recent_files`, `fs_search_text`, and `fs_compare_text_files`
-- Use a JSON array of absolute paths for multiple roots. Example:
-
-```env
-BUTLER_FILESYSTEM_ROOTS=["/Users/you/projects","/Volumes/shared/reference"]
-BUTLER_FILESYSTEM_ALLOW_WRITES=0
-```
-
-- Butler prefixes these tools with `fs_` by default so they can coexist with other MCP providers.
-- Read-only behavior is the default user experience. Butler hides the official filesystem server's write-capable tools unless `BUTLER_FILESYSTEM_ALLOW_WRITES=1` is set explicitly.
-- This is general filesystem support, not just workspace access. Butler can inspect any configured roots on the local machine that the helper servers are allowed to access.
-- Install prerequisites:
-  - Node.js with `npx`
-  - access to `@modelcontextprotocol/server-filesystem`, usually via `npx -y`
-- Restart Butler after changing `settings.env` so the MCP list is rebuilt.
-- Verify the setup with:
-
-```bash
-.venv-runtime/bin/python tools/verify_filesystem_mcp_setup.py
-```
-
-- More detailed setup notes live in [docs/filesystem-mcp.md](/Users/jacksal1/Desktop/Talos/Butler/docs/filesystem-mcp.md).
-
-Minecraft Forge/modpack diagnostics:
-
-- Set `MINECRAFT_SERVER_DIR` to a modded server root and Butler will append two MCP servers automatically:
-  - the official `@modelcontextprotocol/server-filesystem` server, scoped to that directory only
-  - a Butler-owned ripgrep diagnostics server that enforces the same root and adds helpers like `minecraft_find_recent_logs`, `minecraft_search_text`, and `minecraft_detect_duplicate_mods`
-- This is an optional specialization for Minecraft-specific heuristics. The core local-filesystem design is the general `BUTLER_FILESYSTEM_ROOTS` flow above.
-- The local ripgrep wrapper exists because the generic `mcp-ripgrep` package exposes arbitrary caller-supplied paths; Butler needs the search surface constrained to `MINECRAFT_SERVER_DIR` for safe default operation.
-- Read-only behavior is the default user experience. Butler hides the official filesystem server's write-capable tools unless `MINECRAFT_MCP_ALLOW_WRITES=1` is set explicitly.
-- Install prerequisites:
-  - Node.js with `npx`
-  - `rg` on PATH, for example `brew install ripgrep`
-  - access to `@modelcontextprotocol/server-filesystem`, usually via `npx -y`
-- Recommended `settings.env` settings:
-
-```env
-MINECRAFT_SERVER_DIR=/absolute/path/to/minecraft-server
-MINECRAFT_MCP_ALLOW_WRITES=0
-```
-
-- Restart Butler after changing `settings.env` so the MCP list is rebuilt.
-- Verify the setup with:
-
-```bash
-.venv-runtime/bin/python tools/verify_minecraft_mcp_setup.py
-```
-
-- Example prompt:
-
-```text
-Diagnose my Forge server. Start with logs/latest.log and the newest crash report. Find the most likely bad config, mod, datapack, or script. Do not modify files; give me ranked suspects with evidence.
-```
-
-- More detailed setup and safety guidance lives in [docs/minecraft-forge-diagnostics.md](/Users/jacksal1/Desktop/Talos/Butler/docs/minecraft-forge-diagnostics.md).
-
-To add a new MCP tool in an existing domain:
-
-1. Add the real logic to the relevant service module, such as `butler/services/home_automation.py`.
-2. Register a tool in the matching provider module with `@server.tool()`.
-3. Use a clear docstring and typed parameters. The MCP SDK uses those to describe the tool and generate its input schema.
-4. Restart the Butler process so the local MCP client refreshes its cached tool list.
-
-Example:
-
-```python
-@server.tool()
-def set_thermostat(target_f: int) -> str:
-    """Set the thermostat to the requested Fahrenheit temperature."""
-    return actions.set_thermostat(target_f)
-```
-
-To add a new MCP tool domain:
-
-1. Create `butler/mcp_servers/providers/<domain>.py` with a `register(server)` function.
-2. Export that registrar from `butler/mcp_servers/providers/__init__.py`.
-3. Add the registrar to `butler/mcp_servers/aggregate.py` if the main Butler agent should be able to use it.
-4. Optionally create a dedicated `butler/mcp_servers/<domain>_server.py`.
-5. Optionally mount that server in `butler/mcp_http_app.py` if you want HTTP access.
-
-### Personality And Prompt Assembly
-
-Butler assembles model instructions from versioned, human-editable prompt documents instead of a single hardcoded runtime string.
-
-- `butler/personality/monkey_butler.md` contains the stable Monkey Butler soul document.
-- `butler/personality/overlays/voice.md` and `text.md` keep interaction-mode behavior separate.
-- `butler/personality/overlays/kicad.md`, `filesystem.md`, and `tool_usage.md` hold domain and operating guidance.
-- `butler/agent/prompting.py` loads those pieces and injects runtime memory/context blocks without editing the soul document.
-
-Set `BUTLER_PERSONALITY_PATH` to point at a different base soul document. The built-in overlays still apply unless the assembly code is configured with alternate overlay paths.
-
-### Durable Memory
-
-Butler includes a SQLite-backed conversation and prompt-memory store in `butler/memory/store.py`. It is enabled by default and writes to `db/talos_memory.sqlite3`, which is ignored by git because it can contain private user and session facts.
-
-The store keeps structured records for:
-
-- sessions
-- messages
-- durable facts
-- compact summaries
-
-At request time, the agent retrieves a compact prompt-ready memory block from summaries and relevant facts rather than scanning raw full history. The streaming voice lane also supplies the bounded recent turns as actual user/assistant chat messages so conversational references such as “both” retain their immediate meaning. After a completed turn, the runtime stores the user and assistant messages and refreshes the active session summary. Awareness long-term memory remains a separate evidence-backed store for validated facts and episodes.
-
-Useful memory settings:
-
-- `BUTLER_MEMORY_ENABLED=0` explicitly disables local conversation and prompt memory (it is enabled by default).
-- `BUTLER_MEMORY_DB_PATH=/absolute/path/to/talos_memory.sqlite3` overrides the SQLite location.
-- `BUTLER_MEMORY_PROJECT_ID=Butler` selects the project summary key used for prompt retrieval.
-- `BUTLER_PROMPT_MEMORY_CHAR_LIMIT=1600` bounds prompt memory injection.
-- `BUTLER_CONVERSATION_HISTORY_MESSAGE_LIMIT=8` bounds streamed recent-message count.
-- `BUTLER_CONVERSATION_HISTORY_CHAR_LIMIT=4000` bounds streamed recent-message text.
-
-### Split Runtime Processes
-
-Butler runs the agent, voice path, and display as separate processes:
-
-- main agent process: router, scheduler, text server, display-state projection, MCP/runtime
-- voice worker process: microphone, wake word, Whisper, Polly playback
-- display process: pygame InfoPanel client consuming authenticated HTTP state
-
-Start the main agent:
-
-```bash
+# Main agent and local text API
 .venv-runtime/bin/python -m butler
-```
 
-or equivalently:
-
-```bash
-.venv-runtime/bin/python -m butler.agent_main
-```
-
-Start the voice worker separately:
-
-```bash
+# Voice worker
 .venv-runtime/bin/python -m butler.voice.worker
+
+# Display client (after installing display requirements)
+.venv-display/bin/python -m butler.display.worker
+
+# Debug dashboard
+.venv-runtime/bin/python -m butler.debug_dashboard
 ```
 
-Start the InfoPanel locally or on a different machine:
+The display uses its own environment:
 
 ```bash
-.venv-display/bin/python -m butler.display.worker
+python3.12 -m venv .venv-display
+source .venv-display/bin/activate
+python -m pip install -r requirements-display-py312.txt
 ```
 
-Start the awareness backend separately (requires its database; see
-[butler/awareness/README.md](butler/awareness/README.md) for setup):
+Start the awareness service and database with:
 
 ```bash
 docker compose -f docker-compose.awareness.yml up -d --wait
+python3.12 -m venv .venv-awareness
+source .venv-awareness/bin/activate
+python -m pip install -r requirements-awareness-py312.txt
 .venv-awareness/bin/python -m butler.awareness migrate
 .venv-awareness/bin/python -m butler.awareness serve
 ```
 
-The voice worker sends recognized commands to the main agent over the text-agent
-HTTP API using `BUTLER_TEXT_AGENT_URL` and `BUTLER_TEXT_AGENT_TOKEN`. The display
-polls `GET /display/state` using `BUTLER_DISPLAY_AGENT_URL` and
-`BUTLER_DISPLAY_AGENT_TOKEN` (falling back to the text-agent token). Configure a
-token before exposing the endpoint beyond loopback. For a remote panel, bind the
-text server to a reachable trusted interface and include the panel address in
-`TEXT_AGENT_ALLOWED_NETWORKS`.
+See [the awareness service guide](butler/awareness/README.md) for configuration,
+migrations, health checks, and operations.
 
-### Room Microphone Profiles
+## Interfaces
 
-The launcher's **Room microphone** dropdown persists either the ReSpeaker
-XVF3800 or Blue Yeti profile. The equivalent headless override is
-`--microphone respeaker` or `--microphone yeti`.
+### Text chat
 
-- **ReSpeaker** opens the named USB device explicitly as 16 kHz stereo, extracts
-  USB channel 2 (the firmware's auto-selected ASR beam), and retains the
-  one-second ambient calibration instead of replacing it with the Yeti's fixed
-  threshold. Barge-in and experimental idle VAD are disabled for this profile:
-  Butler playback uses the BenQ render endpoint, so the XVF3800 has no validated
-  far-end reference for hardware AEC.
-- **Yeti** opens the named Yeti explicitly for ordinary wake capture and retains
-  its fixed energy threshold. Its existing Windows communications-AEC path is
-  used only when the pinned Yeti capture and render endpoints match the active
-  Windows defaults; otherwise barge-in fails closed and ordinary named-device
-  capture continues.
-
-Changing the dropdown takes effect the next time the voice worker starts. The
-tracked default and the current machine-local launcher selection are ReSpeaker.
-
-### Barge-In (Interrupting Butler While It Speaks)
-
-The room path now uses pinned Windows communications-mode AEC, continuously
-drained bounded capture, Silero speech-probability VAD, and local faster-whisper
-confirmation. The deployed-host Phase B probe measured 45.7 dB echo return loss
-enhancement with no callback errors. Rollout remains fail-closed with
-`BUTLER_BARGE_IN=0` until the owner-run room corpus and soak meet the targets in
-[the barge-in redesign plan](docs/voice/BARGE_IN_REDESIGN_PLAN.md).
-
-When explicitly enabled, the AEC path lets a user talk over a spoken reply or
-proactive alert. A confirmed interruption stops
-the answer, tells the agent how much was heard, and — unless the utterance only
-asked it to stop — sends the utterance as the next command.
-
-`BUTLER_BARGE_IN_BACKEND=aec` is the production selection. The old RMS detector
-is available only as the explicit `heuristic_diagnostic` backend and is never a
-silent fallback. If AEC, endpoint identity, or the VAD stack fails, barge-in is
-disabled while ordinary wake-word capture stays available.
-
-Ordinary wake commands use SpeechRecognition only for energy-based utterance
-segmentation; the resulting clip is still transcribed once by local
-faster-whisper. Experimental idle Silero endpointing has independent thresholds
-and a 640 ms pre-roll, and cannot activate unless both
-`BUTLER_IDLE_VAD_ENDPOINTING=1` and `BUTLER_IDLE_VAD_CORPUS_ACCEPTED=1`. The second
-flag is an operator acknowledgement that the owner-visible wake/pause/noise
-corpus passed; it must not be set merely to reduce latency. Local STT weights are
-preloaded asynchronously at voice-worker startup, and a bounded priority queue
-places fresh idle commands ahead of queued barge-in confirmation work.
-
-Telemetry includes privacy-safe aggregate counters for candidates started, rejected,
-and accepted; bounded numeric summaries for mixed-capture/render RMS, capture and
-heuristic-speech duration, ASR latency/confidence when available, and pause
-latency, AEC residual RMS, and VAD probabilities. It never includes PCM or
-transcript content.
-
-An opt-in fixture recorder is available for operator-run corpus collection:
-
-- Set `BUTLER_BARGE_IN_FIXTURE_RECORDING=1` only for a visible recording session.
-- The voice worker prints a warning with the exact local directory and limits.
-- `capture.wav`, `render.wav`, and `events.jsonl` preserve block timestamps and
-  sample offsets for synchronization; `manifest.json` records bounds, dropped
-  frames, termination reason, and errors.
-- Audio callbacks enqueue without blocking. The default session is limited to
-  120 seconds and 32 MiB of PCM, with at most five owned fixture directories.
-- The recorder is independent of `BUTLER_BARGE_IN`, so unsafe interruption can
-  remain disabled while fixtures are collected. Raw audio is never recorded by
-  default, and fixture files are never uploaded; the existing explicit remote
-  STT opt-in remains a separate policy.
-
-Because synthesis runs ahead of playback, the text the agent generated is longer
-than the text you heard. The voice worker is authoritative about the difference:
-it reports the audible prefix to `POST /interrupt`, which cancels the in-flight
-turn and rewrites the stored assistant turn to what was heard, marked as cut off.
-Without that, Butler would believe it finished a thought you never heard, and a
-follow-up like "no, not that one" would have nothing to attach to.
-Only fully emitted sentence chunks are recorded as heard. If interruption lands
-inside a chunk without word alignment, the chunk is marked partially heard and
-none of its scheduled words are claimed.
-
-Bare stop phrases ("stop", "never mind", "that's enough") end the reply without
-spending a turn on an answer you did not ask for.
-
-The synchronized fixture corpus can be evaluated with
-`python -m butler.voice.diagnostics.barge_in_acceptance <manifest.json>`; start
-from `docs/voice/barge_in_fixture_manifest.example.json`. Room PCM remains local
-and should not be committed.
-
-Barge-in covers the streaming reply path and proactive speech. The opt-in
-non-streaming fallback (`BUTLER_REMOTE_LLM_FALLBACK=1`) is not interruptible: its
-audio is synthesized in one piece, so there is no way to say which part of it you
-had heard, and recording a guess would be worse than recording nothing.
-
-### Phone Calling
-
-Butler phone calling is intentionally separate from the room microphone voice worker.
-
-- The current `butler/voice/agent.py` path remains the local microphone pipeline.
-- Phone calls use ElevenLabs for the real-time conversational voice agent and Twilio for the phone number / PSTN transport.
-- Butler handles safe outbound call initiation, local call history, transcript summaries, and bridge-based sync.
-
-The current phone implementation lives under:
-
-- `butler/phone/` for provider logic, policy, persistence, and user-facing phone commands
-- `butler/phone_bridge/` for the small public webhook/API service that should run outside the private Butler host
-
-Recommended settings for Butler itself (secrets — `ELEVENLABS_API_KEY`,
-`BUTLER_PHONE_BRIDGE_TOKEN`, `BUTLER_PHONE_PUSH_TOKEN` — go in `.env`; the rest in
-`settings.env`):
-
-```env
-BUTLER_PHONE_ENABLED=1
-BUTLER_PHONE_PROVIDER=elevenlabs_twilio
-ELEVENLABS_API_KEY=...
-BUTLER_PHONE_AGENT_ID=...
-BUTLER_PHONE_NUMBER_ID=...
-BUTLER_PHONE_ALLOWED_OUTBOUND=1
-BUTLER_PHONE_BRIDGE_URL=https://your-public-phone-bridge.example.com
-BUTLER_PHONE_BRIDGE_TOKEN=shared-bridge-token
-BUTLER_PHONE_CONTACTS={"mom":"+15555550123"}
-BUTLER_PHONE_ALLOWLIST=["+15555550123"]
-BUTLER_PHONE_PUSH_TOKEN=shared-push-token
-```
-
-Recommended bridge settings in the separate public deployment:
-
-```env
-PHONE_BRIDGE_API_TOKEN=shared-bridge-token
-PHONE_BRIDGE_WEBHOOK_TOKEN=separate-webhook-token
-BUTLER_PHONE_DB_PATH=/absolute/path/to/bridge_phone.sqlite3
-BUTLER_PHONE_MAIN_NOTIFY_URL=http://your-main-butler-host:8420
-BUTLER_PHONE_PUSH_TOKEN=shared-push-token
-```
-
-Run the public bridge with:
+The main agent exposes a small HTTP API and browser UI, intended for localhost
+or a private Tailscale network. Set `TEXT_AGENT_API_TOKEN` in `.env` before
+exposing it beyond loopback.
 
 ```bash
-.venv-runtime/bin/python -m uvicorn butler.phone_bridge.app:app --host 0.0.0.0 --port 8787
+python -m butler.text.client \
+  --url "http://<tailscale-hostname-or-ip>:8420" \
+  --token "<your-token>" \
+  --session-id "main-pc"
 ```
 
-Then configure the ElevenLabs post-call webhook URL to target:
+Windows users can run the same client through `butler-chat.cmd`.
 
-```text
-https://your-public-phone-bridge.example.com/webhooks/elevenlabs?token=separate-webhook-token
-```
+### Debug dashboard
 
-Notes:
+Run `python -m butler.debug_dashboard`, then open
+`http://127.0.0.1:8787`. The dashboard shows interaction flow, component health,
+pipeline latency, prompt composition, model placement, memory usage, jobs, tool
+reliability, and available system telemetry. It is read-only and binds to
+loopback by default because it can expose private data.
 
-- v1 outbound calls are allowed only from the active foreground user session.
-- Raw E.164 numbers must be present in `BUTLER_PHONE_ALLOWLIST`.
-- Named contacts must resolve through `BUTLER_PHONE_CONTACTS`.
-- In the ElevenLabs agent security settings, enable `First message` and `System prompt` overrides. Butler uses those per-call overrides, plus dynamic variables, so the phone agent knows who it called, why it called, and what message to deliver.
-- The bridge is the only component that should be internet-facing; keep the main Butler runtime private.
-- When a call ends, the bridge pushes the completed call record in real time to the main process's `/phone/events` endpoint (on the text-agent server, `BUTLER_PHONE_MAIN_NOTIFY_URL` + `BUTLER_PHONE_PUSH_TOKEN`, matching `BUTLER_PHONE_PUSH_TOKEN` on both sides). This lets the main agent proactively record the full transcript to memory and announce the outcome without being asked. Leaving `BUTLER_PHONE_MAIN_NOTIFY_URL` unset simply disables the push; the agent still picks up completed calls the next time it calls a phone tool (the existing lazy pull via `BUTLER_PHONE_BRIDGE_URL`).
+### Phone and SMS
 
-### SMS Control
+Phone calls use ElevenLabs for the conversational voice agent and Twilio for
+PSTN transport. SMS commands enter the same agent path as local text chat. Both
+features are optional, disabled until configured, and constrained by explicit
+contact or sender allowlists. The public phone bridge and SMS webhook should be
+the only internet-facing components; keep the main Butler runtime private.
 
-Text the Twilio number to run commands ("water the plants", "turn off the desk
-lamp"); Butler runs the command through the same agent path as typed chat and
-texts the result back. It does not speak in the room.
+Relevant variables are documented in `.env.example` and `settings.env`.
 
-How it flows:
+## Tools and integrations
 
-1. Twilio posts the inbound SMS to `BUTLER_SMS_PUBLIC_URL`, a Tailscale Funnel
-   URL that forwards to the local listener (`butler/sms/`, default
-   `127.0.0.1:8430`). Only this listener is public; the text-agent server stays
-   on the tailnet.
-2. The listener rejects any request without a valid `X-Twilio-Signature` and
-   silently ignores senders not in `BUTLER_SMS_ALLOWED_SENDERS`.
-3. The text becomes a normal `text_cmd` in session `sms:<number>`, so follow-up
-   texts ("yes", "do pot 2 as well") keep conversational context.
-4. The reply goes out through the Twilio Messages API. Background-lane work gets
-   an acknowledgement first and the result when the job finishes.
+Butler merges tools from one or more Model Context Protocol servers into a
+single capability surface. The built-in server provides home automation,
+awareness, and other local services. Optional servers can add:
 
-Setup:
+- General filesystem access with read-only defaults
+- KiCad assistance
+- Minecraft Forge/modpack diagnostics
+- Remote MCP services over streamable HTTP
 
-```powershell
-# One time: allow Funnel for this machine in the tailnet policy (nodeAttrs "funnel"),
-# then publish the local listener on https://<machine>.<tailnet>.ts.net
-tailscale funnel --bg 8430
-```
+Set `BUTLER_MCP_SERVERS` to configure the full server list. Tool names must be
+unique; use `tool_prefix` when servers could collide. Detailed guides:
 
-In `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`. In `settings.env`:
+- [Tool Implementation Guide](docs/TOOL_IMPLEMENTATION_GUIDE.md)
+- [Filesystem MCP](docs/filesystem-mcp.md)
+- [Minecraft Diagnostics](docs/minecraft-forge-diagnostics.md)
 
-```env
-BUTLER_SMS_ENABLED=1
-BUTLER_SMS_PUBLIC_URL=https://<machine>.<tailnet>.ts.net/sms
-BUTLER_SMS_FROM_NUMBER=+1<your Twilio number>
-BUTLER_SMS_ALLOWED_SENDERS=["+1<your cell>"]
-```
+## Hardware
 
-In the Twilio console, under the number's **Messaging configuration**, set
-"A message comes in" to Webhook, `HTTP POST`, with exactly the
-`BUTLER_SMS_PUBLIC_URL` value. The number's voice configuration (used by the
-ElevenLabs phone agent) is separate and unaffected.
-
-Notes:
-
-- US numbers must be registered for A2P 10DLC (or toll-free verified) before
-  carriers deliver Twilio's outbound replies; unregistered replies fail with
-  error 30034 even though inbound texts arrive.
-- Sender numbers are the authorization boundary. SMS caller ID can be spoofed,
-  so keep the allowlist to your own phone and keep physical actions' own
-  bounds (cooldowns, durations, confirmation settings) in place.
-- Startup logs `SMS webhook not started; missing settings: ...` when enabled
-  but incomplete; the rest of Butler runs normally.
-
-### Text Chat Over Tailscale
-
-The host app now starts a small built-in text server alongside the voice pipeline. Voice and text both go through the same agent runtime and MCP tool path.
-
-Recommended setup:
-
-1. Install Tailscale on the homelab machine running Butler and on the client machine.
-2. Join both machines to the same tailnet.
-3. Set `TEXT_AGENT_API_TOKEN` in `.env`.
-4. Leave `TEXT_AGENT_HOST=0.0.0.0`.
-5. Keep `TEXT_AGENT_ALLOWED_NETWORKS` at its default unless you need a custom allowlist.
-
-By default the text server only accepts requests from localhost and the standard Tailscale IPv4/IPv6 ranges, which keeps it off the rest of your LAN even when bound to all interfaces.
-
-Endpoints:
-
-- `GET /` serves a minimal browser chat UI
-- `GET /health` returns a health check
-- `POST /chat` sends a text prompt
-- `POST /interrupt` reports that the user talked over a spoken reply: cancels the
-  in-flight streaming turn and cuts its stored text back to what was heard
-- `POST /sessions/reset` clears conversation state for one session
-
-Example request:
-
-```bash
-curl -X POST "http://<tailscale-hostname-or-ip>:8420/chat" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{"message":"turn the fan on", "session_id":"main-pc"}'
-```
-
-Example reset:
-
-```bash
-curl -X POST "http://<tailscale-hostname-or-ip>:8420/sessions/reset" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{"session_id":"main-pc"}'
-```
-
-### Terminal Client
-
-You can also use the built-in terminal client instead of raw `curl`.
-
-One-shot command:
-
-```bash
-python -m butler.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc" "turn the fan on"
-```
-
-Interactive mode:
-
-```bash
-python -m butler.text.client --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
-```
-
-On Windows, the repository root includes `butler-chat.cmd`, which launches the same client (`butler.cmd` starts the whole stack instead). If the repo root is on your `PATH`, you can run:
-
-```powershell
-butler-chat --url "http://<tailscale-hostname-or-ip>:8420" --token "<your-token>" --session-id "main-pc"
-```
-
-### Peripheral Deployment
-
-The peripheral code is written for MicroPython on Raspberry Pi Pico W boards and is deployed manually.
-
-Typical flow:
-
-1. Flash MicroPython to the Pico W.
-2. Update the device-specific values in the script before deployment:
-   - Wi-Fi SSID and password
-   - MQTT broker address
-   - Pin mappings and MQTT topic prefix
-3. Copy the desired peripheral script to the board as `main.py`.
-4. Copy the bundled MQTT helper alongside it if your MicroPython layout requires it.
-5. Reboot the device and verify it connects to the broker.
-
-Current peripheral entry points:
+Peripheral firmware is written for MicroPython on Raspberry Pi Pico W boards
+and deployed manually. Current entry points include:
 
 - `Peripherals/fan/main.py`
-- `Peripherals/Pump-Power-Controller/Firmware/main.py` (plant waterer)
+- `Peripherals/Pump-Power-Controller/Firmware/main.py`
 
-## Release
+Update device-specific Wi-Fi, MQTT, pin, and topic settings before copying a
+script to a board as `main.py`. The pump controller is maintained as a Git
+submodule.
 
-There is no automated CI/CD or GitHub Actions release pipeline checked into this repository at the moment. Releases are manual.
+## Repository layout
 
-A practical release flow is:
+```text
+butler/                     Main application and service packages
+butler/awareness/           Awareness and long-term memory backend
+InfoPanel/                  Pygame display modules and visual assets
+Peripherals/                MicroPython firmware and MQTT helpers
+docs/                       Architecture, operations, and subsystem guides
+experiments/                Non-production visual and hardware experiments
+tests/                      Unit, integration, and legacy prototype tests
+```
 
-1. Install dependencies and run the host application locally.
-2. Smoke-test any affected MQTT peripherals against the target broker.
-3. Commit the release candidate.
-4. Create an annotated git tag.
-5. Push the branch and tag to GitHub.
-6. Draft a GitHub Release summarizing user-visible changes and any hardware/config updates.
+Some persistent identifiers still use `talos` because they are external or
+on-disk compatibility contracts, including database names, MQTT topics, state
+files, and the GitHub repository URL. New source code, configuration, and
+display names use Butler.
 
-Example tagging flow:
+## Development
+
+The CI workflow currently verifies that Python files compile under Python 3.12:
 
 ```bash
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin main
-git push origin v0.1.0
+python -m compileall butler InfoPanel Peripherals tests
 ```
+
+Run focused tests for the area you change, for example:
+
+```bash
+.venv-runtime/bin/python -m unittest tests/test_request_classifier.py
+```
+
+The project includes hardware, audio, database, and network integrations, so
+the full test suite may require services or devices not available on every
+development machine.
+
+## Project status
+
+Butler is under active development. Releases are created manually; the
+repository does not currently publish installers or binary artifacts. See the
+[implementation status](docs/awareness-memory/IMPLEMENTATION_STATUS.md) for the
+awareness subsystem's completed and planned phases.
+
+This repository does not currently include an open-source license. Unless a
+license is added, the source is visible but no reuse rights are granted.
