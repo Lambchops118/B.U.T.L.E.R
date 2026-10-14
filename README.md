@@ -17,9 +17,12 @@
 
 <h2>Peripheral Systems</h2>
 
-<h3><a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a></h3>
-<h3><a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a></h3>
-<h3><a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a></h3>
+<h3><a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Recipe Display Screen</a></h3>
+<h3><a href="https://github.com/Lambchops118/Pump-Power-Controller">Automatic Houseplant Waterer</a></h3>
+<h3><a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice Module</a></h3>
+<h3><a href="https://github.com/Lambchops118/Jeep-CAN-Bus-Interface">Jeep CAN Bus Interface Module</a></h3>
+<h3><a href="https://github.com/Lambchops118/Get-A-God-Damn-Job-Al.">"Get A God Damn Job, Al."</a></h3>
+<h3><a href="https://github.com/Lambchops118/Soil-Moisture-Sensor-Module">Houseplant Soil Moisture Sensor</a></h3>
 
 </div>
 
