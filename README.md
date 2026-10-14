@@ -15,6 +15,14 @@
   <a href="#project-status"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-orange"></a>
 </p>
 
+<p>
+  <strong>Companion projects:</strong>
+  <a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a> &middot;
+  <a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a> &middot;
+  <a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a> &middot;
+  <a href="https://github.com/Lambchops118/Wake-Word-Model-Training">Wake Word Training</a>
+</p>
+
 </div>
 
 B.U.T.L.E.R. is a local-first, voice-first AI assistant for conversation, home
