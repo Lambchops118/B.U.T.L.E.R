@@ -15,12 +15,11 @@
   <a href="#project-status"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-orange"></a>
 </p>
 
-<p>
-  <strong>Companion projects</strong><br>
-  <a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a><br>
-  <a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a><br>
-  <a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a>
-</p>
+<h2>Peripheral Systems</h2>
+
+<h3><a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a></h3>
+<h3><a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a></h3>
+<h3><a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a></h3>
 
 </div>
 
