@@ -16,11 +16,10 @@
 </p>
 
 <p>
-  <strong>Companion projects:</strong>
-  <a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a> &middot;
-  <a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a> &middot;
-  <a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a> &middot;
-  <a href="https://github.com/Lambchops118/Wake-Word-Model-Training">Wake Word Training</a>
+  <strong>Companion projects</strong><br>
+  <a href="https://github.com/Lambchops118/Kitchen-Recipe-Screen">Kitchen Screen</a><br>
+  <a href="https://github.com/Lambchops118/Pump-Power-Controller">Pump Controller</a><br>
+  <a href="https://github.com/Lambchops118/Discord-Voice-Frontend">Discord Voice</a>
 </p>
 
 </div>
