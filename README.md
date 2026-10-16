@@ -35,6 +35,10 @@ that make up a full deployment.
 
 ## What it can do
 
+<p align="center">
+  <img src="docs/assets/promo.gif" alt="Butler promo">
+</p>
+
 - Hold voice or text conversations through an OpenAI-compatible local model
 - Remember conversations and retrieve evidence-backed long-term context
 - Track household presence, state, alerts, and proactive briefings
